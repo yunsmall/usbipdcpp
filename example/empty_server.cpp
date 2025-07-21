@@ -45,11 +45,11 @@ int main() {
                                             }
                                     }
 
-                            }.with_handler<VirtualInterfaceHandler>(string_pool)
+                            }
                     },
                     .ep0_in = UsbEndpoint::get_default_ep0_in(),
                     .ep0_out = UsbEndpoint::get_default_ep0_out(),
-            }.with_handler<VirtualDeviceHandler>(string_pool)
+            }
     });
 
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54321);

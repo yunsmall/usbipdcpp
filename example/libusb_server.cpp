@@ -25,15 +25,15 @@ int main() {
 
     // SPDLOG_DEBUG("直接绑定3-5-1");
     // server.bind_host_device(server.find_by_busid("3-5-1"));
-    auto target_busid = "1-1";
-    SPDLOG_DEBUG("直接绑定1-1");
-    auto found = LibusbServer::find_by_busid("1-1");
-    if (found) {
-        server.bind_host_device(found);
-    }
-    else {
-        SPDLOG_ERROR("不存在设备{}", target_busid);
-    }
+    // auto target_busid = "1-1";
+    // SPDLOG_DEBUG("直接绑定1-1");
+    // auto found = LibusbServer::find_by_busid("1-1");
+    // if (found) {
+    //     server.bind_host_device(found);
+    // }
+    // else {
+    //     SPDLOG_ERROR("不存在设备{}", target_busid);
+    // }
 
 
     char cmd;

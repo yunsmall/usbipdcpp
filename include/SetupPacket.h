@@ -33,7 +33,7 @@ namespace usbipcpp {
         static constexpr std::uint8_t USB_ENDPOINT_HALT = 0u;
 
         static constexpr std::uint8_t USB_TYPE_MASK = 0b01100000u;
-        static constexpr std::uint8_t USB_RECIP_MASK = 0x00011111u;
+        static constexpr std::uint8_t USB_RECIP_MASK = 0b00011111u;
 
         [[nodiscard]] static uint8_t calc_request_type(uint8_t request_type) {
             return (request_type & USB_TYPE_MASK);

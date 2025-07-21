@@ -46,7 +46,7 @@ std::string usbipcpp::TransferErrorCategory::message(int _Errval) const {
 }
 
 
-inline std::error_code usbipcpp::make_error_code(ErrorType e) {
+std::error_code usbipcpp::make_error_code(ErrorType e) {
     return {static_cast<int>(e), g_error_category};
 }
 

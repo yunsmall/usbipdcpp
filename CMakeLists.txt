@@ -61,3 +61,15 @@ target_include_directories(test_network PRIVATE test)
 target_link_libraries(test_network PRIVATE ${PROJECT_NAME})
 target_link_libraries(test_network PRIVATE GTest::gtest_main)
 gtest_discover_tests(test_network)
+
+install(TARGETS ${PROJECT_NAME}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+install(TARGETS mock_mouse empty_server libusb_server
+        RUNTIME DESTINATION example
+)
+
+install(DIRECTORY include/ DESTINATION include)
