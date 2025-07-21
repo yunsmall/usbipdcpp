@@ -1,0 +1,218 @@
+#pragma once
+
+#include <map>
+
+#include <asio.hpp>
+#include <variant>
+#include <libusb-1.0/libusb.h>
+
+#include "DeviceHandler.h"
+#include "SetupPacket.h"
+#include "constant.h"
+#include "libusb_handler/tools.h"
+
+namespace usbipcpp {
+    class LibusbDeviceHandler : public DeviceHandlerBase {
+    public:
+        explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
+
+        ~LibusbDeviceHandler() override;
+
+
+        void handle_unlink_seqnum(std::uint32_t seqnum) override;
+        void stop_transfer() override;
+
+    protected:
+        void handle_control_urb(Session &session,
+                                std::uint32_t seqnum, const UsbEndpoint &ep,
+                                std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                                const SetupPacket &setup_packet, const data_type &req, std::error_code &ec) override;
+        void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+                                  UsbInterface& interface, std::uint32_t transfer_flags,
+                                  std::uint32_t transfer_buffer_length, const data_type &out_data, std::error_code &ec) override;
+        void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+                                       UsbInterface& interface, std::uint32_t transfer_flags,
+                                       std::uint32_t transfer_buffer_length, const data_type &out_data, std::error_code &ec) override;
+
+        void handle_isochronous_transfer(Session &session, std::uint32_t seqnum,
+                                         const UsbEndpoint &ep, UsbInterface& interface,
+                                         std::uint32_t transfer_flags,
+                                         std::uint32_t transfer_buffer_length,
+                                         const data_type &req, const std::vector<UsbIpIsoPacketDescriptor>& iso_packet_descriptors, std::error_code &ec) override;
+
+        int tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
+            auto target_endp = setup_packet.index;
+            spdlog::info("tweak_clear_halt_cmd");
+
+            auto ret = libusb_clear_halt(native_handle, target_endp);
+
+            if (ret) {
+                SPDLOG_ERROR("libusb_clear_halt() error: endp {} returned {}", target_endp, ret);
+            }
+            else {
+                SPDLOG_DEBUG("libusb_clear_halt() done: endp {}", target_endp);
+            }
+            return ret;
+        }
+
+        int tweak_set_interface_cmd(const SetupPacket &setup_packet) {
+            uint16_t alternate = setup_packet.value;
+            uint16_t interface = setup_packet.index;
+
+            SPDLOG_DEBUG("set_interface: inf {} alt {}",
+                         interface, alternate);
+
+            int ret = libusb_set_interface_alt_setting(native_handle, interface, alternate);
+            if (ret) {
+                SPDLOG_ERROR(
+                        "{}: usb_set_interface error: inf {} alt {} ret {}",
+                        get_device_busid(libusb_get_device(native_handle)),
+                        interface, alternate, ret);
+            }
+            else {
+                SPDLOG_DEBUG(
+                        "{}: usb_set_interface done: inf {} alt {}",
+                        get_device_busid(libusb_get_device(native_handle)),
+                        interface, alternate);
+            }
+            return ret;
+        }
+
+        int tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
+
+            uint16_t config = libusb_le16_to_cpu(setup_packet.value);
+
+            /*
+             * I have never seen a multi-config device. Very rare.
+             * For most devices, this will be called to choose a default
+             * configuration only once in an initialization phase.
+             *
+             * set_configuration may change a device configuration and its device
+             * drivers will be unbound and assigned for a new device configuration.
+             * This means this usbip driver will be also unbound when called, then
+             * eventually reassigned to the device as far as driver matching
+             * condition is kept.
+             *
+             * Unfortunately, an existing usbip connection will be dropped
+             * due to this driver unbinding. So, skip here.
+             * A user may need to set a special configuration value before
+             * exporting the device.
+             */
+            //TODO not sure if it is the point here
+            SPDLOG_INFO("{}: usb_set_configuration {} ... skip!", get_device_busid(libusb_get_device(native_handle)),
+                        config);
+
+            // return 0;
+            return -1;
+        }
+
+
+        int tweak_reset_device_cmd(const SetupPacket &setup_packet) {
+            // struct stub_priv *priv = (struct stub_priv *) trx->user_data;
+            // struct stub_device *sdev = priv->sdev;
+            //
+            SPDLOG_INFO("{}: usb_queue_reset_device",
+                        get_device_busid(libusb_get_device(native_handle)));
+
+            /*
+             * With the implementation of pre_reset and post_reset the driver no
+             * longer unbinds. This allows the use of synchronous reset.
+             */
+            //libusb_reset_device(sdev->dev_handle);
+            return 0;
+        }
+
+        /**
+         * @brief 返回值为0代表已经执行过了，不需要再对usb设备发消息。返回值<0代表控制出错或者需要发消息，因此当小于0的时候需要提交消息
+         * @param setup_packet
+         * @return
+         */
+        int tweak_special_requests(const SetupPacket &setup_packet) {
+            if (setup_packet.is_clear_halt_cmd()) {
+                return tweak_clear_halt_cmd(setup_packet);
+            }
+            else if (setup_packet.is_set_interface_cmd()) {
+                return tweak_set_interface_cmd(setup_packet);
+            }
+            else if (setup_packet.is_set_configuration_cmd()) {
+                return tweak_set_configuration_cmd(setup_packet);
+            }
+            else if (setup_packet.is_reset_device_cmd()) {
+                return tweak_reset_device_cmd(setup_packet);
+            }
+            SPDLOG_DEBUG("不需要调整包");
+            return -1;
+        }
+
+        static uint8_t get_libusb_transfer_flags(uint32_t in) {
+            uint8_t flags = 0;
+
+            if (in & static_cast<std::uint32_t>(TransferFlag::URB_SHORT_NOT_OK))
+                flags |= LIBUSB_TRANSFER_SHORT_NOT_OK;
+            if (in & static_cast<std::uint32_t>(TransferFlag::URB_ZERO_PACKET))
+                flags |= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
+
+            /*
+             * URB_FREE_BUFFER is turned off to free by stub_free_priv_and_trx()
+             *
+             * URB_ISO_ASAP, URB_NO_TRANSFER_DMA_MAP, URB_NO_FSBR and
+             * URB_NO_INTERRUPT are ignored because unsupported by libusb.
+             */
+            return flags;
+        }
+
+        static int trxstat2error(enum libusb_transfer_status trxstat) {
+            //具体数值抄的linux的
+            switch (trxstat) {
+                case LIBUSB_TRANSFER_COMPLETED:
+                    return 0;
+                case LIBUSB_TRANSFER_CANCELLED:
+                    return -104; //ECONNRESET
+                case LIBUSB_TRANSFER_ERROR:
+                case LIBUSB_TRANSFER_STALL:
+                case LIBUSB_TRANSFER_TIMED_OUT:
+                case LIBUSB_TRANSFER_OVERFLOW:
+                    return -EPIPE; //32
+                case LIBUSB_TRANSFER_NO_DEVICE:
+                    return -108; //ESHUTDOWN
+            }
+            return -ENOENT; //2
+        }
+
+        struct libusb_callback_args {
+            LibusbDeviceHandler &handler;
+            Session &session;
+            std::uint32_t seqnum;
+            bool is_out;
+        };
+
+        static enum libusb_transfer_status error2trxstat(int e) {
+            switch (e) {
+                case 0:
+                    return LIBUSB_TRANSFER_COMPLETED;
+                case -ENOENT:
+                    return LIBUSB_TRANSFER_ERROR;
+                case -104: //ECONNRESET
+                    return LIBUSB_TRANSFER_CANCELLED;
+                case -110: //ETIMEDOUT
+                    return LIBUSB_TRANSFER_TIMED_OUT;
+                case -EPIPE:
+                    return LIBUSB_TRANSFER_STALL;
+                case -108: //ESHUTDOWN
+                    return LIBUSB_TRANSFER_NO_DEVICE;
+                case -75: //EOVERFLOW
+                    return LIBUSB_TRANSFER_OVERFLOW;
+            }
+            return LIBUSB_TRANSFER_ERROR;
+        }
+
+        static void transfer_callback(libusb_transfer *trx);
+
+        std::map<std::uint32_t, libusb_transfer *> transferring_data;
+        std::shared_mutex transferring_data_mutex;
+
+        libusb_device_handle *native_handle;
+        int timeout_milliseconds = 1000;
+    };
+
+}
