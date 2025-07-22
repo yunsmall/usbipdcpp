@@ -21,7 +21,7 @@ file(GLOB BASE_SRC_FILES src/*.cpp)
 add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${LIBUSB_SRC_FILES})
 target_link_libraries(${PROJECT_NAME} PUBLIC asio::asio)
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
-target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::libusb)
+target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::libusb)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
