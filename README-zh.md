@@ -13,7 +13,7 @@
 对于更多的虚拟usb设备，由于usb设备的种类繁杂，想实现的可使用这个库自行创建。
 
 通过设备描述使用usbipcpp::UsbDevice类，设备的使用逻辑由AbstDeviceHandler负责，
-对于虚拟设备，具体接口的逻辑交由VirtualDeviceHandler类负责。上述Handler类都是抽象类，
+对于虚拟设备，具体接口的逻辑交由VirtualInterfaceHandler类负责。上述Handler类都是抽象类，
 想自行创建设备逻辑需要继承上述类。
 
 欢迎贡献代码！🚀
