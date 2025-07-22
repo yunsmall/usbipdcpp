@@ -249,6 +249,12 @@ void usbipdcpp::Session::stop() {
     // }
 }
 
+void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
+                                                                         std::uint32_t seqnum) {
+    submit_ret_unlink(std::move(unlink));
+    remove_seqnum_unlink(seqnum);
+}
+
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {

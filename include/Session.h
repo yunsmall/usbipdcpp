@@ -36,7 +36,14 @@ namespace usbipdcpp {
         void stop();
 
         /**
-         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全
+         * @brief 推荐使用这个函数。该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
+         * @param unlink
+         */
+        void submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
+                                                             std::uint32_t seqnum);
+
+        /**
+         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。调用完别忘记调用remove_seqnum_unlink
          * @param unlink
          */
         void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);

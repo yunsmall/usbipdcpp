@@ -373,10 +373,11 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
         }
     }
     else {
-        session.submit_ret_unlink(
+        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
-                        )
+                        ),
+                seqnum
                 );
     }
 }
@@ -407,10 +408,11 @@ void VirtualDeviceHandler::handle_bulk_transfer(Session &session,
         }
     }
     else {
-        session.submit_ret_unlink(
+        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
-                        )
+                        ),
+                seqnum
                 );
     }
 }
@@ -442,10 +444,11 @@ void VirtualDeviceHandler::handle_interrupt_transfer(Session &session,
         }
     }
     else {
-        session.submit_ret_unlink(
+        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
-                        )
+                        ),
+                seqnum
                 );
     }
 }
@@ -479,10 +482,11 @@ void VirtualDeviceHandler::handle_isochronous_transfer(Session &session,
         }
     }
     else {
-        session.submit_ret_unlink(
+        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
-                        )
+                        ),
+                seqnum
                 );
     }
 }

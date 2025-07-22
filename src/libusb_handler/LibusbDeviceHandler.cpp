@@ -15,12 +15,12 @@ usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
-                                                       std::uint32_t seqnum,
-                                                       const UsbEndpoint &ep,
-                                                       std::uint32_t transfer_flags,
-                                                       std::uint32_t transfer_buffer_length,
-                                                       const SetupPacket &setup_packet, const data_type &req,
-                                                       std::error_code &ec) {
+                                                        std::uint32_t seqnum,
+                                                        const UsbEndpoint &ep,
+                                                        std::uint32_t transfer_flags,
+                                                        std::uint32_t transfer_buffer_length,
+                                                        const SetupPacket &setup_packet, const data_type &req,
+                                                        std::error_code &ec) {
     //auto tweak_ret = -1;
     auto tweak_ret = tweak_special_requests(setup_packet);
     //尝试执行特殊操作再对usb进行控制
@@ -82,10 +82,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                         UsbInterface& interface,
-                                                         std::uint32_t transfer_flags,
-                                                         std::uint32_t transfer_buffer_length,
-                                                         const data_type &out_data, std::error_code &ec) {
+                                                          UsbInterface &interface,
+                                                          std::uint32_t transfer_flags,
+                                                          std::uint32_t transfer_buffer_length,
+                                                          const data_type &out_data, std::error_code &ec) {
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -122,11 +122,11 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum,
-                                                              const UsbEndpoint &ep,
-                                                              UsbInterface& interface,
-                                                              std::uint32_t transfer_flags,
-                                                              std::uint32_t transfer_buffer_length,
-                                                              const data_type &out_data, std::error_code &ec) {
+                                                               const UsbEndpoint &ep,
+                                                               UsbInterface &interface,
+                                                               std::uint32_t transfer_flags,
+                                                               std::uint32_t transfer_buffer_length,
+                                                               const data_type &out_data, std::error_code &ec) {
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("中断传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -176,14 +176,14 @@ void usbipdcpp::LibusbDeviceHandler::stop_transfer() {
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &session,
-                                                                std::uint32_t seqnum,
-                                                                const UsbEndpoint &ep,
-                                                                UsbInterface& interface,
-                                                                std::uint32_t transfer_flags,
-                                                                std::uint32_t transfer_buffer_length,
-                                                                const data_type &req,
-                                                                const std::vector<UsbIpIsoPacketDescriptor> &
-                                                                iso_packet_descriptors, std::error_code &ec) {
+                                                                 std::uint32_t seqnum,
+                                                                 const UsbEndpoint &ep,
+                                                                 UsbInterface &interface,
+                                                                 std::uint32_t transfer_flags,
+                                                                 std::uint32_t transfer_buffer_length,
+                                                                 const data_type &req,
+                                                                 const std::vector<UsbIpIsoPacketDescriptor> &
+                                                                 iso_packet_descriptors, std::error_code &ec) {
 
     bool is_out = !ep.is_in();
     SPDLOG_DEBUG("同步传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -333,14 +333,13 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
         }
 
         //发送ret_unlink
-        callback_arg.session.submit_ret_unlink(
+        callback_arg.session.submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
                         unlink_seqnum,
                         trxstat2error(trx->status)
-                        )
+                        ),
+                callback_arg.seqnum
                 );
-        callback_arg.session.remove_seqnum_unlink(callback_arg.seqnum);
-
     }
 
     //清理数据
