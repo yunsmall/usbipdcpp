@@ -28,8 +28,8 @@ TEST(TestProtocol, UsbIpHeaderBasic) {
             0x00, 0x00, 0x00, 0x80
     };
     ASSERT_EQ(as_byte.size(), target_data.size());
-    for (auto [i,byte]: as_byte | std::views::enumerate) {
-        ASSERT_EQ(byte, target_data[i]);
+    for (auto i = 0; i < as_byte.size(); i++) {
+        ASSERT_EQ(as_byte[i], target_data[i]);
     }
 }
 

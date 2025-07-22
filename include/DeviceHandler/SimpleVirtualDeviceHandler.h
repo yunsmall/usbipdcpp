@@ -43,7 +43,7 @@ namespace usbipdcpp {
         void request_set_feature(std::uint16_t feature_selector, std::uint32_t* p_status) override {
         }
 
-        data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length) override {
+        data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status) override {
             return {};
         }
 

@@ -87,22 +87,23 @@ namespace usbipdcpp {
         void request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf, std::uint32_t *p_status);
 
 
-        virtual data_type get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length);
-        virtual data_type get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length);
-        virtual data_type get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length);
-        virtual data_type get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length);
-        virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length);
-        virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length) =0;
+        virtual data_type get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
+        virtual data_type get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
+        virtual data_type get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
+        virtual data_type get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
+        virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
+        virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status) =0;
 
         /**
          * @brief If host wants a descriptor which is not in enum DescriptorType, then this function will be called
          * @param type descriptor tye
          * @param language_id which language
          * @param descriptor_length descriptor_length
+         * @param p_status
          * @return descriptor
          */
         virtual data_type get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                                std::uint16_t descriptor_length);
+                                                std::uint16_t descriptor_length, std::uint32_t* p_status);
 
         virtual void set_descriptor(std::uint16_t configuration_value) =0;
 

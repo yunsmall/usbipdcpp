@@ -12,6 +12,7 @@ class MouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:
     MouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         HidVirtualInterfaceHandler(handle_interface, string_pool) {
+
     }
 
     void handle_non_standard_request_type_control_urb_to_endpoint(Session &session, std::uint32_t seqnum,
@@ -143,7 +144,7 @@ X/Y轴相对移动量
     std::int8_t move_horizontal = 0;
     std::int8_t move_vertical = 0;
 
-    std::int16_t idle_speed = false;
+    std::int16_t idle_speed = 1;
 
     std::shared_mutex data_mutex;
 
@@ -184,6 +185,12 @@ void MouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uin
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, ret)
                 );
     }
+    else {
+        session.submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
+                );
+    }
+
 }
 
 void MouseInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {

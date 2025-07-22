@@ -65,14 +65,14 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                               std::error_code &ec) {
     auto unlink_ret = session.get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
-        RequestRecipient recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
+        auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
         //标准的请求全在这里处理了
         if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard)) {
             auto status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
             switch (recipient) {
                 case RequestRecipient::Device: {
                     SPDLOG_TRACE("发给设备");
-                    StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
+                    auto std_request = static_cast<StandardRequest>(setup_packet.
                         calc_standard_request());
 
                     if (setup_packet.is_out()) {
@@ -161,14 +161,17 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                         if (setup_packet.is_out()) {
                             switch (std_request) {
                                 case StandardRequest::ClearFeature: {
+                                    SPDLOG_TRACE("接口request_clear_feature");
                                     handler->request_clear_feature(setup_packet.value, &status);
                                     break;
                                 }
                                 case StandardRequest::SetFeature: {
+                                    SPDLOG_TRACE("接口request_set_feature");
                                     handler->request_set_feature(setup_packet.value, &status);
                                     break;
                                 }
                                 case StandardRequest::SetInterface: {
+                                    SPDLOG_TRACE("接口request_set_interface");
                                     handler->request_set_interface(setup_packet.value, &status);
                                     break;
                                 }
@@ -186,16 +189,19 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                             data_type result{};
                             switch (std_request) {
                                 case StandardRequest::GetInterface: {
+                                    SPDLOG_TRACE("接口request_get_interface");
                                     auto ret = this->request_get_interface(setup_packet.index, &status);
                                     vector_append_to_net(result, ret);
                                     break;
                                 }
                                 case StandardRequest::GetStatus: {
+                                    SPDLOG_TRACE("接口request_get_status");
                                     auto ret = handler->request_get_status(&status);
                                     vector_append_to_net(result, ret);
                                     break;
                                 }
                                 case StandardRequest::GetDescriptor: {
+                                    SPDLOG_TRACE("接口request_get_descriptor");
                                     result = handler->request_get_descriptor(
                                             setup_packet.value >> 8, setup_packet.value & 0x00FF,
                                             setup_packet.length, &status);
@@ -237,11 +243,13 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                 if (setup_packet.is_out()) {
                                     switch (std_request) {
                                         case StandardRequest::ClearFeature: {
+                                            SPDLOG_TRACE("端点request_endpoint_clear_feature");
                                             handler->request_endpoint_clear_feature(
                                                     setup_packet.value, setup_packet.index, &status);
                                             break;
                                         }
                                         case StandardRequest::SetFeature: {
+                                            SPDLOG_TRACE("端点request_endpoint_set_feature");
                                             handler->request_endpoint_set_feature(
                                                     setup_packet.value, setup_packet.index, &status);
                                             break;
@@ -264,12 +272,14 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                     data_type result{};
                                     switch (std_request) {
                                         case StandardRequest::GetStatus: {
+                                            SPDLOG_TRACE("端点request_endpoint_get_status");
                                             auto gotten_status = handler->request_endpoint_get_status(
                                                     setup_packet.index, &status);
                                             vector_append_to_net(result, gotten_status);
                                             break;
                                         }
                                         case StandardRequest::SynchFrame: {
+                                            SPDLOG_TRACE("端点request_endpoint_sync_frame");
                                             handler->request_endpoint_sync_frame(setup_packet.index, &status);
                                             break;
                                         }
@@ -318,6 +328,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
         else {
             switch (recipient) {
                 case RequestRecipient::Device: {
+                    SPDLOG_TRACE("发给设备的非标准控制传输包");
                     handle_non_standard_request_type_control_urb(session, seqnum, ep, transfer_flags,
                                                                  transfer_buffer_length,
                                                                  setup_packet,
@@ -325,6 +336,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     break;
                 }
                 case RequestRecipient::Interface: {
+                    SPDLOG_TRACE("发给{}号接口的非标准控制传输包", setup_packet.index);
                     auto intf_idx = setup_packet.index;
                     auto handler = handle_device.interfaces[intf_idx].handler;
                     if (handler) {
@@ -341,6 +353,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     break;
                 }
                 case RequestRecipient::Endpoint: {
+                    SPDLOG_TRACE("发给{}号接口的{:04x}号地址端口的非标准控制传输包", setup_packet.index, ep.address);
                     auto intf_idx = setup_packet.index;
                     auto handler = handle_device.interfaces[intf_idx].handler;
                     if (handler) {
@@ -501,37 +514,37 @@ data_type VirtualDeviceHandler::request_get_descriptor(std::uint8_t type, std::u
     switch (desc_type) {
         case DescriptorType::Device: {
             SPDLOG_TRACE("设备get_device_descriptor");
-            return get_device_descriptor(language_id, descriptor_length);
+            return get_device_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         case DescriptorType::Configuration: {
             SPDLOG_TRACE("设备get_configuration_descriptor");
-            return get_configuration_descriptor(language_id, descriptor_length);
+            return get_configuration_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         case DescriptorType::DeviceQualifier: {
             SPDLOG_TRACE("设备get_device_qualifier_descriptor");
-            return get_device_qualifier_descriptor(language_id, descriptor_length);
+            return get_device_qualifier_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         case DescriptorType::BOS: {
             SPDLOG_TRACE("设备get_bos_descriptor");
-            return get_bos_descriptor(language_id, descriptor_length);
+            return get_bos_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         case DescriptorType::String: {
             SPDLOG_TRACE("设备get_string_descriptor");
-            return get_string_descriptor(language_id, descriptor_length);
+            return get_string_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         case DescriptorType::OtherSpeedConfiguration: {
             SPDLOG_TRACE("设备get_other_speed_descriptor");
-            return get_other_speed_descriptor(language_id, descriptor_length);
+            return get_other_speed_descriptor(language_id, descriptor_length, p_status);
             break;
         }
         default: {
             SPDLOG_INFO("请求非标准描述符 {:08b}", type);
-            return get_custom_descriptor(type, language_id, descriptor_length);
+            return get_custom_descriptor(type, language_id, descriptor_length, p_status);
         }
     }
 }
@@ -562,7 +575,8 @@ void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting
     }
 }
 
-data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length
+data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                                      std::uint32_t *p_status
         ) {
     std::shared_lock lock(data_mutex);
     std::uint16_t version_bcd = usb_version;
@@ -594,7 +608,8 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
 
 }
 
-data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length) {
+data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                                   std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
             0x05, // bLength
@@ -609,7 +624,7 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
 }
 
 data_type VirtualDeviceHandler::get_configuration_descriptor(
-        std::uint16_t language_id, std::uint16_t descriptor_length) {
+        std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
             0x09, // bLength
@@ -659,7 +674,8 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(
     return desc;
 }
 
-data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length
+data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
+                                                      std::uint32_t *p_status
         ) {
     std::shared_lock lock(data_mutex);
     if (language_id == 0) {
@@ -692,12 +708,14 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, 
     }
     else {
         SPDLOG_ERROR("非法字符串描述符索引：{}", language_id);
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return {};
     }
 }
 
 data_type VirtualDeviceHandler::get_device_qualifier_descriptor(std::uint8_t language_id,
-                                                                std::uint16_t descriptor_length) {
+                                                                std::uint16_t descriptor_length,
+                                                                std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
             0x0A,
@@ -718,6 +736,6 @@ data_type VirtualDeviceHandler::get_device_qualifier_descriptor(std::uint8_t lan
 }
 
 data_type VirtualDeviceHandler::get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                                      std::uint16_t descriptor_length) {
+                                                      std::uint16_t descriptor_length, std::uint32_t *p_status) {
     return {};
 }
