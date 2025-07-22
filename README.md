@@ -3,8 +3,9 @@
 A C++ library for creating usbip servers
 
 > ✅ Linux support: Implemented libusb-based usbip server functionality  
-> ✅ Virtual HID device: Added virtual HID USB device creation (see `examples/` directory)  
-> ⚠️ **Windows not supported**: Control transfers currently hang - solutions welcome!
+> ✅ Virtual HID device: Added virtual HID USB device creation (see `examples/` directory),
+can create virtual usb devices in any platform  
+> ⚠️ **Windows libusb server not supported**: Control transfers currently hang - solutions welcome!
 
 ## Getting Help
 > 📝 **Note on language**: Due to time constraints, code comments and logs primarily use Chinese with some English.  
