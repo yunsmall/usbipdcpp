@@ -378,7 +378,10 @@ int main() {
     std::chrono::seconds run_time{30};
     SPDLOG_INFO("Start turning over left button");
     for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {
-        mouse_interface_handler.left_pressed = !mouse_interface_handler.left_pressed;
+        {
+            std::lock_guard lock(mouse_interface_handler.data_mutex);
+            mouse_interface_handler.left_pressed = !mouse_interface_handler.left_pressed;
+        }
         SPDLOG_INFO("Turn over left button");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
