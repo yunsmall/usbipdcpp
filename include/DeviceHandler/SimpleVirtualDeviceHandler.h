@@ -2,7 +2,7 @@
 
 #include "VirtualDeviceHandler.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class SimpleVirtualDeviceHandler : public VirtualDeviceHandler {
     public:
         SimpleVirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool) :

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace usbipcpp {
+namespace usbipdcpp {
 
     constexpr std::uint16_t EP0_MAX_PACKET_SIZE = 64;
 

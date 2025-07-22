@@ -7,14 +7,14 @@
 #include "constant.h"
 #include "endpoint.h"
 
-usbipcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle):
+usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle):
     DeviceHandlerBase(handle_device), native_handle(native_handle) {
 }
 
-usbipcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
+usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
 }
 
-void usbipcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
+void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
                                                        std::uint32_t seqnum,
                                                        const UsbEndpoint &ep,
                                                        std::uint32_t transfer_flags,
@@ -81,7 +81,7 @@ void usbipcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
     }
 }
 
-void usbipcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                                          UsbInterface& interface,
                                                          std::uint32_t transfer_flags,
                                                          std::uint32_t transfer_buffer_length,
@@ -121,7 +121,7 @@ void usbipcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std::
     }
 }
 
-void usbipcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum,
+void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum,
                                                               const UsbEndpoint &ep,
                                                               UsbInterface& interface,
                                                               std::uint32_t transfer_flags,
@@ -159,7 +159,7 @@ void usbipcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session, 
     }
 }
 
-void usbipcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
+void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
     int err = 0;
     {
         std::shared_lock lock(transferring_data_mutex);
@@ -172,10 +172,10 @@ void usbipcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
     }
 }
 
-void usbipcpp::LibusbDeviceHandler::stop_transfer() {
+void usbipdcpp::LibusbDeviceHandler::stop_transfer() {
 }
 
-void usbipcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &session,
+void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &session,
                                                                 std::uint32_t seqnum,
                                                                 const UsbEndpoint &ep,
                                                                 UsbInterface& interface,
@@ -228,7 +228,7 @@ void usbipcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &session
 
 }
 
-void usbipcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
+void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     auto &callback_arg = *static_cast<libusb_callback_args *>(
         trx->
         user_data);

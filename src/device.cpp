@@ -4,7 +4,7 @@
 
 #include "DeviceHandler/DeviceHandler.h"
 
-std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes_with_interfaces() const {
+std::vector<std::uint8_t> usbipdcpp::UsbDevice::to_bytes_with_interfaces() const {
     auto result = to_bytes_without_interfaces();
     for (auto &interface: interfaces) {
         auto bytes = interface.to_bytes();
@@ -13,7 +13,7 @@ std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes_with_interfaces() const 
     return result;
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes_without_interfaces() const {
+std::vector<std::uint8_t> usbipdcpp::UsbDevice::to_bytes_without_interfaces() const {
     std::vector<std::uint8_t> result;
     std::array<char, 256> path = {0};
     std::strncpy(path.data(), this->path.string().c_str(), path.size());
@@ -50,15 +50,15 @@ std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes_without_interfaces() con
     return result;
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbDevice::to_bytes() const {
     return to_bytes_without_interfaces();
 }
 
-asio::awaitable<void> usbipcpp::UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
     co_return;
 }
 
-std::optional<std::pair<usbipcpp::UsbEndpoint, std::optional<usbipcpp::UsbInterface>>> usbipcpp::UsbDevice::
+std::optional<std::pair<usbipdcpp::UsbEndpoint, std::optional<usbipdcpp::UsbInterface>>> usbipdcpp::UsbDevice::
 find_ep(std::uint8_t ep) {
     if (ep == ep0_in.address) {
         // SPDLOG_INFO("找到端口0{}", ep);
@@ -79,7 +79,7 @@ find_ep(std::uint8_t ep) {
     return std::nullopt;
 }
 
-void usbipcpp::UsbDevice::handle_urb(Session &session,
+void usbipdcpp::UsbDevice::handle_urb(Session &session,
                                      const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                      std::uint32_t seqnum,
                                      const UsbEndpoint &ep,
@@ -98,7 +98,7 @@ void usbipcpp::UsbDevice::handle_urb(Session &session,
     }
 }
 
-void usbipcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
+void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
     SPDLOG_TRACE("设备处理unlink，将其转发到对应handler中");
     if (handler) {
         handler->handle_unlink_seqnum(seqnum);
@@ -108,7 +108,7 @@ void usbipcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
     }
 }
 
-void usbipcpp::UsbDevice::stop_transfer() {
+void usbipdcpp::UsbDevice::stop_transfer() {
     SPDLOG_TRACE("设备要关闭传输，将其转发到对应handler中");
     if (handler) {
         handler->stop_transfer();

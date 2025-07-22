@@ -11,7 +11,7 @@
 #include "type.h"
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class Session;
 
     class AbstDeviceHandler;

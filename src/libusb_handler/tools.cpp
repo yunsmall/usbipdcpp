@@ -2,9 +2,9 @@
 
 #include <spdlog/spdlog.h>
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
-UsbSpeed usbipcpp::libusb_speed_to_usb_speed(int speed) {
+UsbSpeed usbipdcpp::libusb_speed_to_usb_speed(int speed) {
     switch (speed) {
         case LIBUSB_SPEED_LOW:
             return UsbSpeed::Low;

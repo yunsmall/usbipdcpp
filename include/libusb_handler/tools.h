@@ -8,7 +8,7 @@
 #include <constant.h>
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     inline std::string get_device_busid(libusb_device *device) {
         // return std::format("{}-{}-{}", libusb_get_bus_number(device),
         //                    libusb_get_device_address(device),
@@ -21,7 +21,7 @@ namespace usbipcpp {
 }
 
 
-#define dev_pfmt(dev, fmt) "dev {}: " fmt, ::usbipcpp::get_device_busid((dev))
+#define dev_pfmt(dev, fmt) "dev {}: " fmt, ::usbipdcpp::get_device_busid((dev))
 
 #define dev_info(dev,fmt,...) \
 SPDLOG_INFO(dev_pfmt((dev),fmt) ,##__VA_ARGS__)

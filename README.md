@@ -1,4 +1,4 @@
-# usbipcpp
+# usbipdcpp
 
 A C++ library for creating usbip servers
 
@@ -12,7 +12,7 @@ A C++ library for creating usbip servers
 > PRs for English translations are welcome!
 
 To implement additional virtual USB devices (given USB protocol complexity):
-1. Define device descriptors using `usbipcpp::UsbDevice`
+1. Define device descriptors using `usbipdcpp::UsbDevice`
 2. Implement device logic by inheriting from `AbstDeviceHandler`
 3. For virtual devices, implement interface logic via `VirtualInterfaceHandler` subclassing
 

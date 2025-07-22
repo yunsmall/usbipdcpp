@@ -11,7 +11,7 @@
 #include "protocol.h"
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     struct UsbEndpoint;
     struct UsbInterface;
     struct SetupPacket;
@@ -34,7 +34,7 @@ namespace usbipcpp {
                 std::optional<UsbInterface> &interface,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
                 const data_type &out_data, const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                usbipcpp::error_code
+                usbipdcpp::error_code
                 &ec
                 );
         /**

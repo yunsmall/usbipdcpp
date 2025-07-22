@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace usbipcpp {
+namespace usbipdcpp {
     struct UsbEndpoint {
         enum Direction {
             In,

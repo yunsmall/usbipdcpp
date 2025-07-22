@@ -7,7 +7,7 @@
 #include "constant.h"
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     /**
      * @brief Notice: handle get_descriptor request in handle_non_standard_control_urb,
      * and return descriptor by calling get_report_descriptor.

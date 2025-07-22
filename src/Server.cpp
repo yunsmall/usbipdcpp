@@ -12,14 +12,14 @@
 #include "type.h"
 #include "Session.h"
 
-usbipcpp::Server::Server(std::vector<UsbDevice> &&devices) {
+usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices) {
     available_devices.reserve(devices.size());
     for (auto &device: devices) {
         available_devices.emplace_back(std::make_shared<UsbDevice>(std::move(device)));
     }
 }
 
-void usbipcpp::Server::start(asio::ip::tcp::endpoint &ep) {
+void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     network_io_thread = std::thread([&,this]() {
         asio::ip::tcp::acceptor acceptor(asio_io_context);
         acceptor.open(ep.protocol());
@@ -35,7 +35,7 @@ void usbipcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     });
 }
 
-void usbipcpp::Server::stop() {
+void usbipdcpp::Server::stop() {
     asio_io_context.stop();
     should_stop = true;
     network_io_thread.join();
@@ -61,12 +61,12 @@ void usbipcpp::Server::stop() {
     spdlog::info("成功关闭所有会话");
 }
 
-void usbipcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
+void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
     std::lock_guard lock(available_devices_mutex);
     available_devices.emplace_back(device);
 }
 
-bool usbipcpp::Server::remove_device(const std::string &busid) {
+bool usbipdcpp::Server::remove_device(const std::string &busid) {
     std::lock_guard lock(available_devices_mutex);
     for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
         if ((*it)->busid == busid) {
@@ -85,7 +85,7 @@ bool usbipcpp::Server::remove_device(const std::string &busid) {
     return false;
 }
 
-usbipcpp::Server::~Server() {
+usbipdcpp::Server::~Server() {
     //It is necessary to destroy the entire session in sessions first,
     //otherwise, because if the socket object in the session is destroyed later,
     //it will destroy io_context first and access io_context, thus accessing
@@ -96,7 +96,7 @@ usbipcpp::Server::~Server() {
 }
 
 
-asio::awaitable<void> usbipcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
+asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
     while (true) {
         asio::error_code ec;
         auto socket = co_await acceptor.async_accept(asio::redirect_error(asio::use_awaitable, ec));
@@ -144,7 +144,7 @@ asio::awaitable<void> usbipcpp::Server::do_accept(asio::ip::tcp::acceptor &accep
     }
 }
 
-void usbipcpp::Server::move_device_to_available(const std::string &busid) {
+void usbipdcpp::Server::move_device_to_available(const std::string &busid) {
     print_devices();
     SPDLOG_INFO("尝试将{}转移到可用设备中", busid);
     std::lock_guard guard(used_devices_mutex);
@@ -160,7 +160,7 @@ void usbipcpp::Server::move_device_to_available(const std::string &busid) {
     }
 }
 
-void usbipcpp::Server::print_devices() {
+void usbipdcpp::Server::print_devices() {
     std::shared_lock guard(used_devices_mutex);
     std::shared_lock guard2(available_devices_mutex);
     spdlog::debug("有{}个可用设备", available_devices.size());

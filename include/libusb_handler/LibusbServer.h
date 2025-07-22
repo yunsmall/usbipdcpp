@@ -6,7 +6,7 @@
 
 #include "Server.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class LibusbServer : public Server {
     public:
         explicit LibusbServer(std::function<bool(libusb_device *)> filter);

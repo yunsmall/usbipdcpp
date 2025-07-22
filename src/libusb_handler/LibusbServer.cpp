@@ -7,14 +7,14 @@
 #include "libusb_handler/LibusbDeviceHandler.h"
 #include "libusb_handler/tools.h"
 
-usbipcpp::LibusbServer::LibusbServer(std::function<bool(libusb_device *)> filter) {
+usbipdcpp::LibusbServer::LibusbServer(std::function<bool(libusb_device *)> filter) {
 }
 
-usbipcpp::LibusbServer::LibusbServer():
+usbipdcpp::LibusbServer::LibusbServer():
     LibusbServer([](auto dev) { return true; }) {
 }
 
-std::pair<std::string, std::string> usbipcpp::LibusbServer::get_device_names(libusb_device *device) {
+std::pair<std::string, std::string> usbipdcpp::LibusbServer::get_device_names(libusb_device *device) {
     libusb_device_handle *handle = nullptr;
     libusb_device_descriptor desc;
     int ret = libusb_get_device_descriptor(device, &desc);
@@ -46,7 +46,7 @@ std::pair<std::string, std::string> usbipcpp::LibusbServer::get_device_names(lib
     };
 }
 
-void usbipcpp::LibusbServer::print_device(libusb_device *dev) {
+void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
     libusb_device_descriptor desc;
     // 获取设备描述符
     auto err = libusb_get_device_descriptor(dev, &desc);
@@ -88,7 +88,7 @@ void usbipcpp::LibusbServer::print_device(libusb_device *dev) {
     // std::println(std::cout);
 }
 
-void usbipcpp::LibusbServer::list_host_devices() {
+void usbipdcpp::LibusbServer::list_host_devices() {
     libusb_device **devs;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
@@ -98,7 +98,7 @@ void usbipcpp::LibusbServer::list_host_devices() {
     }
 }
 
-libusb_device *usbipcpp::LibusbServer::find_by_busid(const std::string &busid) {
+libusb_device *usbipdcpp::LibusbServer::find_by_busid(const std::string &busid) {
     libusb_device **devs;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
@@ -110,21 +110,21 @@ libusb_device *usbipcpp::LibusbServer::find_by_busid(const std::string &busid) {
     return nullptr;
 }
 
-void usbipcpp::LibusbServer::claim_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
+void usbipdcpp::LibusbServer::claim_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
 
 
 }
 
-void usbipcpp::LibusbServer::claim_interfaces(libusb_device *dev, std::error_code &ec) {
+void usbipdcpp::LibusbServer::claim_interfaces(libusb_device *dev, std::error_code &ec) {
 }
 
-void usbipcpp::LibusbServer::release_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
+void usbipdcpp::LibusbServer::release_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
 }
 
-void usbipcpp::LibusbServer::release_interfaces(libusb_device *dev, std::error_code &ec) {
+void usbipdcpp::LibusbServer::release_interfaces(libusb_device *dev, std::error_code &ec) {
 }
 
-void usbipcpp::LibusbServer::bind_host_device(libusb_device *dev) {
+void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev) {
     libusb_device_handle *dev_handle;
     int err = libusb_open(dev, &dev_handle);
     if (err) {
@@ -227,7 +227,7 @@ void usbipcpp::LibusbServer::bind_host_device(libusb_device *dev) {
     libusb_free_config_descriptor(active_config_desc);
 }
 
-void usbipcpp::LibusbServer::unbind_host_device(libusb_device *device) {
+void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
     auto taregt_busid = get_device_busid(device);
     {
         std::shared_lock lock(available_devices_mutex);
@@ -267,7 +267,7 @@ void usbipcpp::LibusbServer::unbind_host_device(libusb_device *device) {
     }
 }
 
-void usbipcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
+void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     Server::start(ep);
     libusb_event_thread = std::thread([this]() {
         SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
@@ -286,7 +286,7 @@ void usbipcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     });
 }
 
-void usbipcpp::LibusbServer::stop() {
+void usbipdcpp::LibusbServer::stop() {
     Server::stop();
     should_exit_libusb_event_thread = true;
     libusb_interrupt_event_handler(nullptr);
@@ -303,5 +303,5 @@ void usbipcpp::LibusbServer::stop() {
 //     return Server::remove_device(busid);
 // }
 
-usbipcpp::LibusbServer::~LibusbServer() {
+usbipdcpp::LibusbServer::~LibusbServer() {
 }

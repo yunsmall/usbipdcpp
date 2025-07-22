@@ -11,14 +11,14 @@
 #include "protocol.h"
 #include "type.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class Server;
 
     class Session {
     public:
         Session(Server &server, asio::ip::tcp::socket &&socket);
 
-        asio::awaitable<void> run(usbipcpp::error_code &ec);
+        asio::awaitable<void> run(usbipdcpp::error_code &ec);
 
         /**
          * @brief 线程安全，用来查询某一序列是否被unlink了。

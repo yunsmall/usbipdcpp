@@ -2,7 +2,7 @@
 
 #include "Session.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
 void VirtualInterfaceHandler::handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,

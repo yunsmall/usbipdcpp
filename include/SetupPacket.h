@@ -6,7 +6,7 @@
 
 #include "constant.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     struct SetupPacket {
 
         std::uint8_t request_type;

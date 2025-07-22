@@ -12,7 +12,7 @@
 #include "device.h"
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     constexpr std::uint16_t USBIP_VERSION = 0x0111;
 
 
@@ -199,8 +199,8 @@ namespace usbipcpp {
          * @param ec
          * @return 获取到的命令
          */
-        asio::awaitable<usbipcpp::UsbIpCommand::CmdVariant> get_cmd_from_socket(
-                asio::ip::tcp::socket &sock, usbipcpp::error_code &ec);
+        asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> get_cmd_from_socket(
+                asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
         std::vector<std::uint8_t> to_bytes(const CmdVariant &cmd);
     }
 

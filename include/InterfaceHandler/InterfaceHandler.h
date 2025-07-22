@@ -3,7 +3,7 @@
 #include "type.h"
 #include "StringPool.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     struct UsbIpIsoPacketDescriptor;
     struct UsbEndpoint;
     struct SetupPacket;

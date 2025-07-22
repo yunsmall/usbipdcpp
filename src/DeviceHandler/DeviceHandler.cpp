@@ -9,7 +9,7 @@
 #include "type.h"
 #include "InterfaceHandler/InterfaceHandler.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
 AbstDeviceHandler::AbstDeviceHandler(AbstDeviceHandler &&other) noexcept :
     handle_device(other.handle_device) {
@@ -23,7 +23,7 @@ void AbstDeviceHandler::dispatch_urb(Session &session,
                                      std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                      const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
                                      const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                                     usbipcpp::error_code &ec) {
+                                     usbipdcpp::error_code &ec) {
     std::lock_guard lock(self_mutex);
     if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) {
         SPDLOG_DEBUG("处理控制传输");

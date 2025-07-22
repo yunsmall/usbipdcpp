@@ -4,7 +4,7 @@
 #include "Session.h"
 #include "protocol.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
 void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                                         const UsbEndpoint &ep, std::optional<UsbInterface> &interface,
@@ -12,7 +12,7 @@ void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::Us
                                         std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
                                         const data_type &out_data,
                                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                                        usbipcpp::error_code &ec) {
+                                        usbipdcpp::error_code &ec) {
     // if (se)
     DeviceHandlerBase::dispatch_urb(session, cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length,
                                     setup_packet, out_data,
