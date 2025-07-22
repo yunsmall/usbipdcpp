@@ -85,6 +85,16 @@ bool usbipcpp::Server::remove_device(const std::string &busid) {
     return false;
 }
 
+usbipcpp::Server::~Server() {
+    //It is necessary to destroy the entire session in sessions first,
+    //otherwise, because if the socket object in the session is destroyed later,
+    //it will destroy io_context first and access io_context, thus accessing
+    //illegal memory
+    std::lock_guard lock(session_list_mutex);
+    sessions.clear();
+
+}
+
 
 asio::awaitable<void> usbipcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
     while (true) {

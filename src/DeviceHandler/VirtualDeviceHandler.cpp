@@ -1,11 +1,6 @@
-#include "VirtualDeviceHandler.h"
+#include "DeviceHandler/VirtualDeviceHandler.h"
 
-#include <variant>
-#include <variant>
-#include <variant>
-#include <variant>
-
-#include "InterfaceHandler.h"
+#include "InterfaceHandler/VirtualInterfaceHandler.h"
 #include "Session.h"
 #include "protocol.h"
 
@@ -30,23 +25,34 @@ void VirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
 void VirtualDeviceHandler::stop_transfer() {
 }
 
-void VirtualDeviceHandler::change_device_ep0_max_size_by_usbversion() {
-    handle_device.ep0_in.max_packet_size = 8;
-    handle_device.ep0_out.max_packet_size = 8;
-    // if (usb_version.major == 1) {
-    //     handle_device.ep0_in.max_packet_size = 8;
-    //     handle_device.ep0_out.max_packet_size = 8;
-    // }
-    // else if (usb_version.major == 2) {
-    //     handle_device.ep0_in.max_packet_size = 64;
-    //     handle_device.ep0_out.max_packet_size = 64;
-    // }
-    // else if (usb_version.major == 3) {
-    //     handle_device.ep0_in.max_packet_size = 0x09;
-    // }
-    // else {
-    //     SPDLOG_ERROR("Invalid USB version {}", usb_version.major);
-    // }
+void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
+    auto speed = static_cast<UsbSpeed>(handle_device.speed);
+    switch (speed) {
+        case UsbSpeed::Unknown: {
+            SPDLOG_WARN("Unknown device speed");
+        }
+        case UsbSpeed::Low: {
+            handle_device.ep0_in.max_packet_size = 8;
+            handle_device.ep0_out.max_packet_size = 8;
+            break;
+        }
+        case UsbSpeed::Full:
+        case UsbSpeed::High:
+        case UsbSpeed::Wireless:
+        //In the following two standards, you start out in high speed mode,
+        //so you fill in 64, and then when you switch to super fast it changes to 512,
+        //so you fill in 9 here
+        case UsbSpeed::Super:
+        case UsbSpeed::SuperPlus: {
+            handle_device.ep0_in.max_packet_size = 64;
+            handle_device.ep0_out.max_packet_size = 64;
+            break;
+        }
+        default: {
+            SPDLOG_WARN("invalid speed value");
+            break;
+        }
+    }
 }
 
 void VirtualDeviceHandler::handle_control_urb(Session &session,

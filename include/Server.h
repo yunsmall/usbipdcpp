@@ -8,7 +8,6 @@
 #include <thread>
 
 #include <asio/ip/tcp.hpp>
-#include <asio/experimental/channel.hpp>
 
 #include "device.h"
 
@@ -36,7 +35,7 @@ namespace usbipcpp {
 
         virtual bool remove_device(const std::string &busid);
 
-        virtual ~Server() = default;
+        virtual ~Server();
 
     protected:
         asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);

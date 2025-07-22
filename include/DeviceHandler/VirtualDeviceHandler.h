@@ -1,10 +1,6 @@
 #pragma once
 
-#include <variant>
-#include <variant>
-#include <variant>
-#include <variant>
-
+#include "StringPool.h"
 #include "DeviceHandler.h"
 
 namespace usbipcpp {
@@ -14,7 +10,7 @@ namespace usbipcpp {
         explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                       const Version &usb_version = {2, 0, 0}) :
             DeviceHandlerBase(handle_device), string_pool(string_pool), usb_version(usb_version) {
-            change_device_ep0_max_size_by_usbversion();
+            change_device_ep0_max_size_by_speed();
 
             string_configuration_value = string_pool.new_string(L"Default Configuration");
             string_manufacturer_value = string_pool.new_string(L"Usbipcpp");
@@ -34,7 +30,7 @@ namespace usbipcpp {
         void stop_transfer() override;
 
     protected:
-        void change_device_ep0_max_size_by_usbversion();
+        void change_device_ep0_max_size_by_speed();
 
         void handle_control_urb(Session &session,
                                 std::uint32_t seqnum, const UsbEndpoint &ep,

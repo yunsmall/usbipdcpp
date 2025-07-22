@@ -5,9 +5,8 @@
 
 #include "Server.h"
 #include "constant.h"
-#include "DeviceHandler.h"
-#include "InterfaceHandler.h"
-#include "VirtualDeviceHandler.h"
+#include "DeviceHandler/DeviceHandler.h"
+#include "InterfaceHandler/InterfaceHandler.h"
 
 using namespace usbipcpp;
 

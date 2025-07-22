@@ -1,12 +1,12 @@
 #pragma once
 
 #include <map>
+#include <shared_mutex>
 
 #include <asio.hpp>
-#include <variant>
 #include <libusb-1.0/libusb.h>
 
-#include "DeviceHandler.h"
+#include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
 #include "libusb_handler/tools.h"

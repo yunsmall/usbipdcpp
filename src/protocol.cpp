@@ -264,6 +264,24 @@ usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit:
                                                     transfer_buffer);
 }
 
+usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
+        std::uint32_t seqnum) {
+    auto ret = UsbIpRetSubmit{
+            .header = UsbIpHeaderBasic::get_server_header(
+                    USBIP_RET_SUBMIT,
+                    seqnum
+                    ),
+            .status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
+            .actual_length = 0,
+            .start_frame = 0,
+            .number_of_packets = 0,
+            .error_count = 0,
+            .transfer_buffer = {},
+            .iso_packet_descriptor = {}
+    };
+    return ret;
+}
+
 usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
         std::uint32_t seqnum, const data_type &transfer_buffer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),

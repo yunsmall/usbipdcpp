@@ -240,6 +240,7 @@ void usbipcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
 void usbipcpp::Session::stop() {
     should_stop = true;
     socket.close();
+    SPDLOG_TRACE("session stop");
     // {
     //     std::shared_lock lock(current_import_device_data_mutex);
     //     // if (current_import_device) {

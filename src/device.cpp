@@ -2,7 +2,7 @@
 
 #include <ranges>
 
-#include "DeviceHandler.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 std::vector<std::uint8_t> usbipcpp::UsbDevice::to_bytes_with_interfaces() const {
     auto result = to_bytes_without_interfaces();

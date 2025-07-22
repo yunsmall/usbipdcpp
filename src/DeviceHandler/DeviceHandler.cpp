@@ -1,7 +1,5 @@
-#include "DeviceHandler.h"
+#include "DeviceHandler/DeviceHandler.h"
 
-#include <variant>
-#include <variant>
 #include <spdlog/spdlog.h>
 
 #include "interface.h"
@@ -9,8 +7,7 @@
 #include "device.h"
 #include "protocol.h"
 #include "type.h"
-#include "VirtualDeviceHandler.h"
-#include "InterfaceHandler.h"
+#include "InterfaceHandler/InterfaceHandler.h"
 
 using namespace usbipcpp;
 

@@ -1,8 +1,8 @@
 #include <iostream>
 #include <thread>
 
-#include "SimpleVirtualDeviceHandler.h"
-#include "HidVirtualInterfaceHandler.h"
+#include "DeviceHandler/SimpleVirtualDeviceHandler.h"
+#include "InterfaceHandler/HidVirtualInterfaceHandler.h"
 #include "Server.h"
 #include "Session.h"
 
@@ -375,7 +375,7 @@ int main() {
 
     server.start(endpoint);
 
-    std::chrono::seconds run_time{30};
+    std::chrono::seconds run_time{10};
     SPDLOG_INFO("Start turning over left button");
     for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {
         {

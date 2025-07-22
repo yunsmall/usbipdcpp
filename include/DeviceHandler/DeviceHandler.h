@@ -4,13 +4,10 @@
 #include <cstdint>
 #include <optional>
 #include <system_error>
-#include <map>
 #include <spdlog/spdlog.h>
 
 #include "device.h"
 #include "type.h"
-#include "Version.h"
-#include "StringPool.h"
 #include "protocol.h"
 
 

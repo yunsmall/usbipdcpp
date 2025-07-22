@@ -265,10 +265,11 @@ namespace usbipcpp {
                     iso_packet_descriptor
                     );
             static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum);
-               static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
+            static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
                                                                            const data_type &transfer_buffer);
             static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum,
-                                                                           const data_type &transfer_buffer);
+                                                                 const data_type &transfer_buffer);
+            static UsbIpRetSubmit create_ret_submit_epipe_without_data(std::uint32_t seqnum);
             static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum,
                                                                    const data_type &transfer_buffer);
         };

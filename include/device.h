@@ -16,7 +16,7 @@ namespace usbipcpp {
 
     class AbstDeviceHandler;
 
-    class UsbIpIsoPacketDescriptor;
+    struct UsbIpIsoPacketDescriptor;
 
     namespace UsbIpCommand {
         struct OpReqDevlist;
