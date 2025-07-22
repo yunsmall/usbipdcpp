@@ -2,4 +2,4 @@
 
 #include "Session.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;

@@ -4,8 +4,8 @@
 
 #include "network.h"
 
-using namespace usbipcpp;
-using namespace usbipcpp::test;
+using namespace usbipdcpp;
+using namespace usbipdcpp::test;
 
 
 TEST(TestNetwork, ntoh_hton) {

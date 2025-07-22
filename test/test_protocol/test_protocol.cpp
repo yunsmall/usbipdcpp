@@ -7,8 +7,8 @@
 
 #include <spdlog/spdlog.h>
 
-using namespace usbipcpp;
-using namespace usbipcpp::test;
+using namespace usbipdcpp;
+using namespace usbipdcpp::test;
 
 TEST(TestProtocol, UsbIpHeaderBasic) {
     UsbIpHeaderBasic header{

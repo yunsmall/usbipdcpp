@@ -3,7 +3,7 @@
 #include "constant.h"
 #include "Session.h"
 
-void usbipcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_control_urb(Session &session,
+void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_control_urb(Session &session,
     std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
     const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
@@ -79,7 +79,7 @@ void usbipcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_cont
 
 }
 
-usbipcpp::data_type usbipcpp::HidVirtualInterfaceHandler::request_get_descriptor(std::uint8_t type,
+usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_descriptor(std::uint8_t type,
     std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t *p_status) {
     auto hid_type = static_cast<HidDescriptorType>(type);
     switch (hid_type) {
@@ -94,7 +94,7 @@ usbipcpp::data_type usbipcpp::HidVirtualInterfaceHandler::request_get_descriptor
     }
 }
 
-usbipcpp::data_type usbipcpp::HidVirtualInterfaceHandler::get_class_specific_descriptor() {
+usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::get_class_specific_descriptor() {
     auto report_descriptor_size = get_report_descriptor_size();
     return {
             0x09, // bLength
@@ -109,14 +109,14 @@ usbipcpp::data_type usbipcpp::HidVirtualInterfaceHandler::get_class_specific_des
     };
 }
 
-usbipcpp::data_type usbipcpp::HidVirtualInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
+usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
                                                                            std::uint16_t length,
                                                                            std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
 }
 
-void usbipcpp::HidVirtualInterfaceHandler::request_set_idle(std::uint8_t speed,
+void usbipdcpp::HidVirtualInterfaceHandler::request_set_idle(std::uint8_t speed,
                                                             std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }

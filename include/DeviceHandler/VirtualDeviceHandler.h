@@ -3,7 +3,7 @@
 #include "StringPool.h"
 #include "DeviceHandler.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
 
     class VirtualDeviceHandler : public DeviceHandlerBase {
     public:
@@ -23,7 +23,7 @@ namespace usbipcpp {
                           std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
                           const data_type &out_data,
                           const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                          usbipcpp::error_code &ec) override;
+                          usbipdcpp::error_code &ec) override;
 
 
         void handle_unlink_seqnum(std::uint32_t seqnum) override;

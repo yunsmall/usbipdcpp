@@ -8,11 +8,11 @@
 #include "device.h"
 #include "protocol.h"
 
-usbipcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
+usbipdcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
     server(server), socket(std::move(socket)) {
 }
 
-asio::awaitable<void> usbipcpp::Session::run(usbipcpp::error_code &ec) {
+asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
     {
         std::lock_guard lock(current_import_device_data_mutex);
@@ -24,7 +24,7 @@ asio::awaitable<void> usbipcpp::Session::run(usbipcpp::error_code &ec) {
     should_stop = false;
     while (!should_stop) {
 
-        usbipcpp::error_code ec2;
+        usbipdcpp::error_code ec2;
         SPDLOG_TRACE("尝试读取命令");
         auto command = co_await UsbIpCommand::get_cmd_from_socket(socket, ec2);
 
@@ -224,7 +224,7 @@ asio::awaitable<void> usbipcpp::Session::run(usbipcpp::error_code &ec) {
     socket.close(ignore_ec);
 }
 
-std::tuple<bool, std::uint32_t> usbipcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
+std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
     std::shared_lock lock(unlink_map_mutex);
     if (unlink_map.contains(seqnum)) {
         return {true, unlink_map[seqnum]};
@@ -232,12 +232,12 @@ std::tuple<bool, std::uint32_t> usbipcpp::Session::get_unlink_seqnum(std::uint32
     return {false, 0};
 }
 
-void usbipcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
+void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
     std::lock_guard lock(unlink_map_mutex);
     unlink_map.erase(seqnum);
 }
 
-void usbipcpp::Session::stop() {
+void usbipdcpp::Session::stop() {
     should_stop = true;
     socket.close();
     SPDLOG_TRACE("session stop");
@@ -249,7 +249,7 @@ void usbipcpp::Session::stop() {
     // }
 }
 
-void usbipcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
+void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
         auto to_be_sent = unlink.to_bytes();
@@ -261,7 +261,7 @@ void usbipcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink
     }, asio::detached);
 }
 
-void usbipcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
+void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
         auto to_be_sent = submit.to_bytes();

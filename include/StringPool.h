@@ -6,7 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class StringPool {
     public:
         std::uint8_t new_string(const std::wstring &str) {

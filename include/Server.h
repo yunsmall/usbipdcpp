@@ -12,7 +12,7 @@
 #include "device.h"
 
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class Session;
 
     class Server {

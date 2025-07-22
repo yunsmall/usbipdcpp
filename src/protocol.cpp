@@ -7,13 +7,13 @@
 #include <spdlog/spdlog.h>
 
 
-const usbipcpp::TransferErrorCategory g_error_category;
+const usbipdcpp::TransferErrorCategory g_error_category;
 
-const char *usbipcpp::TransferErrorCategory::name() const noexcept {
+const char *usbipdcpp::TransferErrorCategory::name() const noexcept {
     return "UsbIp Error Category";
 }
 
-std::string usbipcpp::TransferErrorCategory::message(int _Errval) const {
+std::string usbipdcpp::TransferErrorCategory::message(int _Errval) const {
     auto e = static_cast<ErrorType>(_Errval);
     switch (e) {
         case ErrorType::OK: {
@@ -46,11 +46,11 @@ std::string usbipcpp::TransferErrorCategory::message(int _Errval) const {
 }
 
 
-std::error_code usbipcpp::make_error_code(ErrorType e) {
+std::error_code usbipdcpp::make_error_code(ErrorType e) {
     return {static_cast<int>(e), g_error_category};
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpHeaderBasic::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpHeaderBasic::to_bytes() const {
     std::vector<std::uint8_t> result;
     vector_append_to_net(result, command, seqnum, devid, direction, ep);
     // vector_append_to_net(result, command);
@@ -61,11 +61,11 @@ std::vector<std::uint8_t> usbipcpp::UsbIpHeaderBasic::to_bytes() const {
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpHeaderBasic::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpHeaderBasic::from_socket(asio::ip::tcp::socket &sock) {
     co_await read_from_socket(sock, seqnum, devid, direction, ep);
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
     // std::vector<std::uint8_t> result;
     // result.reserve(sizeof(UsbIpIsoPacketDescriptor));
     // vector_append_to_net(result, offset);
@@ -76,11 +76,11 @@ std::vector<std::uint8_t> usbipcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
     // return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip::tcp::socket &sock) {
     co_await read_from_socket(sock, offset, length, actual_length, status);
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpResponse::OpRepDevlist::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepDevlist::to_bytes() const {
     std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REP_DEVLIST, status, device_count);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REP_DEVLIST);
@@ -93,7 +93,7 @@ std::vector<std::uint8_t> usbipcpp::UsbIpResponse::OpRepDevlist::to_bytes() cons
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpResponse::OpRepDevlist::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpResponse::OpRepDevlist::from_socket(asio::ip::tcp::socket &sock) {
     // status = read_u32(sock);
     // device_count = read_u32(sock);
     // devices = read_u32(sock);
@@ -101,7 +101,7 @@ asio::awaitable<void> usbipcpp::UsbIpResponse::OpRepDevlist::from_socket(asio::i
 }
 
 
-usbipcpp::UsbIpResponse::OpRepDevlist usbipcpp::UsbIpResponse::OpRepDevlist::
+usbipdcpp::UsbIpResponse::OpRepDevlist usbipdcpp::UsbIpResponse::OpRepDevlist::
 create_from_devices(const std::vector<std::shared_ptr<UsbDevice>> &devices) {
     std::vector<UsbDevice> ret_devices;
     ret_devices.reserve(devices.size());
@@ -115,7 +115,7 @@ create_from_devices(const std::vector<std::shared_ptr<UsbDevice>> &devices) {
     };
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpResponse::OpRepImport::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepImport::to_bytes() const {
     std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REP_IMPORT, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REP_IMPORT);
@@ -129,17 +129,17 @@ std::vector<std::uint8_t> usbipcpp::UsbIpResponse::OpRepImport::to_bytes() const
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpResponse::OpRepImport::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpResponse::OpRepImport::from_socket(asio::ip::tcp::socket &sock) {
     co_return;
 }
 
-usbipcpp::UsbIpResponse::OpRepImport usbipcpp::UsbIpResponse::OpRepImport::create_on_failure() {
+usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_failure() {
     return {
             .status = static_cast<std::uint32_t>(OperationStatuType::NA),
     };
 }
 
-usbipcpp::UsbIpResponse::OpRepImport usbipcpp::UsbIpResponse::OpRepImport::create_on_success(
+usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_success(
         std::shared_ptr<UsbDevice> device) {
     return {
             .status = static_cast<std::uint32_t>(OperationStatuType::OK),
@@ -148,7 +148,7 @@ usbipcpp::UsbIpResponse::OpRepImport usbipcpp::UsbIpResponse::OpRepImport::creat
 }
 
 
-std::vector<std::uint8_t> usbipcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
     assert(header.command==USBIP_RET_SUBMIT);
     //检查个软，服务端方向恒为0，导致这里直接报错
     // SPDLOG_TRACE(
@@ -179,11 +179,11 @@ std::vector<std::uint8_t> usbipcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() co
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
     co_return;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::usbip_ret_submit_fail_with_status(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::usbip_ret_submit_fail_with_status(
         std::uint32_t seqnum, std::uint32_t status) {
     return UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
@@ -200,7 +200,7 @@ usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit:
     };
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
         std::uint32_t seqnum, std::uint32_t status, std::uint32_t start_frame,
         std::uint32_t number_of_packets, const std::vector<std::uint8_t> &transfer_buffer,
         const std::vector<UsbIpIsoPacketDescriptor> &
@@ -221,7 +221,7 @@ usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit:
     return ret;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
         std::uint32_t seqnum) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
@@ -239,7 +239,7 @@ usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit:
     return ret;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
 create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status, const data_type &transfer_buffer) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
@@ -257,14 +257,14 @@ create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t sta
     return ret;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
         std::uint32_t seqnum,
         const data_type &transfer_buffer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
                                                     transfer_buffer);
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
         std::uint32_t seqnum) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
@@ -282,13 +282,13 @@ usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit:
     return ret;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetSubmit usbipcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
         std::uint32_t seqnum, const data_type &transfer_buffer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                                                     transfer_buffer);
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpResponse::UsbIpRetUnlink::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetUnlink::to_bytes() const {
     assert(header.command==USBIP_RET_UNLINK);
     auto result = header.to_bytes();
     vector_append_to_net(result, status);
@@ -296,11 +296,11 @@ std::vector<std::uint8_t> usbipcpp::UsbIpResponse::UsbIpRetUnlink::to_bytes() co
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock) {
     co_return;
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetUnlink usbipcpp::UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+usbipdcpp::UsbIpResponse::UsbIpRetUnlink usbipdcpp::UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
         std::uint32_t seqnum, std::uint32_t status) {
     return {
             .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_UNLINK, seqnum),
@@ -308,7 +308,7 @@ usbipcpp::UsbIpResponse::UsbIpRetUnlink usbipcpp::UsbIpResponse::UsbIpRetUnlink:
     };
 }
 
-usbipcpp::UsbIpResponse::UsbIpRetUnlink usbipcpp::UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
+usbipdcpp::UsbIpResponse::UsbIpRetUnlink usbipdcpp::UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
         std::uint32_t seqnum) {
     return {
             .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_UNLINK, seqnum),
@@ -316,7 +316,7 @@ usbipcpp::UsbIpResponse::UsbIpRetUnlink usbipcpp::UsbIpResponse::UsbIpRetUnlink:
     };
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
     std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REQ_DEVLIST);
@@ -324,12 +324,12 @@ std::vector<std::uint8_t> usbipcpp::UsbIpCommand::OpReqDevlist::to_bytes() const
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
     status = co_await read_u32(sock);
     assert(status == 0);
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpCommand::OpReqImport::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqImport::to_bytes() const {
     std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REQ_DEVLIST);
@@ -338,13 +338,13 @@ std::vector<std::uint8_t> usbipcpp::UsbIpCommand::OpReqImport::to_bytes() const 
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock) {
     status = co_await read_u32(sock);
     assert(status == 0);
     co_await asio::async_read(sock, asio::buffer(busid), asio::use_awaitable);
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() const {
     assert(header.direction!=UsbIpDirection::Out||transfer_buffer_length==data.size());
     auto result = header.to_bytes();
     auto result2 = to_data(transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
@@ -363,7 +363,7 @@ std::vector<std::uint8_t> usbipcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() con
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     co_await header.from_socket(sock);
     //设置命令类型
     header.command = USBIP_CMD_SUBMIT;
@@ -390,14 +390,14 @@ asio::awaitable<void> usbipcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::
     }
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpCommand::UsbIpCmdUnlink::to_bytes() const {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::to_bytes() const {
     auto result = header.to_bytes();
     vector_append_to_net(result, unlink_seqnum);
     result.resize(result.size() + 24, 0);
     return result;
 }
 
-asio::awaitable<void> usbipcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
     co_await header.from_socket(sock);
     //设置命令类型
     header.command = USBIP_CMD_UNLINK;
@@ -409,8 +409,8 @@ asio::awaitable<void> usbipcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::
 }
 
 
-asio::awaitable<usbipcpp::UsbIpCommand::CmdVariant> usbipcpp::UsbIpCommand::get_cmd_from_socket(
-        asio::ip::tcp::socket &sock, usbipcpp::error_code &ec) {
+asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::get_cmd_from_socket(
+        asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     try {
         auto version = co_await read_u16(sock);
         if (version != 0 && version != USBIP_VERSION) {
@@ -462,7 +462,7 @@ asio::awaitable<usbipcpp::UsbIpCommand::CmdVariant> usbipcpp::UsbIpCommand::get_
     co_return UsbIpCommand::CmdVariant{};
 }
 
-std::vector<std::uint8_t> usbipcpp::UsbIpCommand::to_bytes(const CmdVariant &cmd) {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::to_bytes(const CmdVariant &cmd) {
     return std::visit([](auto &&package) {
         return package.to_bytes();
     }, cmd);

@@ -7,7 +7,7 @@
 #include <sstream>
 #include <format>
 
-namespace usbipcpp {
+namespace usbipdcpp {
     using error_code = std::error_code;
     using data_type = std::vector<std::uint8_t>;
 

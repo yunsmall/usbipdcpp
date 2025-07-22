@@ -2,7 +2,7 @@
 
 #include "InterfaceHandler/InterfaceHandler.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
 
     class VirtualInterfaceHandler : public InterfaceHandlerBase {
     public:

@@ -6,7 +6,7 @@
 
 #include "libusb_handler/LibusbServer.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
 int main() {
     spdlog::set_level(spdlog::level::trace);

@@ -5,7 +5,7 @@
 #include "endpoint.h"
 #include "network.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class VirtualInterfaceHandler;
 
     struct UsbInterface {

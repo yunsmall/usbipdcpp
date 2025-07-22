@@ -8,7 +8,7 @@
 
 #include "type.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
 
     inline bool is_little_endian() {
         return asio::detail::socket_ops::host_to_network_short(0x0001) == 0x0100;

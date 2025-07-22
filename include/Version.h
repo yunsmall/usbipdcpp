@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace usbipcpp {
+namespace usbipdcpp {
     struct Version {
         Version(std::uint8_t major, std::uint8_t minor, std::uint8_t patch):
             major(major), minor(minor), patch(patch) {

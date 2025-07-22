@@ -6,7 +6,7 @@
 #include "Server.h"
 #include "Session.h"
 
-using namespace usbipcpp;
+using namespace usbipdcpp;
 
 class MouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:

@@ -11,7 +11,7 @@
 #include "constant.h"
 #include "libusb_handler/tools.h"
 
-namespace usbipcpp {
+namespace usbipdcpp {
     class LibusbDeviceHandler : public DeviceHandlerBase {
     public:
         explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
