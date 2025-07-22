@@ -98,7 +98,7 @@ asio::awaitable<void> usbipcpp::Server::do_accept(asio::ip::tcp::acceptor &accep
             spdlog::info("来自{}的连接", remote_endpoint_name);
             auto session = std::make_shared<Session>(*this, std::move(socket));
             SPDLOG_TRACE("尝试添加会话处理协程");
-            asio::co_spawn(asio_io_context, [=]()-> asio::awaitable<void> {
+            asio::co_spawn(asio_io_context, [=,this]()-> asio::awaitable<void> {
                 // 成功建立连接
                 std::error_code ec2;
                 SPDLOG_TRACE("处理会话");
@@ -107,6 +107,13 @@ asio::awaitable<void> usbipcpp::Server::do_accept(asio::ip::tcp::acceptor &accep
                     SPDLOG_ERROR("来自{}的会话处理信息时出错：{}", remote_endpoint_name, ec2.message());
                 }
                 spdlog::info("来自{}的连接断开", remote_endpoint_name);
+
+                {
+                    std::lock_guard lock(this->session_list_mutex);
+                    if (std::ranges::contains(this->sessions, session)) {
+                        this->sessions.remove(session);
+                    }
+                }
                 co_return;
             }, asio::detached);
             SPDLOG_TRACE("成功添加会话处理协程");

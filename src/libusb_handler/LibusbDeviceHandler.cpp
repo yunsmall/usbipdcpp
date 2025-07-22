@@ -71,7 +71,7 @@ void usbipcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
         //返回空包
         session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
                 seqnum,
-                static_cast<std::uint32_t>(StatuType::OK),
+                static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                 0,
                 0,
                 {},

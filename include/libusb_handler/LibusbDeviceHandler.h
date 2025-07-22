@@ -28,17 +28,21 @@ namespace usbipcpp {
                                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                 const SetupPacket &setup_packet, const data_type &req, std::error_code &ec) override;
         void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
-                                  UsbInterface& interface, std::uint32_t transfer_flags,
-                                  std::uint32_t transfer_buffer_length, const data_type &out_data, std::error_code &ec) override;
+                                  UsbInterface &interface, std::uint32_t transfer_flags,
+                                  std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                  std::error_code &ec) override;
         void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
-                                       UsbInterface& interface, std::uint32_t transfer_flags,
-                                       std::uint32_t transfer_buffer_length, const data_type &out_data, std::error_code &ec) override;
+                                       UsbInterface &interface, std::uint32_t transfer_flags,
+                                       std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                       std::error_code &ec) override;
 
         void handle_isochronous_transfer(Session &session, std::uint32_t seqnum,
-                                         const UsbEndpoint &ep, UsbInterface& interface,
+                                         const UsbEndpoint &ep, UsbInterface &interface,
                                          std::uint32_t transfer_flags,
                                          std::uint32_t transfer_buffer_length,
-                                         const data_type &req, const std::vector<UsbIpIsoPacketDescriptor>& iso_packet_descriptors, std::error_code &ec) override;
+                                         const data_type &req,
+                                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                                         std::error_code &ec) override;
 
         int tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
             auto target_endp = setup_packet.index;
@@ -165,18 +169,18 @@ namespace usbipcpp {
             //具体数值抄的linux的
             switch (trxstat) {
                 case LIBUSB_TRANSFER_COMPLETED:
-                    return 0;
+                    return static_cast<int>(UrbStatusType::StatusOK);
                 case LIBUSB_TRANSFER_CANCELLED:
-                    return -104; //ECONNRESET
+                    return static_cast<int>(UrbStatusType::StatusECONNRESET);
                 case LIBUSB_TRANSFER_ERROR:
                 case LIBUSB_TRANSFER_STALL:
                 case LIBUSB_TRANSFER_TIMED_OUT:
                 case LIBUSB_TRANSFER_OVERFLOW:
-                    return -EPIPE; //32
+                    return static_cast<int>(UrbStatusType::StatusEPIPE);
                 case LIBUSB_TRANSFER_NO_DEVICE:
-                    return -108; //ESHUTDOWN
+                    return static_cast<int>(UrbStatusType::StatusESHUTDOWN);
             }
-            return -ENOENT; //2
+            return static_cast<int>(UrbStatusType::StatusENOENT);
         }
 
         struct libusb_callback_args {
@@ -188,19 +192,19 @@ namespace usbipcpp {
 
         static enum libusb_transfer_status error2trxstat(int e) {
             switch (e) {
-                case 0:
+                case static_cast<int>(UrbStatusType::StatusOK):
                     return LIBUSB_TRANSFER_COMPLETED;
-                case -ENOENT:
+                case static_cast<int>(UrbStatusType::StatusENOENT):
                     return LIBUSB_TRANSFER_ERROR;
-                case -104: //ECONNRESET
+                case static_cast<int>(UrbStatusType::StatusECONNRESET):
                     return LIBUSB_TRANSFER_CANCELLED;
-                case -110: //ETIMEDOUT
+                case static_cast<int>(UrbStatusType::StatusETIMEDOUT):
                     return LIBUSB_TRANSFER_TIMED_OUT;
-                case -EPIPE:
+                case static_cast<int>(UrbStatusType::StatusEPIPE):
                     return LIBUSB_TRANSFER_STALL;
-                case -108: //ESHUTDOWN
+                case static_cast<int>(UrbStatusType::StatusESHUTDOWN):
                     return LIBUSB_TRANSFER_NO_DEVICE;
-                case -75: //EOVERFLOW
+                case static_cast<int>(UrbStatusType::StatusEEOVERFLOW): //EOVERFLOW
                     return LIBUSB_TRANSFER_OVERFLOW;
             }
             return LIBUSB_TRANSFER_ERROR;

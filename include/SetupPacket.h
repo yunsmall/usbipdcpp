@@ -43,12 +43,12 @@ namespace usbipcpp {
             return calc_request_type(request_type);
         }
 
-        [[nodiscard]] static uint8_t calc_standard_request_type(uint8_t request_type) {
-            return (request_type & (~USB_TYPE_MASK));
+        [[nodiscard]] static uint8_t calc_standard_request(uint8_t request) {
+            return request;
         }
 
-        [[nodiscard]] uint8_t calc_standard_request_type() const {
-            return calc_standard_request_type(request_type);
+        [[nodiscard]] uint8_t calc_standard_request() const {
+            return calc_standard_request(request);
         }
 
         [[nodiscard]] uint8_t calc_recipient() const {

@@ -18,10 +18,9 @@ namespace usbipcpp {
         std::shared_ptr<VirtualInterfaceHandler> handler;
 
         template<typename T, typename... Args>
-        UsbInterface &with_handler(Args &&... args) {
+        void with_handler(Args &&... args) {
             handler = std::dynamic_pointer_cast<VirtualInterfaceHandler>(
                     std::make_shared<T>(*this, std::forward<Args>(args)...));
-            return *this;
         }
 
         [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;

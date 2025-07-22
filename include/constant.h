@@ -67,6 +67,25 @@ namespace usbipcpp {
         SynchFrame = 12,
     };
 
+    enum class HIDRequest {
+        GetReport = 0x01,
+        GetIdle = 0x02,
+        GetProtocol = 0x03,
+        SetReport = 0x09,
+        SetIdle = 0x0A,
+        SetProtocol = 0x0B,
+    };
+
+    enum class HIDReportType {
+        Output = 0x01,
+        Input = 0x02,
+        Feature = 0x03,
+    };
+    enum class HIDProtocolType {
+        Boot = 0x00,
+        Report = 0x01,
+    };
+
     enum class RequestRecipient {
         Device = 0,
         Interface,
@@ -87,6 +106,12 @@ namespace usbipcpp {
         Debug = 0xA,
         InterfaceAssociation = 0xB,
         BOS = 0xF,
+    };
+
+    enum HidDescriptorType {
+        Hid = 0x21,
+        Report = 0x22,
+        Physical = 0x23,
     };
 
     enum class PortFeat {

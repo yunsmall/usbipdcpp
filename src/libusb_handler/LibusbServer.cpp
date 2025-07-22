@@ -84,7 +84,7 @@ void usbipcpp::LibusbServer::print_device(libusb_device *dev) {
         default:
             std::print(std::cout, "未知");
     }
-    std::cout<<std::endl;
+    std::cout << std::endl;
     // std::println(std::cout);
 }
 
@@ -93,7 +93,7 @@ void usbipcpp::LibusbServer::list_host_devices() {
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
         print_device(devs[dev_i]);
-        std::cout<<std::endl;
+        std::cout << std::endl;
         // std::println(std::cout);
     }
 }
@@ -202,28 +202,27 @@ void usbipcpp::LibusbServer::bind_host_device(libusb_device *dev) {
 
     {
         std::lock_guard lock(available_devices_mutex);
-        available_devices.emplace_back(std::make_shared<UsbDevice>(UsbDevice{
-                                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
-                                                    libusb_get_device_address(dev), libusb_get_port_number(dev)),
-                                .busid = get_device_busid(dev),
-                                .bus_num = libusb_get_bus_number(dev),
-                                .dev_num = libusb_get_port_number(dev),
-                                .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
-                                .vendor_id = device_descriptor.idVendor,
-                                .product_id = device_descriptor.idProduct,
-                                .device_bcd = device_descriptor.bcdDevice,
-                                .device_class = device_descriptor.bDeviceClass,
-                                .device_subclass = device_descriptor.bDeviceSubClass,
-                                .device_protocol = device_descriptor.bDeviceProtocol,
-                                .configuration_value = active_config_desc->bConfigurationValue,
-                                .num_configurations = device_descriptor.bNumConfigurations,
-                                .interfaces = std::move(interfaces),
-                                .ep0_in = UsbEndpoint::get_ep0_in(device_descriptor.bMaxPacketSize0),
-                                .ep0_out = UsbEndpoint::get_ep0_out(device_descriptor.bMaxPacketSize0),
-                        }
-                        .with_handler<LibusbDeviceHandler>(dev_handle)
-                        )
-                );
+        auto current_device = std::make_shared<UsbDevice>(UsbDevice{
+                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
+                                    libusb_get_device_address(dev), libusb_get_port_number(dev)),
+                .busid = get_device_busid(dev),
+                .bus_num = libusb_get_bus_number(dev),
+                .dev_num = libusb_get_port_number(dev),
+                .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
+                .vendor_id = device_descriptor.idVendor,
+                .product_id = device_descriptor.idProduct,
+                .device_bcd = device_descriptor.bcdDevice,
+                .device_class = device_descriptor.bDeviceClass,
+                .device_subclass = device_descriptor.bDeviceSubClass,
+                .device_protocol = device_descriptor.bDeviceProtocol,
+                .configuration_value = active_config_desc->bConfigurationValue,
+                .num_configurations = device_descriptor.bNumConfigurations,
+                .interfaces = std::move(interfaces),
+                .ep0_in = UsbEndpoint::get_ep0_in(device_descriptor.bMaxPacketSize0),
+                .ep0_out = UsbEndpoint::get_ep0_out(device_descriptor.bMaxPacketSize0),
+        });
+        current_device->with_handler<LibusbDeviceHandler>(dev_handle);
+        available_devices.emplace_back(std::move(current_device));
     }
     libusb_free_config_descriptor(active_config_desc);
 }

@@ -44,7 +44,7 @@ namespace usbipcpp {
     };
 
     //tools/usbip_common.h
-    enum class StatuType {
+    enum class OperationStatuType {
         //Request Completed Successfully
         OK = 0,
         //Request Failed
@@ -57,6 +57,17 @@ namespace usbipcpp {
         NoDev,
         //Unexpected response
         Error
+    };
+
+    enum class UrbStatusType {
+        StatusOK = -0,
+        StatusECONNRESET = -104,
+        StatusEPIPE = -32,
+        StatusESHUTDOWN = -108,
+        StatusENODEV = -19,
+        StatusENOENT = -2,
+        StatusETIMEDOUT = -110,
+        StatusEEOVERFLOW = -75
     };
 
     class TransferErrorCategory : public std::error_category {
@@ -243,7 +254,6 @@ namespace usbipcpp {
 
             bool operator==(const UsbIpRetSubmit &other) const = default;
 
-            static UsbIpRetSubmit usbip_ret_submit_fail(std::uint32_t seqnum);
             static UsbIpRetSubmit usbip_ret_submit_fail_with_status(std::uint32_t seqnum, std::uint32_t status);
             static UsbIpRetSubmit create_ret_submit(
                     std::uint32_t seqnum,
@@ -251,10 +261,14 @@ namespace usbipcpp {
                     std::uint32_t start_frame,
                     std::uint32_t number_of_packets,
                     const data_type &transfer_buffer,
-                    const std::vector<UsbIpIsoPacketDescriptor>&
+                    const std::vector<UsbIpIsoPacketDescriptor> &
                     iso_packet_descriptor
                     );
             static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum);
+               static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
+                                                                           const data_type &transfer_buffer);
+            static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum,
+                                                                           const data_type &transfer_buffer);
             static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum,
                                                                    const data_type &transfer_buffer);
         };
@@ -271,9 +285,7 @@ namespace usbipcpp {
             bool operator==(const UsbIpRetUnlink &other) const = default;
 
             static UsbIpRetUnlink create_ret_unlink(std::uint32_t seqnum, std::uint32_t status);
-            static UsbIpRetUnlink usbip_ret_unlink_success(const UsbIpHeaderBasic &header);
-            static UsbIpRetUnlink usbip_ret_unlink_failed_with_status(const UsbIpHeaderBasic &header,
-                                                                      std::uint32_t status);
+            static UsbIpRetUnlink create_ret_unlink_success(std::uint32_t seqnum);
         };
 
         static_assert(Serializable<UsbIpRetUnlink>);

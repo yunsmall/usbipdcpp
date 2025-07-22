@@ -25,12 +25,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::libusb)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_definitions(${PROJECT_NAME} PUBLIC
+    add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
     )
 else ()
-    target_compile_definitions(${PROJECT_NAME} PUBLIC
+    add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
     )
 endif ()

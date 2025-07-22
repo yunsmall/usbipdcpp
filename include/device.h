@@ -49,10 +49,9 @@ namespace usbipcpp {
         std::shared_ptr<AbstDeviceHandler> handler;
 
         template<typename T, typename... Args>
-        UsbDevice &with_handler(Args &&... args) {
+        void with_handler(Args &&... args) {
             handler = std::dynamic_pointer_cast<AbstDeviceHandler>(
                     std::make_shared<T>(*this, std::forward<Args>(args)...));
-            return *this;
         }
 
         [[nodiscard]] std::vector<std::uint8_t> to_bytes_with_interfaces() const;
@@ -63,12 +62,6 @@ namespace usbipcpp {
         asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
         std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);
-
-        //该函数不可阻塞，传进来的ec是拿来检测设备返回的错误类型的，不是拿来返回给调用者的
-        //该类型需要在将数据传给usb设备后调用，用以发还设备返回的数据，直接调用即可
-
-        //该函数不可阻塞，将构造好的UsbIpCmdSubmit传进来，服务器会异步发走
-        // using handle_callback_type = std::function<void(std::uint32_t status,const data_type& received_data,const data_type& iso_data)>;
 
         void handle_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd,
                         std::uint32_t seqnum, const UsbEndpoint &ep,
