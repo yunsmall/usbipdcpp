@@ -40,7 +40,7 @@ add_library(${PROJECT_NAME}_libusb STATIC ${LIBUSB_SRC_FILES})
 target_link_libraries(${PROJECT_NAME}_libusb PUBLIC PkgConfig::libusb)
 target_link_libraries(${PROJECT_NAME}_libusb PUBLIC ${PROJECT_NAME})
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if ((UNIX AND NOT APPLE) OR ANDROID)
     pkg_check_modules(libevdev REQUIRED IMPORTED_TARGET libevdev)
 
     file(GLOB_RECURSE LIBEVDEV_MOUSE_SRC examples/libevdev_mouse/*.cpp)
