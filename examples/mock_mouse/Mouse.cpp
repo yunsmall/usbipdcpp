@@ -8,22 +8,12 @@
 
 using namespace usbipdcpp;
 
-class MouseInterfaceHandler : public HidVirtualInterfaceHandler {
+class MockMouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:
-    MouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
+    MockMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         HidVirtualInterfaceHandler(handle_interface, string_pool) {
 
     }
-
-    void handle_non_standard_request_type_control_urb_to_endpoint(Session &session, std::uint32_t seqnum,
-                                                                  const UsbEndpoint &ep, std::uint32_t transfer_flags,
-                                                                  std::uint32_t transfer_buffer_length,
-                                                                  const SetupPacket &setup, const data_type &out_data,
-                                                                  std::error_code &ec) override {
-        SPDLOG_WARN("unhandled handle_non_standard_request_type_control_urb_to_endpoint");
-        session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
-    }
-
     void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                    const data_type &out_data,
@@ -136,8 +126,8 @@ X/Y轴相对移动量
     bool left_pressed = false;
     bool right_pressed = false;
     bool middle_pressed = false;
-    bool side1_pressed = false;
-    bool side2_pressed = false;
+    bool side_pressed = false;
+    bool extra_pressed = false;
 
     std::int8_t wheel_vertical = 0;
 
@@ -153,7 +143,7 @@ X/Y轴相对移动量
     }
 };
 
-void MouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+void MockMouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length, const data_type &out_data,
                                                       std::error_code &ec) {
@@ -170,15 +160,15 @@ void MouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uin
             if (middle_pressed) {
                 ret[0] |= 0b00000100;
             }
-            if (side1_pressed) {
+            if (side_pressed) {
                 ret[0] |= 0b00001000;
             }
-            if (side2_pressed) {
+            if (extra_pressed) {
                 ret[0] |= 0b00010000;
             }
-            ret[1] = wheel_vertical;
-            ret[2] = move_horizontal;
-            ret[3] = move_vertical;
+            ret[1] = move_horizontal;
+            ret[2] = move_vertical;
+            ret[3] = wheel_vertical;
         }
 
         session.submit_ret_submit(
@@ -193,57 +183,57 @@ void MouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uin
 
 }
 
-void MouseInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+void MockMouseInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_clear_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MouseInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+void MockMouseInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                                            std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_clear_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-std::uint8_t MouseInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
+std::uint8_t MockMouseInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
     return 0;
 }
 
-void MouseInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+void MockMouseInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
     if (alternate_setting != 0) {
         SPDLOG_WARN("unhandled request_set_interface");
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
 }
 
-std::uint16_t MouseInterfaceHandler::request_get_status(std::uint32_t *p_status) {
+std::uint16_t MockMouseInterfaceHandler::request_get_status(std::uint32_t *p_status) {
     return 0;
 }
 
-std::uint16_t MouseInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
+std::uint16_t MockMouseInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
     return 0;
 }
 
-void MouseInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+void MockMouseInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_set_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MouseInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+void MockMouseInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                                          std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_set_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-std::uint16_t MouseInterfaceHandler::get_report_descriptor_size() {
+std::uint16_t MockMouseInterfaceHandler::get_report_descriptor_size() {
     return report_descriptor.size();
 }
 
-data_type MouseInterfaceHandler::get_report_descriptor() {
+data_type MockMouseInterfaceHandler::get_report_descriptor() {
     return report_descriptor;
 
 }
 
-void MouseInterfaceHandler::handle_non_hid_request_type_control_urb(Session &session, std::uint32_t seqnum,
+void MockMouseInterfaceHandler::handle_non_hid_request_type_control_urb(Session &session, std::uint32_t seqnum,
                                                                     const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                                                     std::uint32_t transfer_buffer_length,
                                                                     const SetupPacket &setup_packet,
@@ -251,7 +241,7 @@ void MouseInterfaceHandler::handle_non_hid_request_type_control_urb(Session &ses
     session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 
-data_type MouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+data_type MockMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                     std::uint32_t *p_status) {
     auto report_type = static_cast<HIDReportType>(type);
     if (report_type == HIDReportType::Input) {
@@ -271,11 +261,11 @@ data_type MouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint
                 break;
             }
             case 3: {
-                vector_append_to_net(result, (std::uint8_t) side1_pressed);
+                vector_append_to_net(result, (std::uint8_t) side_pressed);
                 break;
             }
             case 4: {
-                vector_append_to_net(result, (std::uint8_t) side2_pressed);
+                vector_append_to_net(result, (std::uint8_t) extra_pressed);
                 break;
             }
             case 5: {
@@ -306,13 +296,13 @@ data_type MouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint
     return {};
 }
 
-void MouseInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+void MockMouseInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                const data_type &data, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_set_report");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-data_type MouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+data_type MockMouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                   std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type result;
@@ -320,7 +310,7 @@ data_type MouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_
     return result;
 }
 
-void MouseInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
+void MockMouseInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
     std::lock_guard lock(data_mutex);
     idle_speed = speed;
 }
@@ -348,11 +338,11 @@ int main() {
                     }
             }
     };
-    interfaces[0].with_handler<MouseInterfaceHandler>(string_pool);
+    interfaces[0].with_handler<MockMouseInterfaceHandler>(string_pool);
 
 
     auto mock_mouse = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipcpp/mock_mouse",
+            .path = "/usbipdcpp/mock_mouse",
             .busid = "1-1",
             .bus_num = 1,
             .dev_num = 1,
@@ -371,7 +361,7 @@ int main() {
     });
     mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
 
-    MouseInterfaceHandler &mouse_interface_handler = *std::dynamic_pointer_cast<MouseInterfaceHandler>(
+    MockMouseInterfaceHandler &mouse_interface_handler = *std::dynamic_pointer_cast<MockMouseInterfaceHandler>(
             mock_mouse->interfaces[0].handler);
 
 

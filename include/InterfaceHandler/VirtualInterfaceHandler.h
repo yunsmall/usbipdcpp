@@ -31,14 +31,14 @@ namespace usbipdcpp {
                                                                   std::uint32_t transfer_flags,
                                                                   std::uint32_t transfer_buffer_length,
                                                                   const SetupPacket &setup,
-                                                                  const data_type &out_data, std::error_code &ec) =0;
+                                                                  const data_type &out_data, std::error_code &ec);
         virtual void handle_non_standard_request_type_control_urb_to_endpoint(Session &session, std::uint32_t seqnum,
                                                                               const UsbEndpoint &ep,
                                                                               std::uint32_t transfer_flags,
                                                                               std::uint32_t transfer_buffer_length,
                                                                               const SetupPacket &setup,
                                                                               const data_type &out_data,
-                                                                              std::error_code &ec) =0;
+                                                                              std::error_code &ec) ;
 
         virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t* p_status) =0;
         virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t* p_status) =0;

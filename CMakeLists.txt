@@ -31,11 +31,24 @@ file(GLOB DEVICE_HANDLER_SRC_FILES src/DeviceHandler/*.cpp)
 file(GLOB INTERFACE_HANDLER_SRC_FILES src/InterfaceHandler/*.cpp)
 file(GLOB LIBUSB_SRC_FILES src/libusb_handler/*.cpp)
 
-add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES} ${INTERFACE_HANDLER_SRC_FILES} ${LIBUSB_SRC_FILES})
+add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES} ${INTERFACE_HANDLER_SRC_FILES})
 target_link_libraries(${PROJECT_NAME} PUBLIC asio::asio)
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
-target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::libusb)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
+
+add_library(${PROJECT_NAME}_libusb STATIC ${LIBUSB_SRC_FILES})
+target_link_libraries(${PROJECT_NAME}_libusb PUBLIC PkgConfig::libusb)
+target_link_libraries(${PROJECT_NAME}_libusb PUBLIC ${PROJECT_NAME})
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    pkg_check_modules(libevdev REQUIRED IMPORTED_TARGET libevdev)
+
+    file(GLOB_RECURSE LIBEVDEV_MOUSE_SRC examples/libevdev_mouse/*.cpp)
+    add_executable(libevdev_mouse ${LIBEVDEV_MOUSE_SRC})
+    target_link_libraries(libevdev_mouse PUBLIC ${PROJECT_NAME})
+    target_link_libraries(libevdev_mouse PUBLIC PkgConfig::libevdev)
+    target_include_directories(libevdev_mouse PRIVATE examples/libevdev_mouse/include)
+endif ()
 
 file(GLOB_RECURSE MOCK_MOUSE_SRC examples/mock_mouse/*.cpp)
 add_executable(mock_mouse ${MOCK_MOUSE_SRC})
@@ -46,7 +59,7 @@ add_executable(empty_server examples/empty_server.cpp)
 target_link_libraries(empty_server ${PROJECT_NAME})
 
 add_executable(libusb_server examples/libusb_server.cpp)
-target_link_libraries(libusb_server ${PROJECT_NAME})
+target_link_libraries(libusb_server ${PROJECT_NAME}_libusb)
 
 include(GoogleTest)
 
