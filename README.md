@@ -2,22 +2,53 @@
 
 A C++ library for creating usbip servers
 
-> ✅ Linux support: Implemented libusb-based usbip server functionality  
-> ✅ Virtual HID device: Added virtual HID USB device creation (see `examples/` directory),
-can create virtual usb devices in any platform  
-> ⚠️ **Windows libusb server not supported**: Control transfers currently hang - solutions welcome!
+> ✅ Linux server: libusb-based usbip implementation  
+> ✅ Cross-platform virtual HID: Create virtual USB devices on any OS (see `examples/`)  
+> ⚠️ **Windows libusb server unavailable**: Control transfers hang - solutions welcome!
 
-## Getting Help
-> 📝 **Note on language**: Due to time constraints, code comments and logs primarily use Chinese with some English.  
-> The code logic remains clear and understandable - with careful reading you should grasp the implementation.  
-> PRs for English translations are welcome!
+Contributions welcome! 🚀
 
-To implement additional virtual USB devices (given USB protocol complexity):
-1. Define device descriptors using `usbipdcpp::UsbDevice`
-2. Implement device logic by inheriting from `AbstDeviceHandler`
-3. For virtual devices, implement interface logic via `VirtualInterfaceHandler` subclassing
+## Architecture Overview
 
-Contribute your device implementations! 🚀
+USB communication and network I/O are both resource-intensive operations. This project implements a fully asynchronous architecture using:
+- **C++20 coroutines** for network operations
+- **asio** for asynchronous I/O
+- **libusb**'s async API for USB communications
+
+### Threading Model
+Three dedicated threads ensure optimal performance:
+1. **Network I/O thread**: Runs `asio::io_context::run()`
+2. **USB transfer thread**: Handles `libusb_handle_events()`
+3. **Worker thread pool**: Processes device logic
+
+Data flows through the system without blocking:
+```
+Network thread → libusb_submit_transfer → USB thread → Callback → Network thread
+```
+This architecture achieves high CPU efficiency by minimizing thread contention.
+
+### Virtual Device Implementation
+Virtual device handlers should:
+- Avoid blocking the network thread
+- Process requests in worker threads
+- Submit responses via callbacks
+
+---
+
+## Getting Started
+
+### Code Note
+> 📝 **Language notice**: Comments/logs primarily use Chinese for efficiency.  
+> The code structure remains clear and approachable. PRs for English translations appreciated!
+
+### Extending Functionality
+To implement custom USB devices:
+1. Define descriptors with `usbipdcpp::UsbDevice`
+2. Implement device logic via `AbstDeviceHandler` subclass
+3. Handle interface-specific operations with `VirtualInterfaceHandler`
+4. Manage endpoint logic within interfaces
+
+For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op implementations for standard requests.
 
 ---
 
@@ -31,6 +62,6 @@ cmake --install build
 ---
 
 ## Acknowledgements
-Special thanks to these projects - I learned immensely from them. You may recognize similar patterns:
+This project stands on the shoulders of giants. Special thanks to:
 - [usbipd-libusb](https://github.com/raydudu/usbipd-libusb)
 - [usbip](https://github.com/jiegec/usbip)  

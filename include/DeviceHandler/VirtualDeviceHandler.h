@@ -13,9 +13,9 @@ namespace usbipdcpp {
             change_device_ep0_max_size_by_speed();
 
             string_configuration_value = string_pool.new_string(L"Default Configuration");
-            string_manufacturer_value = string_pool.new_string(L"Usbipcpp");
-            string_product_value = string_pool.new_string(L"Usbipcpp Virtual Device");
-            string_serial_value = string_pool.new_string(L"Usbipcpp Serial");
+            string_manufacturer_value = string_pool.new_string(L"Usbipdcpp");
+            string_product_value = string_pool.new_string(L"Usbipdcpp Virtual Device");
+            string_serial_value = string_pool.new_string(L"Usbipdcpp Serial");
         }
 
         void dispatch_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
@@ -60,13 +60,6 @@ namespace usbipdcpp {
                                                                   const SetupPacket &setup_packet,
                                                                   const data_type &out_data,
                                                                   std::error_code &ec) =0;
-        virtual void handle_non_standard_control_urb_to_endpoint(Session &session,
-                                                                 std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                                 std::uint32_t transfer_flags,
-                                                                 std::uint32_t transfer_buffer_length,
-                                                                 const SetupPacket &setup_packet,
-                                                                 const data_type &out_data,
-                                                                 std::error_code &ec) =0;
 
         virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
 

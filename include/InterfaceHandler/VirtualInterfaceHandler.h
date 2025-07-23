@@ -9,7 +9,7 @@ namespace usbipdcpp {
         explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
             InterfaceHandlerBase(handle_interface), string_pool(string_pool) {
 
-            string_interface = string_pool.new_string(L"Usbipcpp Virtual Interface");
+            string_interface = string_pool.new_string(L"Usbipdcpp Virtual Interface");
         }
 
         void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,

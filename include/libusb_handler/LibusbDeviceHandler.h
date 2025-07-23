@@ -13,6 +13,8 @@
 
 namespace usbipdcpp {
     class LibusbDeviceHandler : public DeviceHandlerBase {
+        friend class LibusbServer;
+
     public:
         explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
 
@@ -44,7 +46,7 @@ namespace usbipdcpp {
                                          const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                          std::error_code &ec) override;
 
-        int tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
+        bool tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
             auto target_endp = setup_packet.index;
             spdlog::info("tweak_clear_halt_cmd");
 
@@ -56,10 +58,11 @@ namespace usbipdcpp {
             else {
                 SPDLOG_DEBUG("libusb_clear_halt() done: endp {}", target_endp);
             }
-            return ret;
+            // return ret;
+            return true;
         }
 
-        int tweak_set_interface_cmd(const SetupPacket &setup_packet) {
+        bool tweak_set_interface_cmd(const SetupPacket &setup_packet) {
             uint16_t alternate = setup_packet.value;
             uint16_t interface = setup_packet.index;
 
@@ -79,59 +82,47 @@ namespace usbipdcpp {
                         get_device_busid(libusb_get_device(native_handle)),
                         interface, alternate);
             }
-            return ret;
+            // return ret;
+            return true;
         }
 
-        int tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
+        bool tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
 
             uint16_t config = libusb_le16_to_cpu(setup_packet.value);
 
-            /*
-             * I have never seen a multi-config device. Very rare.
-             * For most devices, this will be called to choose a default
-             * configuration only once in an initialization phase.
-             *
-             * set_configuration may change a device configuration and its device
-             * drivers will be unbound and assigned for a new device configuration.
-             * This means this usbip driver will be also unbound when called, then
-             * eventually reassigned to the device as far as driver matching
-             * condition is kept.
-             *
-             * Unfortunately, an existing usbip connection will be dropped
-             * due to this driver unbinding. So, skip here.
-             * A user may need to set a special configuration value before
-             * exporting the device.
-             */
-            //TODO not sure if it is the point here
-            SPDLOG_INFO("{}: usb_set_configuration {} ... skip!", get_device_busid(libusb_get_device(native_handle)),
-                        config);
+            auto ret = libusb_set_configuration(native_handle, config);
+            if (ret) {
+                SPDLOG_ERROR(
+                        "{}: libusb_set_configuration error: config {} ret {}",
+                        get_device_busid(libusb_get_device(native_handle)), config, ret);
+            }
+            else {
+                SPDLOG_DEBUG(
+                        "{}: libusb_set_configuration done: config {}",
+                        get_device_busid(libusb_get_device(native_handle)), config);
+            }
 
             // return 0;
-            return -1;
+            // return -1;
+            return true;
         }
 
 
         int tweak_reset_device_cmd(const SetupPacket &setup_packet) {
-            // struct stub_priv *priv = (struct stub_priv *) trx->user_data;
-            // struct stub_device *sdev = priv->sdev;
-            //
+
             SPDLOG_INFO("{}: usb_queue_reset_device",
                         get_device_busid(libusb_get_device(native_handle)));
 
-            /*
-             * With the implementation of pre_reset and post_reset the driver no
-             * longer unbinds. This allows the use of synchronous reset.
-             */
-            //libusb_reset_device(sdev->dev_handle);
+            // libusb_reset_device(native_handle);
             return 0;
         }
 
         /**
-         * @brief 返回值为0代表已经执行过了，不需要再对usb设备发消息。返回值<0代表控制出错或者需要发消息，因此当小于0的时候需要提交消息
+         * @brief 返回是否做了特殊操作
          * @param setup_packet
          * @return
          */
-        int tweak_special_requests(const SetupPacket &setup_packet) {
+        bool tweak_special_requests(const SetupPacket &setup_packet) {
             if (setup_packet.is_clear_halt_cmd()) {
                 return tweak_clear_halt_cmd(setup_packet);
             }
@@ -141,11 +132,11 @@ namespace usbipdcpp {
             else if (setup_packet.is_set_configuration_cmd()) {
                 return tweak_set_configuration_cmd(setup_packet);
             }
-            else if (setup_packet.is_reset_device_cmd()) {
-                return tweak_reset_device_cmd(setup_packet);
-            }
+            // else if (setup_packet.is_reset_device_cmd()) {
+            //     return tweak_reset_device_cmd(setup_packet);
+            // }
             SPDLOG_DEBUG("不需要调整包");
-            return -1;
+            return false;
         }
 
         static uint8_t get_libusb_transfer_flags(uint32_t in) {
@@ -156,12 +147,6 @@ namespace usbipdcpp {
             if (in & static_cast<std::uint32_t>(TransferFlag::URB_ZERO_PACKET))
                 flags |= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 
-            /*
-             * URB_FREE_BUFFER is turned off to free by stub_free_priv_and_trx()
-             *
-             * URB_ISO_ASAP, URB_NO_TRANSFER_DMA_MAP, URB_NO_FSBR and
-             * URB_NO_INTERRUPT are ignored because unsupported by libusb.
-             */
             return flags;
         }
 

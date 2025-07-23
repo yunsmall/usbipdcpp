@@ -68,7 +68,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 auto to_be_sent = UsbIpResponse::OpRepDevlist::create_from_devices(server.available_devices).to_bytes();
                 co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
                 SPDLOG_TRACE("成功发送 OpRepDevlist 包");
-                // need_break = true;
+                need_break = true;
             }
             else if constexpr (std::is_same_v<UsbIpCommand::OpReqImport, T>) {
                 SPDLOG_TRACE("收到 OpReqImport 包");

@@ -21,10 +21,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
                                                         std::uint32_t transfer_buffer_length,
                                                         const SetupPacket &setup_packet, const data_type &req,
                                                         std::error_code &ec) {
-    //auto tweak_ret = -1;
-    auto tweak_ret = tweak_special_requests(setup_packet);
+    //auto tweaked = -1;
+    auto tweaked = tweak_special_requests(setup_packet);
     //尝试执行特殊操作再对usb进行控制
-    if (tweak_ret < 0) {
+    if (!tweaked) {
         SPDLOG_DEBUG("控制传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
 
         auto transfer = libusb_alloc_transfer(0);
@@ -162,7 +162,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
     int err = 0;
     {
-        std::shared_lock lock(transferring_data_mutex);
+        std::lock_guard lock(transferring_data_mutex);
         if (transferring_data.contains(seqnum)) {
             err = libusb_cancel_transfer(transferring_data.at(seqnum));
         }
