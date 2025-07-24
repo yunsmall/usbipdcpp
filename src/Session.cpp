@@ -79,7 +79,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 }
 
                 auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
-                std::optional<UsbIpResponse::OpRepImport> op_rep_import = std::nullopt;
+                UsbIpResponse::OpRepImport op_rep_import{};
                 SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
                 {
                     std::lock_guard guard(server.used_devices_mutex);
@@ -87,8 +87,9 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                     //已经在使用的不支持导出
                     if (server.used_devices.contains(wanted_busid)) {
                         spdlog::warn("正在使用的设备不支持导出");
-                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure();
-                        op_rep_import->status = static_cast<std::uint32_t>(OperationStatuType::DevBusy);
+                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                static_cast<std::uint32_t>(OperationStatuType::DevBusy));
+                        need_break = true;
                     }
                     else {
                         //找能用的设备
@@ -124,18 +125,14 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                     }
                     else {
                         spdlog::info("不存在目标设备，不可导入");
-                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure();
-                        op_rep_import->status = static_cast<std::uint32_t>(OperationStatuType::NoDev);
+                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                static_cast<std::uint32_t>(OperationStatuType::NoDev));
+                        need_break = true;
                     }
 
                 }
 
-                if (!op_rep_import) {
-                    //请求错误
-                    op_rep_import = UsbIpResponse::OpRepImport::create_on_failure();
-                }
-
-                auto to_be_sent = op_rep_import->to_bytes();
+                auto to_be_sent = op_rep_import.to_bytes();
                 auto size = co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
                 SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
                 SPDLOG_TRACE("成功发送 OpRepImport 包", size);

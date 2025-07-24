@@ -107,13 +107,3 @@ void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
         SPDLOG_ERROR("设备没注册handler");
     }
 }
-
-void usbipdcpp::UsbDevice::stop_transfer() {
-    SPDLOG_TRACE("设备要关闭传输，将其转发到对应handler中");
-    if (handler) {
-        handler->stop_transfer();
-    }
-    else {
-        SPDLOG_ERROR("设备没注册handler");
-    }
-}

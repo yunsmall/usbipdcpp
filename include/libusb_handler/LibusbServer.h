@@ -23,6 +23,11 @@ namespace usbipdcpp {
         static std::pair<std::string, std::string> get_device_names(libusb_device* device);
         static void print_device(libusb_device *dev);
         static void list_host_devices();
+        /**
+         * @brief return a libusb_device pointer which you need to call libusb_unref_device after using.
+         * @param busid
+         * @return nullptr is not found else found
+         */
         static libusb_device *find_by_busid(const std::string &busid);
     protected:
         void claim_interface(libusb_device_handle* dev_handle, std::error_code& ec);

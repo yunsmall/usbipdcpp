@@ -21,10 +21,6 @@ void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::Us
 
 void VirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
 }
-
-void VirtualDeviceHandler::stop_transfer() {
-}
-
 void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
     auto speed = static_cast<UsbSpeed>(handle_device.speed);
     switch (speed) {

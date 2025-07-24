@@ -41,12 +41,12 @@ int main() {
         std::cin >> cmd;
         switch (cmd) {
             case 'l': {
-                spdlog::info("列出主机所有设备");
+                spdlog::info("List all usb devices in the host");
                 LibusbServer::list_host_devices();
                 break;
             }
             case 'b': {
-                spdlog::info("绑定设备");
+                spdlog::info("Binding device");
                 std::string target_busid;
                 std::cin >> target_busid;
                 auto device = server.find_by_busid(target_busid);
@@ -54,12 +54,12 @@ int main() {
                     server.bind_host_device(device);
                 }
                 else {
-                    spdlog::warn("找不到busid为{}的设备", target_busid);
+                    spdlog::warn("Can't find a device with busid {}", target_busid);
                 }
                 break;
             }
             case 'u': {
-                spdlog::info("解绑设备");
+                spdlog::info("Unbinding device");
                 std::string target_busid;
                 std::cin >> target_busid;
                 auto device = LibusbServer::find_by_busid(target_busid);
@@ -67,29 +67,28 @@ int main() {
                     server.unbind_host_device(device);
                 }
                 else {
-                    spdlog::warn("找不到busid为{}的设备", target_busid);
+                    spdlog::warn("Can't find a device with busid {}", target_busid);
                 }
                 break;
             }
             case 'q': {
-                spdlog::info("尝试关闭服务器");
+                spdlog::info("Trying to close server");
                 server.stop();
-                spdlog::info("成功关闭服务器");
+                spdlog::info("Closed server successfully");
                 goto loop_end;
                 break;
             }
-            case 'h': {
-                std::cout<<R"(
-h 打印本帮助
-l 打印本设备所有的可用usb设备
-b busid 尝试将一个设备导出
-u busid 尝试将一个设备取消导出
-q 关闭服务器
-)";
-                break;
-            }
+
             default: {
-                spdlog::warn("未知终端命令");
+                spdlog::warn("Unknown command {}", cmd);
+            }
+            case 'h': {
+                std::cout << R"(
+h : Print this help information.
+l : List all usb devices in the host.
+b busid : Try to bind a device.
+u busid : Try to unbind a device.
+q : Close the server.)" << std::endl;
                 break;
             }
         }

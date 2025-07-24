@@ -172,9 +172,6 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) 
     }
 }
 
-void usbipdcpp::LibusbDeviceHandler::stop_transfer() {
-}
-
 void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &session,
                                                                  std::uint32_t seqnum,
                                                                  const UsbEndpoint &ep,

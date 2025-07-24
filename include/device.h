@@ -70,8 +70,6 @@ namespace usbipdcpp {
                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
         void handle_unlink_seqnum(std::uint32_t seqnum);
 
-        void stop_transfer();
-
         bool operator==(const UsbDevice &other) const {
             return path == other.path &&
                    busid == other.busid &&

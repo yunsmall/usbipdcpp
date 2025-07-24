@@ -133,10 +133,15 @@ asio::awaitable<void> usbipdcpp::UsbIpResponse::OpRepImport::from_socket(asio::i
     co_return;
 }
 
-usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_failure() {
+usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_failure_with_status(
+        std::uint32_t status) {
     return {
-            .status = static_cast<std::uint32_t>(OperationStatuType::NA),
+            .status = status,
     };
+}
+
+usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_failure() {
+    return create_on_failure_with_status(static_cast<std::uint32_t>(OperationStatuType::NA));
 }
 
 usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::create_on_success(

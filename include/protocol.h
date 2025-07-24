@@ -232,8 +232,13 @@ namespace usbipdcpp {
                        device && other.device &&
                        *device == *(other.device);
             };
-
+            static OpRepImport create_on_failure_with_status(std::uint32_t status);
             static OpRepImport create_on_failure();
+            /**
+             * @brief A shared pointer copy construct that shares the same pointed object
+             * @param device
+             * @return
+             */
             static OpRepImport create_on_success(std::shared_ptr<UsbDevice> device);
         };
 

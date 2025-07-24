@@ -27,7 +27,6 @@ namespace usbipdcpp {
 
 
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
-        void stop_transfer() override;
 
     protected:
         void change_device_ep0_max_size_by_speed();

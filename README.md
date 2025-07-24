@@ -2,18 +2,19 @@
 
 A C++ library for creating usbip servers
 
-> ✅ Linux server: libusb-based usbip implementation  
-> ✅ Cross-platform virtual HID: Create virtual USB devices on any OS (see `examples/`)  
-> ⚠️ **Windows libusb server unavailable**: Control transfers hang - solutions welcome!
+> ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)  
+> ✅ Virtual HID devices: Create virtual USB devices on any platform without libusb dependency (see `examples/`)
 
 Contributions welcome! 🚀
+
+---
 
 ## Architecture Overview
 
 USB communication and network I/O are both resource-intensive operations. This project implements a fully asynchronous architecture using:
 - **C++20 coroutines** for network operations
 - **asio** for asynchronous I/O
-- **libusb**'s async API for USB communications
+- **libusb**'s async API for USB communications (physical devices)
 
 ### Threading Model
 Three dedicated threads ensure optimal performance:
@@ -45,10 +46,23 @@ Virtual device handlers should:
 To implement custom USB devices:
 1. Define descriptors with `usbipdcpp::UsbDevice`
 2. Implement device logic via `AbstDeviceHandler` subclass
-3. Handle interface-specific operations with `VirtualInterfaceHandler`
-4. Manage endpoint logic within interfaces
+3. Handle interface-specific operations with `VirtualInterfaceHandler`, and implements the logic of the endpoints inside the interface
 
 For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op implementations for standard requests.
+
+---
+
+## ⚠️ Important Windows Notice
+
+Using libusb servers on Windows requires driver replacement:
+1. Use [Zadig](https://zadig.akeo.ie/) to install WinUSB driver
+    - Select target device (enable "List All Devices" if missing)
+    - ⚠️ **WARNING**: Replacing mouse/keyboard drivers may cause input loss
+2. After use, revert drivers via:
+    - `Win+X` → Device Manager → Select device → Roll back driver
+
+Due to this complexity, we recommend [usbipd-win](https://github.com/dorssel/usbipd-win) for physical devices on Windows.  
+This project is ideal for implementing **virtual USB devices** on Windows.
 
 ---
 
@@ -62,6 +76,6 @@ cmake --install build
 ---
 
 ## Acknowledgements
-This project stands on the shoulders of giants. Special thanks to:
+This project builds upon these foundational works:
 - [usbipd-libusb](https://github.com/raydudu/usbipd-libusb)
 - [usbip](https://github.com/jiegec/usbip)  

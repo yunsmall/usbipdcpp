@@ -43,8 +43,6 @@ namespace usbipdcpp {
          */
         virtual void handle_unlink_seqnum(std::uint32_t seqnum);
 
-        virtual void stop_transfer() =0;
-
     protected:
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
         // In传输out_data为空，transfer_buffer_length不是0

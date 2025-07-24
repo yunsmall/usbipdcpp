@@ -40,16 +40,6 @@ void usbipdcpp::Server::stop() {
     should_stop = true;
     network_io_thread.join();
 
-    {
-        std::lock_guard lock(available_devices_mutex);
-        std::lock_guard lock2(used_devices_mutex);
-        for (auto &available_device: available_devices) {
-            available_device->stop_transfer();
-        }
-        for (auto &val: used_devices | std::views::values) {
-            val->stop_transfer();
-        }
-    }
     spdlog::info("成功关闭所有设备的传输");
 
     {
@@ -90,8 +80,19 @@ usbipdcpp::Server::~Server() {
     //otherwise, because if the socket object in the session is destroyed later,
     //it will destroy io_context first and access io_context, thus accessing
     //illegal memory
-    std::lock_guard lock(session_list_mutex);
-    sessions.clear();
+    {
+        std::lock_guard lock(session_list_mutex);
+        sessions.clear();
+    }
+
+    {
+        std::lock_guard lock(available_devices_mutex);
+        available_devices.clear();
+    }
+    {
+        std::lock_guard lock(used_devices_mutex);
+        used_devices.clear();
+    }
 
 }
 

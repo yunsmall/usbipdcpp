@@ -22,7 +22,6 @@ namespace usbipdcpp {
 
 
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
-        void stop_transfer() override;
 
     protected:
         void handle_control_urb(Session &session,
