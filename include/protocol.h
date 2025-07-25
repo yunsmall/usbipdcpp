@@ -41,6 +41,7 @@ namespace usbipdcpp {
         INTERNAL_ERROR,
         INVALID_ARG,
         UNIMPLEMENTED,
+        TRANSFER_ERROR,
     };
 
     //tools/usbip_common.h

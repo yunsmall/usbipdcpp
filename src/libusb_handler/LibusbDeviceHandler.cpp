@@ -62,6 +62,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
         if (ret < 0) {
             SPDLOG_ERROR("传输给设备失败");
             libusb_free_transfer(transfer);
+            ec = make_error_code(ErrorType::TRANSFER_ERROR);
         }
         return;
     }
@@ -118,6 +119,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
     if (err < 0) {
         SPDLOG_ERROR("块传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
+        ec = make_error_code(ErrorType::TRANSFER_ERROR);
     }
 }
 
@@ -156,6 +158,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
     if (err < 0) {
         SPDLOG_ERROR("中断传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
+        ec = make_error_code(ErrorType::TRANSFER_ERROR);
     }
 }
 
@@ -220,6 +223,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
     if (err < 0) {
         SPDLOG_ERROR("同步传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
+        ec = make_error_code(ErrorType::TRANSFER_ERROR);
     }
 
 

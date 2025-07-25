@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(asio REQUIRED)
+find_dependency(spdlog REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/usbipdcppTargets.cmake")
+
+set(usbipdcpp_FOUND on)
+set_and_check(usbipdcpp_INCLUDE_DIR "@PACKAGE_INCLUDE_INSTALL_DIR@")
+set_and_check(usbipdcpp_LIB_DIR "@PACKAGE_LIB_INSTALL_DIR@")

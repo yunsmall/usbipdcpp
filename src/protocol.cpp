@@ -40,6 +40,9 @@ std::string usbipdcpp::TransferErrorCategory::message(int _Errval) const {
         case ErrorType::UNIMPLEMENTED: {
             return "Unimplemented";
         }
+        case ErrorType::TRANSFER_ERROR: {
+            return "Transfer Error";
+        }
         default: ;
             return "Unknown Error";
     }
