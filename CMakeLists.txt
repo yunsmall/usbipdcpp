@@ -80,13 +80,13 @@ target_link_libraries(test_network PRIVATE GTest::gtest GTest::gtest_main)
 gtest_discover_tests(test_network)
 
 
-export(TARGETS ${PROJECT_NAME}
+export(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_libusb
         NAMESPACE ${PROJECT_NAME}::
         FILE ${PROJECT_NAME}Targets.cmake
 )
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_libusb
         EXPORT ${PROJECT_NAME}Targets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -75,6 +75,19 @@ cmake --install build
 
 ---
 
+## Usage
+```cmake
+find_package(usbipdcpp CONFIG REQUIRED)
+target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp)
+
+# Or if want to use libusb server
+
+find_package(usbipdcpp CONFIG REQUIRED COMPONENTS libusb)
+target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::usbipdcpp_libusb)
+```
+
+---
+
 ## Acknowledgements
 This project builds upon these foundational works:
 - [usbipd-libusb](https://github.com/raydudu/usbipd-libusb)

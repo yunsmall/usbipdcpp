@@ -1,12 +1,20 @@
 @PACKAGE_INIT@
 
+
+include("${CMAKE_CURRENT_LIST_DIR}/usbipdcppTargets.cmake")
+
+
 include(CMakeFindDependencyMacro)
 
 find_dependency(asio REQUIRED)
 find_dependency(spdlog REQUIRED)
 
-include("${CMAKE_CURRENT_LIST_DIR}/usbipdcppTargets.cmake")
+foreach (comp ${usbipdcpp_FIND_COMPONENTS})
+    if (${comp} STREQUAL libusb)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(libusb REQUIRED IMPORTED_TARGET libusb-1.0)
+        set(usbipdcpp_libusb_FOUND TRUE)
+    endif ()
+endforeach ()
 
-set(usbipdcpp_FOUND on)
-set_and_check(usbipdcpp_INCLUDE_DIR "@PACKAGE_INCLUDE_INSTALL_DIR@")
-set_and_check(usbipdcpp_LIB_DIR "@PACKAGE_LIB_INSTALL_DIR@")
+check_required_components(usbipdcpp)
