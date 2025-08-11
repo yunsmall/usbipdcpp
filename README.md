@@ -20,7 +20,7 @@ USB communication and network I/O are both resource-intensive operations. This p
 Three dedicated threads ensure optimal performance:
 1. **Network I/O thread**: Runs `asio::io_context::run()`
 2. **USB transfer thread**: Handles `libusb_handle_events()`
-3. **Worker thread pool**: Processes device logic
+3. **Main thread**: Control the behavior of usbip server, start the server
 
 Data flows through the system without blocking:
 ```

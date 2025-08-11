@@ -372,7 +372,7 @@ int main() {
 
     server.start(endpoint);
 
-    std::chrono::seconds run_time{10};
+    std::chrono::seconds run_time{30};
     SPDLOG_INFO("Start turning over left button");
     for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {
         {

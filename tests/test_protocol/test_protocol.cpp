@@ -58,14 +58,74 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocket) {
             .transfer_flags = 0x1234,
             .transfer_buffer_length = transfer_buffer_length,
             .start_frame = 0x8765,
-            .number_of_packets = 0x4321,
+            .number_of_packets = 0,
             .interval = 0x1111,
-            .setup = {1, 2, 3, 4, 5, 6, 7, 8},
+            .setup = SetupPacket::parse({1, 2, 3, 4, 5, 6, 7, 8}),
             .data = data_type(transfer_buffer_length, 0),
             .iso_packet_descriptor = {}
     };
     auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
 
+
+    ASSERT_TRUE(received==origin);
+}
+
+TEST(TestProtocol, UsbIpCmdSubmitISOReadSocket) {
+    std::uint32_t transfer_buffer_length = 100;
+    data_type data(transfer_buffer_length, 0);
+    for (int i=0;i<transfer_buffer_length;i++) {
+        data[i] = i;
+    }
+    std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{
+            UsbIpIsoPacketDescriptor{
+                    .offset = 0,
+                    .length = 25,
+                    .actual_length = 10,
+                    .status = 0
+            },
+            UsbIpIsoPacketDescriptor{
+                    .offset = 25,
+                    .length = transfer_buffer_length - 25,
+                    .actual_length = 15,
+                    .status = 0
+            }
+    };
+    UsbIpCommand::UsbIpCmdSubmit origin{
+            .header = UsbIpHeaderBasic{
+                    .command = USBIP_CMD_SUBMIT,
+                    .seqnum = 0x1234,
+                    .devid = 0x5678,
+                    .direction = UsbIpDirection::Out,
+                    .ep = 0x80
+            },
+            .transfer_flags = 0x1234,
+            .transfer_buffer_length = transfer_buffer_length,
+            .start_frame = 0x8765,
+            .number_of_packets = static_cast<std::uint32_t>(iso_packet_descriptors.size()),
+            .interval = 0x1111,
+            .setup = SetupPacket::parse({1, 2, 3, 4, 5, 6, 7, 8}),
+            .data = data,
+            .iso_packet_descriptor = iso_packet_descriptors
+    };
+    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
+
+
+    ASSERT_TRUE(received==origin);
+}
+
+TEST(TestProtocol, UsbIpCmdUnlinkReadSocket) {
+
+    UsbIpCommand::UsbIpCmdUnlink origin{
+            .header = UsbIpHeaderBasic{
+                    .command = USBIP_CMD_SUBMIT,
+                    .seqnum = 0x1234,
+                    .devid = 0x5678,
+                    .direction = UsbIpDirection::Out,
+                    .ep = 0x80
+            },
+            .unlink_seqnum = 0xabcd
+    };
+    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdUnlink>(origin, USBIP_CMD_UNLINK);
 
     ASSERT_TRUE(received==origin);
 }

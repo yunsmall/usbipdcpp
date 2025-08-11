@@ -165,7 +165,8 @@ namespace usbipdcpp {
             std::uint32_t start_frame;
             std::uint32_t number_of_packets;
             std::uint32_t interval;
-            std::array<std::uint8_t, 8> setup;
+            SetupPacket setup;
+            // std::array<std::uint8_t, 8> setup;
             std::vector<std::uint8_t> data;
             std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
 
@@ -175,7 +176,7 @@ namespace usbipdcpp {
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
 
-            bool operator==(const UsbIpCmdSubmit &other) const = default;
+            bool operator==(const UsbIpCmdSubmit &other) const;
         };
 
         static_assert(Serializable<UsbIpCmdSubmit>);

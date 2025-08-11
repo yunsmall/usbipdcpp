@@ -157,7 +157,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
 
                     SPDLOG_TRACE("->端口{0:02x}", ep.address);
-                    SPDLOG_TRACE("->setup数据{}", get_every_byte(cmd2.setup));
+                    SPDLOG_TRACE("->setup数据{}", get_every_byte(cmd2.setup.to_bytes()));
                     SPDLOG_TRACE("->请求数据{}", get_every_byte(cmd2.data));
 
                     {
@@ -167,7 +167,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                                 cmd2,
                                 current_seqnum,
                                 ep,
-                                intf, cmd2.transfer_buffer_length, SetupPacket::parse(cmd2.setup), cmd2.data,
+                                intf, cmd2.transfer_buffer_length, cmd2.setup, cmd2.data,
                                 cmd2.iso_packet_descriptor, ec
                                 );
                     }

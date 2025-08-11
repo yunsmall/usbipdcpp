@@ -4,6 +4,7 @@
 #include <array>
 #include <sstream>
 
+#include "network.h"
 #include "constant.h"
 
 namespace usbipdcpp {
@@ -15,6 +16,25 @@ namespace usbipdcpp {
         std::uint16_t index;
         std::uint16_t length;
 
+        [[nodiscard]] data_type to_bytes() const {
+            data_type result(sizeof(*this),0);
+            memcpy(result.data(), this, sizeof(*this));
+            return result;
+        }
+
+        [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock) {
+            std::array<std::uint8_t, 8> setup;
+            co_await asio::async_read(sock, asio::buffer(setup), asio::use_awaitable);
+            *this = parse(setup);
+        }
+
+        bool operator==(const SetupPacket &other) const = default;
+
+        /**
+         * @brief 从字节数组中解析setup包，请万分注意，setup包使用小端序传输
+         * @param setup 字节数组
+         * @return 解析后的setup包
+         */
         static SetupPacket parse(const std::array<std::uint8_t, 8> &setup) {
             return {
                     .request_type = setup[0],
@@ -110,5 +130,7 @@ namespace usbipdcpp {
         ss << *this;
         return ss.str();
     }
+
+    static_assert(Serializable<SetupPacket>);
 
 }

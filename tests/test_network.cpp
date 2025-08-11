@@ -31,7 +31,7 @@ TEST(TestNetwork, ntoh_hton) {
 
 TEST(TestNetwork, vector_append) {
     data_type data;
-    vector_append(data, 0x12345678u);
+    vector_mem_order_append(data, 0x12345678u);
     ASSERT_EQ(data.size(), sizeof(uint32_t));
     if (is_little_endian()) {
         ASSERT_EQ(data[0], 0x78u);

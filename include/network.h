@@ -100,7 +100,7 @@ namespace usbipdcpp {
     }
 
     template<std::unsigned_integral... Args>
-    std::vector<uint8_t> to_data(const Args &... args) {
+    std::vector<uint8_t> to_network_data(const Args &... args) {
         // 计算总缓冲区大小
         constexpr size_t total_size = calculate_total_size<Args...>();
 
@@ -126,7 +126,7 @@ namespace usbipdcpp {
     }
 
     template<typename T>
-    void vector_append(data_type &vec, const T &t) {
+    void vector_mem_order_append(data_type &vec, const T &t) {
         using RawType = std::decay_t<T>;
 
         size_t offset = vec.size();
@@ -176,6 +176,5 @@ namespace usbipdcpp {
     asio::awaitable<void> from_socket(T &t, asio::ip::tcp::socket &sock) {
         return t.from_socket(sock);
     }
-
 
 }

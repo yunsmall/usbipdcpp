@@ -75,7 +75,7 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpIsoPacketDescriptor::to_bytes() const 
     // vector_append_to_net(result, length);
     // vector_append_to_net(result, actual_length);
     // vector_append_to_net(result, status);
-    return to_data(offset, length, actual_length, status);
+    return to_network_data(offset, length, actual_length, status);
     // return result;
 }
 
@@ -84,7 +84,7 @@ asio::awaitable<void> usbipdcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip:
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepDevlist::to_bytes() const {
-    std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REP_DEVLIST, status, device_count);
+    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REP_DEVLIST, status, device_count);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REP_DEVLIST);
     // vector_append_to_net(result, status);
@@ -119,7 +119,7 @@ create_from_devices(const std::vector<std::shared_ptr<UsbDevice>> &devices) {
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepImport::to_bytes() const {
-    std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REP_IMPORT, status);
+    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REP_IMPORT, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REP_IMPORT);
     // vector_append_to_net(result, status);
@@ -165,7 +165,7 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() c
     // assert(header.direction==UsbIpDirection::In?(actual_length==transfer_buffer.size()):(actual_length==0));
     assert(actual_length==transfer_buffer.size());
     auto result = header.to_bytes();
-    auto result2 = to_data(status, actual_length, start_frame, number_of_packets, error_count);
+    auto result2 = to_network_data(status, actual_length, start_frame, number_of_packets, error_count);
     result.insert(result.end(), result2.begin(), result2.end());
     // vector_append_to_net(result, status);
     // vector_append_to_net(result, actual_length);
@@ -325,7 +325,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetUnlink usbipdcpp::UsbIpResponse::UsbIpRetUnlin
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
-    std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
+    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REQ_DEVLIST);
     // vector_append_to_net(result, status);
@@ -338,7 +338,7 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqDevlist::from_socket(asio::i
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqImport::to_bytes() const {
-    std::vector<std::uint8_t> result = to_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
+    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
     // vector_append_to_net(result, USBIP_VERSION);
     // vector_append_to_net(result, OP_REQ_DEVLIST);
     // vector_append_to_net(result, status);
@@ -355,14 +355,15 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() const {
     assert(header.direction!=UsbIpDirection::Out||transfer_buffer_length==data.size());
     auto result = header.to_bytes();
-    auto result2 = to_data(transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
+    auto result2 = to_network_data(transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
     result.insert(result.end(), result2.begin(), result2.end());
     // vector_append_to_net(result, transfer_flags);
     // vector_append_to_net(result, transfer_buffer_length);
     // vector_append_to_net(result, start_frame);
     // vector_append_to_net(result, number_of_packets);
     // vector_append_to_net(result, interval);
-    result.insert(result.end(), setup.begin(), setup.end());
+    auto setup_data = setup.to_bytes();
+    result.insert(result.end(), setup_data.begin(), setup_data.end());
     result.insert(result.end(), data.begin(), data.end());
     for (auto &iso_des: iso_packet_descriptor) {
         auto iso_byte = iso_des.to_bytes();
@@ -377,7 +378,7 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio:
     header.command = USBIP_CMD_SUBMIT;
 
     co_await read_from_socket(sock, transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
-    co_await asio::async_read(sock, asio::buffer(setup), asio::use_awaitable);
+    co_await setup.from_socket(sock);
 
     if (header.direction == UsbIpDirection::In) {
         data.clear();
@@ -396,6 +397,43 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio:
     else {
         iso_packet_descriptor.clear();
     }
+}
+
+bool usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::operator==(const UsbIpCmdSubmit &other) const {
+    bool non_data_equal = header == other.header &&
+                          transfer_flags == other.transfer_flags &&
+                          start_frame == other.start_frame &&
+                          number_of_packets == other.number_of_packets &&
+                          interval == other.interval &&
+                          setup == other.setup;
+    //非数据部分是否相等
+    if (!non_data_equal) {
+        return false;
+    }
+
+    //重新判断iso长度是否相等
+    if (iso_packet_descriptor.size() != other.iso_packet_descriptor.size()) {
+        return false;
+    }
+    //如果iso包长度为空，代表为非iso数据，则直接判断数据是否相等
+    if (iso_packet_descriptor.empty()) {
+        return transfer_buffer_length == other.transfer_buffer_length &&
+               data == other.data;
+    }
+    //iso描述符不为空则为iso包，则要判断每一个iso包描述符中的数据是否相等，允许data字段不相等
+    for (int i = 0; i < iso_packet_descriptor.size(); i++) {
+        //包描述符不相等则肯定不相等
+        if (iso_packet_descriptor[i] != other.iso_packet_descriptor[i]) {
+            return false;
+        }
+        //判断每个包描述的数据是否相等
+        if (std::memcmp(data.data() + iso_packet_descriptor[i].offset,
+                        other.data.data() + other.iso_packet_descriptor[i].offset,
+                        iso_packet_descriptor[i].actual_length) != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::to_bytes() const {
