@@ -16,9 +16,25 @@ namespace usbipdcpp {
         std::uint16_t index;
         std::uint16_t length;
 
+        //转成小端
         [[nodiscard]] data_type to_bytes() const {
             data_type result(sizeof(*this),0);
-            memcpy(result.data(), this, sizeof(*this));
+            if (is_little_endian()) {
+                memcpy(result.data(), this, sizeof(*this));
+            }
+            else {
+                result[0] = request_type;
+                result[1] = request;
+
+                result[2] = value&0xFF;
+                result[3] = value>>8;
+
+                result[4] = index&0xFF;
+                result[5] = index>>8;
+
+                result[6] = length&0xFF;
+                result[7] = length>>8;
+            }
             return result;
         }
 

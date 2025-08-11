@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(usbipdcpp VERSION 0.0.1)
 
-set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD 23)
 
 find_package(asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
