@@ -21,17 +21,22 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices) {
 
 void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     network_io_thread = std::thread([&,this]() {
-        asio::ip::tcp::acceptor acceptor(asio_io_context);
-        acceptor.open(ep.protocol());
-        acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+        try {
+            asio::ip::tcp::acceptor acceptor(asio_io_context);
+            acceptor.open(ep.protocol());
+            acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
 
-        acceptor.bind(ep);
-        acceptor.listen();
-        asio::co_spawn(
-                asio_io_context,
-                do_accept(acceptor),
-                asio::detached);
-        asio_io_context.run();
+            acceptor.bind(ep);
+            acceptor.listen();
+            asio::co_spawn(
+                    asio_io_context,
+                    do_accept(acceptor),
+                    asio::detached);
+            asio_io_context.run();
+        } catch (const std::exception &e) {
+            SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
+            std::exit(1);
+        }
     });
 }
 

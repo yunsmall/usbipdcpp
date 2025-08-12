@@ -54,9 +54,8 @@ void AbstDeviceHandler::dispatch_urb(Session &session,
         SPDLOG_ERROR("非控制传输却不存在目标接口");
         ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
-
-
 }
 
 void AbstDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
+    SPDLOG_WARN("Unimplemented handle_unlink_seqnum, seqnum: {}", seqnum);
 }

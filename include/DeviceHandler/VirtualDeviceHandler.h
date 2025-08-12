@@ -26,8 +26,6 @@ namespace usbipdcpp {
                           usbipdcpp::error_code &ec) override;
 
 
-        void handle_unlink_seqnum(std::uint32_t seqnum) override;
-
     protected:
         void change_device_ep0_max_size_by_speed();
 

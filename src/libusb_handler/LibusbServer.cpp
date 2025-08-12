@@ -277,19 +277,24 @@ void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
 void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     Server::start(ep);
     libusb_event_thread = std::thread([this]() {
-        SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
-        while (!should_exit_libusb_event_thread) {
-            auto ret = libusb_handle_events(nullptr);
-            if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) {
-                SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
-                break;
+        try {
+            SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
+            while (!should_exit_libusb_event_thread) {
+                auto ret = libusb_handle_events(nullptr);
+                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) {
+                    SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
+                    break;
+                }
+                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) {
+                    fprintf(stderr, "Event handling error: %s\n", libusb_error_name(ret));
+                    break;
+                }
             }
-            if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) {
-                fprintf(stderr, "Event handling error: %s\n", libusb_error_name(ret));
-                break;
-            }
+            SPDLOG_TRACE("退出libusb事件循环");
+        } catch (const std::exception &e) {
+            SPDLOG_ERROR("An unexpected exception occurs in libusb handler thread: {}", e.what());
+            std::exit(1);
         }
-        SPDLOG_TRACE("退出libusb事件循环");
     });
 }
 
