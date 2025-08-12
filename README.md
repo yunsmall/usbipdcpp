@@ -66,6 +66,26 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 
 ---
 
+## Examples Introduction
+1. libevdev_mouse
+   
+   Through libevdev library, in an OS which supports evdev, by reading `/dev/input/event*`, simulate a usbip mouse 
+   to implement forwarding local mouse signals.
+2. mock_mouse
+
+   A mouse demonstration which switches left button statu each second, to introduce how to implement a virtual
+   HID device.
+3. empty_server
+
+   A usbip server that has only one device which has no functions and will not response to any input data.
+4. libusb_server
+
+   A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps 
+   and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server 
+   with physical usb devices.
+
+---
+
 ## Building
 ```bash
 cmake -B build

@@ -70,6 +70,22 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 
 ---
 
+## 例子介绍
+1. libevdev_mouse
+
+   使用libevdev库，在支持evdev的系统上，通过读取`/dev/input/event*`，模拟一个usbip的鼠标，实现转发本地的鼠标信号
+2. mock_mouse
+
+   一个每隔一秒就切换鼠标左键状态的鼠标示例。用以介绍虚拟HID设备的写法
+3. empty_server
+
+   一个只有一个设备的usbip服务器。设备无任何功能，不会对数据做相应。
+4. libusb_server
+
+   转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
+   通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
+---
+
 ## 编译安装
 
 ```bash
