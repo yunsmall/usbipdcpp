@@ -248,6 +248,24 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
+create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status) {
+    auto ret = UsbIpRetSubmit{
+            .header = UsbIpHeaderBasic::get_server_header(
+                    USBIP_RET_SUBMIT,
+                    seqnum
+                    ),
+            .status = status,
+            .actual_length = 0,
+            .start_frame = 0,
+            .number_of_packets = 0,
+            .error_count = 0,
+            .transfer_buffer = {},
+            .iso_packet_descriptor = {}
+    };
+    return ret;
+}
+
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
 create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status, const data_type &transfer_buffer) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(

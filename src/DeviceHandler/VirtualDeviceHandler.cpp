@@ -105,8 +105,10 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                             }
                         }
                         session.submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                        seqnum, status, {})
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                                        seqnum,
+                                        status
+                                        )
                                 );
                     }
                     else {
@@ -175,8 +177,10 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                 }
                             }
                             session.submit_ret_submit(
-                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                            seqnum, status, {})
+                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                                            seqnum,
+                                            status
+                                            )
                                     );
                         }
                         else {
@@ -219,6 +223,8 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     else {
                         SPDLOG_ERROR("接口未注册handler，无法处理发去接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
+                        session.submit_ret_submit(
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
                     break;
@@ -227,7 +233,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     SPDLOG_TRACE("发给端点");
                     auto find_ret = handle_device.find_ep(setup_packet.index);
                     if (find_ret) {
-                        auto &ep = find_ret->first;
+                        // auto &target_ep = find_ret->first;
                         auto &intf = find_ret->second;
                         if (intf) {
                             auto handler = intf->handler;
@@ -255,10 +261,9 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                         }
                                     }
                                     session.submit_ret_submit(
-                                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                                     seqnum,
-                                                    status,
-                                                    {}
+                                                    status
                                                     )
                                             );
                                 }
@@ -294,12 +299,16 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                             else {
                                 SPDLOG_ERROR("端点{:04x}所在的接口没注册对应handler", setup_packet.value);
                                 ec = make_error_code(ErrorType::INVALID_ARG);
+                                session.submit_ret_submit(
+                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                                 return;
                             }
                         }
                         else {
                             SPDLOG_ERROR("端点{:04x}没有对应的接口", setup_packet.value);
                             ec = make_error_code(ErrorType::INVALID_ARG);
+                            session.submit_ret_submit(
+                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                             return;
                         }
                     }
@@ -309,13 +318,13 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     SPDLOG_TRACE("发给其他");
                     SPDLOG_WARN("未实现去其他地方的包");
                     session.submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                     break;
                 }
                 default: {
                     SPDLOG_WARN("未知去往目标");
                     session.submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                 }
             }
         }
@@ -340,8 +349,10 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                                                               out_data, ec);
                     }
                     else {
-                        SPDLOG_ERROR("接口未注册handler，无法处理发够接口的信息");
+                        SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
+                        session.submit_ret_submit(
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
                     break;
@@ -360,6 +371,8 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     else {
                         SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
+                        session.submit_ret_submit(
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
                     break;
@@ -367,13 +380,13 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                 case RequestRecipient::Other: {
                     SPDLOG_WARN("未实现去其他地方的包");
                     session.submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                     break;
                 }
                 default: {
                     SPDLOG_WARN("未知去往目标");
                     session.submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                 }
             }
 
@@ -412,6 +425,8 @@ void VirtualDeviceHandler::handle_bulk_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+            session.submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {
@@ -448,6 +463,8 @@ void VirtualDeviceHandler::handle_interrupt_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+            session.submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {
@@ -486,6 +503,8 @@ void VirtualDeviceHandler::handle_isochronous_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+            session.submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {

@@ -20,7 +20,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
                                                         std::uint32_t transfer_flags,
                                                         std::uint32_t transfer_buffer_length,
                                                         const SetupPacket &setup_packet, const data_type &req,
-                                                        std::error_code &ec) {
+                                                        [[maybe_unused]] std::error_code &ec) {
     //auto tweaked = -1;
     auto tweaked = tweak_special_requests(setup_packet);
     //尝试执行特殊操作再对usb进行控制
@@ -28,14 +28,14 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
         SPDLOG_DEBUG("控制传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
 
         auto transfer = libusb_alloc_transfer(0);
-        unsigned char *buffer = new unsigned char[LIBUSB_CONTROL_SETUP_SIZE + transfer_buffer_length]{0};
+        auto *buffer = new unsigned char[LIBUSB_CONTROL_SETUP_SIZE + transfer_buffer_length]{0};
         if (setup_packet.is_out()) {
             memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, req.data(), req.size());
         }
         libusb_fill_control_setup(buffer, setup_packet.request_type, setup_packet.request, setup_packet.value,
                                   setup_packet.index, setup_packet.length);
 
-        libusb_callback_args *callback_args = new libusb_callback_args{
+        auto *callback_args = new libusb_callback_args{
                 .handler = *this,
                 .session = session,
                 .seqnum = seqnum,
@@ -63,6 +63,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
             SPDLOG_ERROR("传输给设备失败");
             libusb_free_transfer(transfer);
             ec = make_error_code(ErrorType::TRANSFER_ERROR);
+            session.submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
         return;
     }
@@ -86,7 +88,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
                                                           UsbInterface &interface,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
-                                                          const data_type &out_data, std::error_code &ec) {
+                                                          const data_type &out_data,
+                                                          [[maybe_unused]] std::error_code &ec) {
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -120,6 +123,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
         SPDLOG_ERROR("块传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
+        session.submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
 }
 
@@ -128,7 +133,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
                                                                UsbInterface &interface,
                                                                std::uint32_t transfer_flags,
                                                                std::uint32_t transfer_buffer_length,
-                                                               const data_type &out_data, std::error_code &ec) {
+                                                               const data_type &out_data,
+                                                               [[maybe_unused]] std::error_code &ec) {
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("中断传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -159,6 +165,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
         SPDLOG_ERROR("中断传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
+        session.submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
 }
 
@@ -183,7 +191,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
                                                                  std::uint32_t transfer_buffer_length,
                                                                  const data_type &req,
                                                                  const std::vector<UsbIpIsoPacketDescriptor> &
-                                                                 iso_packet_descriptors, std::error_code &ec) {
+                                                                 iso_packet_descriptors,
+                                                                 [[maybe_unused]] std::error_code &ec) {
 
     bool is_out = !ep.is_in();
     SPDLOG_DEBUG("同步传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -224,9 +233,9 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
         SPDLOG_ERROR("同步传输失败，{}", libusb_strerror(err));
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
+        session.submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
-
-
 }
 
 void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {

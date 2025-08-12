@@ -43,6 +43,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 
 void usbipdcpp::Server::stop() {
     asio_io_context.stop();
+    SPDLOG_TRACE("Successfully stop io_context");
     should_stop = true;
     network_io_thread.join();
 

@@ -166,14 +166,21 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
                     {
                         std::shared_lock lock(current_import_device_data_mutex);
+
+                        usbipdcpp::error_code ec_during_handling_urb;
+                        start_processing_urb();
                         current_import_device->handle_urb(
                                 *this,
                                 cmd2,
                                 current_seqnum,
                                 ep,
                                 intf, cmd2.transfer_buffer_length, cmd2.setup, cmd2.data,
-                                cmd2.iso_packet_descriptor, ec
+                                cmd2.iso_packet_descriptor, ec_during_handling_urb
                                 );
+
+                        if (ec_during_handling_urb) {
+                            SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
+                        }
                     }
 
                 }
@@ -218,7 +225,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
     //     server.move_device_to_available(*current_import_device_id);
     //     current_import_device_id.reset();
     // }
-
+    wait_for_all_urb_processed();
     std::error_code ignore_ec;
     SPDLOG_DEBUG("尝试关闭socket");
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
@@ -257,6 +264,7 @@ void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpRe
 }
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
+    end_processing_urb();
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
         auto to_be_sent = unlink.to_bytes();
@@ -269,6 +277,7 @@ void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlin
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
+    end_processing_urb();
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
         auto to_be_sent = submit.to_bytes();
@@ -278,4 +287,23 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
         SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
         co_return;
     }, asio::detached);
+}
+
+void usbipdcpp::Session::end_processing_urb() {
+    std::lock_guard lock(urb_process_mutex);
+    if (--urb_processing_counter == 0) {
+        urb_process_cv.notify_all();
+    }
+}
+
+void usbipdcpp::Session::start_processing_urb() {
+    std::lock_guard lock(urb_process_mutex);
+    urb_processing_counter++;
+}
+
+void usbipdcpp::Session::wait_for_all_urb_processed() {
+    std::unique_lock lock(urb_process_mutex);
+    SPDLOG_TRACE("start waiting for urb processed : urb_processing_counter={}",urb_processing_counter);
+    urb_process_cv.wait(lock, [this] { return urb_processing_counter == 0; });
+    SPDLOG_TRACE("end waiting for urb processed");
 }

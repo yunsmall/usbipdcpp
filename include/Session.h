@@ -3,6 +3,7 @@
 #include <atomic>
 #include <map>
 #include <shared_mutex>
+#include <condition_variable>
 #include <tuple>
 
 #include <asio/ip/tcp.hpp>
@@ -37,18 +38,21 @@ namespace usbipdcpp {
 
         /**
          * @brief 推荐使用这个函数。该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
+         * 请确保每个urb都需要提交返回的包
          * @param unlink
          */
         void submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
                                                              std::uint32_t seqnum);
 
         /**
-         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。调用完别忘记调用remove_seqnum_unlink
+         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。调用完别忘记调用remove_seqnum_unlink。
+         * 请确保每个urb都需要提交返回的包
          * @param unlink
          */
         void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);
         /**
-         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全
+         * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
+         * 请确保每个urb都需要提交返回的包
          * @param submit
          */
         void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
@@ -56,7 +60,16 @@ namespace usbipdcpp {
 
         ~Session() = default;
 
+
     private:
+        //防止urb还没处理好,session对象就析构了
+        void end_processing_urb();
+        //防止urb还没处理好,session对象就析构了
+        void start_processing_urb();
+        //防止urb还没处理好,session对象就析构了
+        void wait_for_all_urb_processed();
+
+
         std::atomic<bool> should_stop;
 
         std::optional<std::string> current_import_device_id = std::nullopt;
@@ -69,5 +82,10 @@ namespace usbipdcpp {
 
         Server &server;
         asio::ip::tcp::socket socket;
+
+
+        std::uint32_t urb_processing_counter = 0;
+        std::mutex urb_process_mutex;
+        std::condition_variable urb_process_cv;
     };
 }

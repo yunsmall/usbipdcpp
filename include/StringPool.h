@@ -2,7 +2,6 @@
 
 #include <shared_mutex>
 #include <map>
-#include <asio/detail/mutex.hpp>
 
 #include <spdlog/spdlog.h>
 

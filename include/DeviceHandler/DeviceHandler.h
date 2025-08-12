@@ -47,6 +47,7 @@ namespace usbipdcpp {
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
         // In传输out_data为空，transfer_buffer_length不是0
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
+        // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_control_urb(
                 Session &session,
                 std::uint32_t seqnum,
@@ -57,6 +58,7 @@ namespace usbipdcpp {
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
         // In传输out_data为空，transfer_buffer_length不是0
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
+        // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_bulk_transfer(
                 Session &session,
                 std::uint32_t seqnum,
@@ -68,6 +70,7 @@ namespace usbipdcpp {
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
         // In传输out_data为空，transfer_buffer_length不是0
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
+        // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_interrupt_transfer(
                 Session &session,
                 std::uint32_t seqnum,
@@ -79,6 +82,7 @@ namespace usbipdcpp {
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
         // In传输out_data为空，transfer_buffer_length不是0
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
+        // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_isochronous_transfer(
                 Session &session,
                 std::uint32_t seqnum,

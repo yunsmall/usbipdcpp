@@ -20,6 +20,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
     )
+elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    add_compile_definitions(
+            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
+    )
 else ()
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
