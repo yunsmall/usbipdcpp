@@ -20,23 +20,26 @@ namespace usbipdcpp {
         // bool remove_device(const std::string &busid) override;
         ~LibusbServer() override;
 
-        static std::pair<std::string, std::string> get_device_names(libusb_device* device);
-        static void print_device(libusb_device *dev);
-        static void list_host_devices();
+        void print_device(libusb_device *dev);
+        void list_host_devices();
+
+        static std::pair<std::string, std::string> get_device_names(libusb_device *device);
+
         /**
          * @brief return a libusb_device pointer which you need to call libusb_unref_device after using.
          * @param busid
          * @return nullptr is not found else found
          */
         static libusb_device *find_by_busid(const std::string &busid);
+
     protected:
-        void claim_interface(libusb_device_handle* dev_handle, std::error_code& ec);
-        void claim_interfaces(libusb_device *dev,std::error_code& ec);
+        void claim_interface(libusb_device_handle *dev_handle, std::error_code &ec);
+        void claim_interfaces(libusb_device *dev, std::error_code &ec);
 
-        void release_interface(libusb_device_handle* dev_handle, std::error_code& ec);
-        void release_interfaces(libusb_device *dev,std::error_code& ec);
+        void release_interface(libusb_device_handle *dev_handle, std::error_code &ec);
+        void release_interfaces(libusb_device *dev, std::error_code &ec);
 
-        std::atomic<bool> should_exit_libusb_event_thread=false;
+        std::atomic<bool> should_exit_libusb_event_thread = false;
 
         //不可在这个线程发送网络包
         std::thread libusb_event_thread;

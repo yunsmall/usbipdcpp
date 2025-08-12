@@ -42,7 +42,7 @@ int main() {
         switch (cmd) {
             case 'l': {
                 spdlog::info("List all usb devices in the host");
-                LibusbServer::list_host_devices();
+                server.list_host_devices();
                 break;
             }
             case 'b': {

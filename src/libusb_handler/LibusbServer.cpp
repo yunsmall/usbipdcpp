@@ -47,7 +47,7 @@ std::pair<std::string, std::string> usbipdcpp::LibusbServer::get_device_names(li
 }
 
 void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
-    libusb_device_descriptor desc;
+    libusb_device_descriptor desc{};
     // 获取设备描述符
     auto err = libusb_get_device_descriptor(dev, &desc);
     if (err) {
@@ -56,8 +56,24 @@ void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
     }
     // 打印设备信息
     auto device_name = get_device_names(dev);
-    std::println(std::cout, "Device name: {}-{}", device_name.first, device_name.second);
-    std::println(std::cout, "busid: {}", get_device_busid(dev));
+    auto busid = get_device_busid(dev);
+    bool is_used = false;
+    bool is_available = false;
+    {
+        std::shared_lock lock(used_devices_mutex);
+        std::shared_lock lock2(available_devices_mutex);
+        if (used_devices.contains(busid)) {
+            is_used = true;
+        }
+        for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
+            if ((*it)->busid == busid) {
+                is_available = true;
+            }
+        }
+    }
+    std::println(std::cout, "Device name: {}-{} ({})", device_name.first, device_name.second,
+                 is_used ? "exported" : (is_available ? "available" : "unbinded"));
+    std::println(std::cout, "busid: {}", busid);
     std::println(std::cout, "  VID: 0x{:2x}", desc.idVendor);
     std::println(std::cout, "  PID: 0x{:2x}", desc.idProduct);
     auto version = Version(desc.bcdUSB);
@@ -90,7 +106,7 @@ void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
 
 void usbipdcpp::LibusbServer::list_host_devices() {
     libusb_device **devs;
-    int dev_nums = libusb_get_device_list(nullptr, &devs);
+    auto dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
         print_device(devs[dev_i]);
         std::cout << std::endl;
