@@ -18,28 +18,26 @@ namespace usbipdcpp {
 
         //转成小端
         [[nodiscard]] data_type to_bytes() const {
-            data_type result(sizeof(*this),0);
-            if (is_little_endian()) {
-                memcpy(result.data(), this, sizeof(*this));
-            }
-            else {
-                result[0] = request_type;
-                result[1] = request;
+            data_type result(8, 0);
 
-                result[2] = value&0xFF;
-                result[3] = value>>8;
+            result[0] = request_type;
+            result[1] = request;
 
-                result[4] = index&0xFF;
-                result[5] = index>>8;
+            //小端，低位在低地址
+            result[2] = value & 0xFF;
+            result[3] = value >> 8;
 
-                result[6] = length&0xFF;
-                result[7] = length>>8;
-            }
+            result[4] = index & 0xFF;
+            result[5] = index >> 8;
+
+            result[6] = length & 0xFF;
+            result[7] = length >> 8;
+
             return result;
         }
 
         [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock) {
-            std::array<std::uint8_t, 8> setup;
+            std::array<std::uint8_t, 8> setup{};
             co_await asio::async_read(sock, asio::buffer(setup), asio::use_awaitable);
             *this = parse(setup);
         }
