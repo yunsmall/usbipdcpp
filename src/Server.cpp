@@ -28,6 +28,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 
             acceptor.bind(ep);
             acceptor.listen();
+            spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
             asio::co_spawn(
                     asio_io_context,
                     do_accept(acceptor),
@@ -45,7 +46,7 @@ void usbipdcpp::Server::stop() {
     should_stop = true;
     network_io_thread.join();
 
-    spdlog::info("成功关闭所有设备的传输");
+    spdlog::info("Successfully shut down transmissions for all devices");
 
     {
         std::shared_lock lock(session_list_mutex);
@@ -53,7 +54,7 @@ void usbipdcpp::Server::stop() {
             session->stop();
         }
     }
-    spdlog::info("成功关闭所有会话");
+    spdlog::info("All sessions were successfully closed");
 }
 
 void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
@@ -72,11 +73,11 @@ bool usbipdcpp::Server::remove_device(const std::string &busid) {
     std::lock_guard lock2(used_devices_mutex);
     for (auto it = used_devices.begin(); it != used_devices.end(); ++it) {
         if (it->first == busid) {
-            SPDLOG_ERROR("{}正在使用，无法移除");
+            SPDLOG_ERROR("{} is being used and can't be removed");
             return false;
         }
     }
-    SPDLOG_ERROR("找不到设备{}");
+    SPDLOG_ERROR("Can't find device {}");
     return false;
 }
 
@@ -104,6 +105,8 @@ usbipdcpp::Server::~Server() {
 
 asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
     while (true) {
+        spdlog::info("Waiting for a new connection...");
+
         asio::error_code ec;
         auto socket = co_await acceptor.async_accept(asio::redirect_error(asio::use_awaitable, ec));
 
@@ -111,7 +114,7 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
             auto remote_endpoint = socket.remote_endpoint();
             auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
                                                     remote_endpoint.port());
-            spdlog::info("来自{}的连接", remote_endpoint_name);
+            spdlog::info("A new connection from {}", remote_endpoint_name);
             auto session = std::make_shared<Session>(*this, std::move(socket));
             SPDLOG_TRACE("尝试添加会话处理协程");
             asio::co_spawn(asio_io_context, [=,this]()-> asio::awaitable<void> {
@@ -120,9 +123,9 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
                 SPDLOG_TRACE("处理会话");
                 co_await session->run(ec2);
                 if (ec2) {
-                    SPDLOG_ERROR("来自{}的会话处理信息时出错：{}", remote_endpoint_name, ec2.message());
+                    SPDLOG_ERROR("An error occurs in session from {}: {}", remote_endpoint_name, ec2.message());
                 }
-                spdlog::info("来自{}的连接断开", remote_endpoint_name);
+                spdlog::info("Connection from {} was closed", remote_endpoint_name);
 
                 {
                     std::lock_guard lock(this->session_list_mutex);
@@ -140,13 +143,12 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
             }
         }
         else if (ec == asio::error::operation_aborted) {
-            SPDLOG_ERROR("操作被取消：{}", ec.message());
+            SPDLOG_ERROR("Operation aborted：{}", ec.message());
             break;
         }
         else {
-            SPDLOG_ERROR("连接出错：{}", ec.message());
+            SPDLOG_ERROR("Connection error：{}", ec.message());
         }
-        SPDLOG_INFO("等待新客户端连接");
     }
 }
 

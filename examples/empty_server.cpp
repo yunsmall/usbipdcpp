@@ -54,8 +54,10 @@ int main() {
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54321);
     server.start(endpoint);
 
-    std::system("pause");
+    std::cout<<"press enter to exit"<<std::endl;
+    std::cin.get();
 
+    server.stop();
 
     return 0;
 }
