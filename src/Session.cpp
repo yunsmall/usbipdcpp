@@ -77,6 +77,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                     current_import_device_id = std::nullopt;
                     current_import_device = nullptr;
                 }
+                bool error_occurred = false;
 
                 auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
                 UsbIpResponse::OpRepImport op_rep_import{};
@@ -89,7 +90,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                         spdlog::warn("正在使用的设备不支持导出");
                         op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
                                 static_cast<std::uint32_t>(OperationStatuType::DevBusy));
-                        need_break = true;
+                        error_occurred = true;
                     }
                     else {
                         //找能用的设备
@@ -117,7 +118,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
                 server.print_devices();
 
-                {
+                if (!error_occurred) {
                     std::shared_lock lock(current_import_device_data_mutex);
                     if (current_import_device) {
                         spdlog::info("找到目标设备，可以导入");
@@ -127,9 +128,12 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                         spdlog::info("不存在目标设备，不可导入");
                         op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
                                 static_cast<std::uint32_t>(OperationStatuType::NoDev));
-                        need_break = true;
+                        error_occurred = true;
                     }
+                }
 
+                if (error_occurred) {
+                    need_break = true;
                 }
 
                 auto to_be_sent = op_rep_import.to_bytes();
