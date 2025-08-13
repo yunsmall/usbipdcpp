@@ -9,7 +9,7 @@
 #include "protocol.h"
 
 usbipdcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
-    server(server), socket(std::move(socket)) {
+    server(server), socket(std::move(socket)), no_urb_processing_notify_channel(server.asio_io_context) {
 }
 
 asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
@@ -37,15 +37,6 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 SPDLOG_DEBUG("发生socket错误");
             }
 
-            {
-                std::lock_guard lock(current_import_device_data_mutex);
-                if (current_import_device_id.has_value()) {
-                    server.move_device_to_available(*current_import_device_id);
-                    current_import_device_id.reset();
-                    SPDLOG_TRACE("将当前导入设备的busid设为空");
-                }
-            }
-
             break;
         }
         //这里cmd肯定有值，不用再判断了
@@ -64,8 +55,11 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<UsbIpCommand::OpReqDevlist, T>) {
                 SPDLOG_TRACE("收到 OpReqDevlist 包");
-                std::shared_lock guard(server.available_devices_mutex);
-                auto to_be_sent = UsbIpResponse::OpRepDevlist::create_from_devices(server.available_devices).to_bytes();
+                data_type to_be_sent;
+                {
+                    std::shared_lock lock(server.devices_mutex);
+                    to_be_sent = UsbIpResponse::OpRepDevlist::create_from_devices(server.available_devices).to_bytes();
+                }
                 co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
                 SPDLOG_TRACE("成功发送 OpRepDevlist 包");
                 need_break = true;
@@ -83,35 +77,20 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 UsbIpResponse::OpRepImport op_rep_import{};
                 SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
                 {
-                    std::lock_guard guard(server.used_devices_mutex);
-                    std::lock_guard guard2(server.available_devices_mutex);
                     //已经在使用的不支持导出
-                    if (server.used_devices.contains(wanted_busid)) {
+                    if (server.is_device_using(wanted_busid)) {
                         spdlog::warn("正在使用的设备不支持导出");
                         op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
                                 static_cast<std::uint32_t>(OperationStatuType::DevBusy));
                         error_occurred = true;
                     }
                     else {
-                        //找能用的设备
-                        for (auto i = server.available_devices.begin(); i != server.available_devices.end(); ++i) {
-                            //找到设备
-                            if (wanted_busid == (*i)->busid) {
-                                SPDLOG_INFO("将{}放入正在使用的设备中", wanted_busid);
-
-                                //将想要的设备放入正在使用的设备
-                                server.used_devices[wanted_busid] = std::move(*i);
-                                {
-                                    std::lock_guard lock(current_import_device_data_mutex);
-                                    current_import_device_id = wanted_busid;
-                                    //将当前使用的设备指向这个设备
-                                    current_import_device = server.used_devices[wanted_busid];
-                                }
-
-                                //删掉可用设备中的这个设备
-                                server.available_devices.erase(i);
-                                break;
-                            }
+                        auto using_device = server.try_moving_device_to_using(wanted_busid);
+                        if (using_device) {
+                            std::lock_guard lock(current_import_device_data_mutex);
+                            current_import_device_id = wanted_busid;
+                            //将当前使用的设备指向这个设备
+                            current_import_device = using_device;
                         }
                     }
                 }
@@ -225,7 +204,17 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
     //     server.move_device_to_available(*current_import_device_id);
     //     current_import_device_id.reset();
     // }
-    wait_for_all_urb_processed();
+    co_await wait_for_all_urb_processed();
+
+    {
+        std::lock_guard lock(current_import_device_data_mutex);
+        if (current_import_device_id.has_value()) {
+            server.try_moving_device_to_available(*current_import_device_id);
+            current_import_device_id.reset();
+            SPDLOG_TRACE("将当前导入设备的busid设为空");
+        }
+    }
+
     std::error_code ignore_ec;
     SPDLOG_DEBUG("尝试关闭socket");
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
@@ -264,7 +253,7 @@ void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpRe
 }
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    end_processing_urb();
+    SPDLOG_TRACE("收到提交的unlink包");
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
         auto to_be_sent = unlink.to_bytes();
@@ -272,12 +261,12 @@ void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlin
                      to_be_sent.size());
         co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
         SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
-        co_return;
+        end_processing_urb();
     }, asio::detached);
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    end_processing_urb();
+    SPDLOG_TRACE("收到提交的submit包");
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
         auto to_be_sent = submit.to_bytes();
@@ -285,25 +274,28 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
                      to_be_sent.size());
         co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
         SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
-        co_return;
+        end_processing_urb();
     }, asio::detached);
 }
 
-void usbipdcpp::Session::end_processing_urb() {
-    std::lock_guard lock(urb_process_mutex);
-    if (--urb_processing_counter == 0) {
-        urb_process_cv.notify_all();
-    }
-}
-
 void usbipdcpp::Session::start_processing_urb() {
-    std::lock_guard lock(urb_process_mutex);
+    SPDLOG_TRACE("开始处理urb,urb_processing_counter:{}", urb_processing_counter);
     urb_processing_counter++;
 }
 
-void usbipdcpp::Session::wait_for_all_urb_processed() {
-    std::unique_lock lock(urb_process_mutex);
-    SPDLOG_TRACE("start waiting for urb processed : urb_processing_counter={}",urb_processing_counter);
-    urb_process_cv.wait(lock, [this] { return urb_processing_counter == 0; });
-    SPDLOG_TRACE("end waiting for urb processed");
+void usbipdcpp::Session::end_processing_urb() {
+    SPDLOG_TRACE("结束处理urb,urb_processing_counter:{}", urb_processing_counter);
+    if (--urb_processing_counter == 0) {
+        no_urb_processing_notify_channel.try_send(asio::error_code{});
+    }
+}
+
+asio::awaitable<void> usbipdcpp::Session::wait_for_all_urb_processed() {
+    if (urb_processing_counter != 0) {
+        co_await no_urb_processing_notify_channel.async_receive(asio::use_awaitable);
+        SPDLOG_TRACE("收到空消息，结束等待");
+    }
+    else {
+        SPDLOG_TRACE("无正在传输的urb，无需等待");
+    }
 }

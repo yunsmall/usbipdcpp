@@ -33,23 +33,33 @@ namespace usbipdcpp {
 
         virtual void add_device(std::shared_ptr<UsbDevice> &&device);
 
-        virtual bool remove_device(const std::string &busid);
+        // virtual bool remove_device(const std::string &busid);
 
         virtual ~Server();
 
     protected:
         asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
-        void move_device_to_available(const std::string &busid);
+        bool is_device_using(const std::string &busid);
+
+        void try_moving_device_to_available(const std::string &busid);
+
+        /**
+         * @brief Try to move device to using_devices, and return this device,
+         * return nullptr if there is no such device in available_devices or moved failed.
+         * @param busid device busid
+         * @return device or nullptr when error
+         */
+        std::shared_ptr<UsbDevice> try_moving_device_to_using(const std::string &busid);
 
         void print_devices();
 
         //可供导入的设备
         std::vector<std::shared_ptr<UsbDevice>> available_devices;
-        std::shared_mutex available_devices_mutex;
         //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
-        std::map<std::string, std::shared_ptr<UsbDevice>> used_devices;
-        std::shared_mutex used_devices_mutex;
+        std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
+        //锁available_devices和using_devices两个变量
+        std::shared_mutex devices_mutex;
 
         std::atomic<bool> should_stop = false;
 

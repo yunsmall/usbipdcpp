@@ -3,11 +3,11 @@
 #include <atomic>
 #include <map>
 #include <shared_mutex>
-#include <condition_variable>
 #include <tuple>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
+#include <asio/experimental/channel.hpp>
 
 #include "protocol.h"
 #include "type.h"
@@ -60,14 +60,13 @@ namespace usbipdcpp {
 
         ~Session() = default;
 
-
     private:
-        //防止urb还没处理好,session对象就析构了
-        void end_processing_urb();
         //防止urb还没处理好,session对象就析构了
         void start_processing_urb();
         //防止urb还没处理好,session对象就析构了
-        void wait_for_all_urb_processed();
+        void end_processing_urb();
+        //防止urb还没处理好,session对象就析构了
+        asio::awaitable<void> wait_for_all_urb_processed();
 
 
         std::atomic<bool> should_stop;
@@ -85,7 +84,6 @@ namespace usbipdcpp {
 
 
         std::uint32_t urb_processing_counter = 0;
-        std::mutex urb_process_mutex;
-        std::condition_variable urb_process_cv;
+        asio::experimental::channel<void(asio::error_code)> no_urb_processing_notify_channel;
     };
 }

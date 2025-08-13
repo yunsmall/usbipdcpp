@@ -59,28 +59,27 @@ void usbipdcpp::Server::stop() {
 }
 
 void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
-    std::lock_guard lock(available_devices_mutex);
+    std::lock_guard lock(devices_mutex);
     available_devices.emplace_back(device);
 }
 
-bool usbipdcpp::Server::remove_device(const std::string &busid) {
-    std::lock_guard lock(available_devices_mutex);
-    for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
-        if ((*it)->busid == busid) {
-            available_devices.erase(it);
-            return true;
-        }
-    }
-    std::lock_guard lock2(used_devices_mutex);
-    for (auto it = used_devices.begin(); it != used_devices.end(); ++it) {
-        if (it->first == busid) {
-            SPDLOG_ERROR("{} is being used and can't be removed");
-            return false;
-        }
-    }
-    SPDLOG_ERROR("Can't find device {}");
-    return false;
-}
+// bool usbipdcpp::Server::remove_device(const std::string &busid) {
+//     std::lock_guard lock(devices_mutex);
+//     for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
+//         if ((*it)->busid == busid) {
+//             available_devices.erase(it);
+//             return true;
+//         }
+//     }
+//     for (auto it = using_devices.begin(); it != using_devices.end(); ++it) {
+//         if (it->first == busid) {
+//             SPDLOG_ERROR("{} is being used and can't be removed");
+//             return false;
+//         }
+//     }
+//     SPDLOG_ERROR("Can't find device {}");
+//     return false;
+// }
 
 usbipdcpp::Server::~Server() {
     //It is necessary to destroy the entire session in sessions first,
@@ -93,12 +92,9 @@ usbipdcpp::Server::~Server() {
     }
 
     {
-        std::lock_guard lock(available_devices_mutex);
+        std::lock_guard lock(devices_mutex);
         available_devices.clear();
-    }
-    {
-        std::lock_guard lock(used_devices_mutex);
-        used_devices.clear();
+        using_devices.clear();
     }
 
 }
@@ -153,28 +149,52 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
     }
 }
 
-void usbipdcpp::Server::move_device_to_available(const std::string &busid) {
+bool usbipdcpp::Server::is_device_using(const std::string &busid) {
+    std::shared_lock lock(devices_mutex);
+    return using_devices.contains(busid);
+}
+
+void usbipdcpp::Server::try_moving_device_to_available(const std::string &busid) {
     print_devices();
     SPDLOG_INFO("尝试将{}转移到可用设备中", busid);
-    std::lock_guard guard(used_devices_mutex);
-    std::lock_guard guard2(available_devices_mutex);
+    std::lock_guard lock(devices_mutex);
     // SPDLOG_TRACE("成功获得两个锁");
 
-    auto ret = used_devices.find(busid);
-    if (ret != used_devices.end()) {
+    auto ret = using_devices.find(busid);
+    if (ret != using_devices.end()) {
         SPDLOG_INFO("成功将{}转移到可用设备中", busid);
         auto &dev = ret->second;
         available_devices.emplace_back(std::move(dev));
-        used_devices.erase(busid);
+        using_devices.erase(busid);
+    }
+    else {
+        SPDLOG_WARN("找不到busid为{}的设备", busid);
     }
 }
 
+std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::try_moving_device_to_using(const std::string &wanted_busid) {
+    std::lock_guard lock(devices_mutex);
+    //找能用的设备
+    for (auto i = available_devices.begin(); i != available_devices.end(); ++i) {
+        //找到设备
+        if (wanted_busid == (*i)->busid) {
+            SPDLOG_INFO("将{}放入正在使用的设备中", wanted_busid);
+            //将想要的设备放入正在使用的设备
+            auto ret = (using_devices[wanted_busid] = std::move(*i));
+            //删掉可用设备中的这个设备
+            available_devices.erase(i);
+            return ret;
+        }
+    }
+    SPDLOG_WARN("找不到busid为{}的设备", wanted_busid);
+    return nullptr;
+}
+
 void usbipdcpp::Server::print_devices() {
-    std::shared_lock guard(used_devices_mutex);
-    std::shared_lock guard2(available_devices_mutex);
+    std::shared_lock guard(devices_mutex);
     spdlog::debug("有{}个可用设备", available_devices.size());
-    spdlog::debug("有{}个正在使用的设备，分别为", used_devices.size());
-    for (auto &dev: used_devices) {
+    spdlog::debug("有{}个正在使用的设备，分别为", using_devices.size());
+    for (auto &dev: using_devices) {
         spdlog::debug("{}", dev.first);
     }
 }
