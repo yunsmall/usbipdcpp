@@ -18,9 +18,10 @@ namespace usbipdcpp {
         std::shared_ptr<VirtualInterfaceHandler> handler;
 
         template<typename T, typename... Args>
-        void with_handler(Args &&... args) {
-            handler = std::dynamic_pointer_cast<VirtualInterfaceHandler>(
-                    std::make_shared<T>(*this, std::forward<Args>(args)...));
+        std::shared_ptr<T> with_handler(Args &&... args) {
+            auto new_handler = std::make_shared<T>(*this, std::forward<Args>(args)...);
+            handler = std::dynamic_pointer_cast<VirtualInterfaceHandler>(new_handler);
+            return new_handler;
         }
 
         [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;

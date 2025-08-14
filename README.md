@@ -87,6 +87,16 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 ---
 
 ## Building
+
+There are three options
+
+`USBIPDCPP_BUILD_EXAMPLES`
+`USBIPDCPP_BUILD_LIBUSB_COMPONENTS`
+`USBIPDCPP_BUILD_TESTS`
+
+which control the corresponding part whether to be compiled.
+
+Full compile commands:
 ```bash
 cmake -B build
 cmake --build build

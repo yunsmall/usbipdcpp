@@ -359,16 +359,16 @@ int main() {
 
     if (mouses.size() > 0) {
         std::println(std::cout, "当前系统有{}个可用的鼠标设备", mouses.size());
-        for (int i = 0; i < mouses.size(); i++) {
+        for (std::size_t i = 0; i < mouses.size(); i++) {
             std::println(std::cout, "第{}个鼠标设备：{}", i, mouses[i].name);
             std::println(std::cout, "路径：{}", mouses[i].path.string());
             std::cout << std::endl;
         }
         std::println(std::cout, "请输入想使用的鼠标设备编号：");
 
-        int index;
+        std::size_t index;
         while (std::cin >> index) {
-            if (index >= 0 && index < mouses.size()) {
+            if (index < mouses.size()) {
                 break;
             }
             std::cin.clear();

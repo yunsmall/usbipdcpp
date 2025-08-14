@@ -7,7 +7,7 @@
 #include <asio/redirect_error.hpp>
 #include <spdlog/spdlog.h>
 
-
+#include "utils.h"
 #include "protocol.h"
 #include "type.h"
 #include "Session.h"
@@ -32,7 +32,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
             asio::co_spawn(
                     asio_io_context,
                     do_accept(acceptor),
-                    asio::detached);
+                    if_has_value_than_rethrow);
             asio_io_context.run();
         } catch (const std::exception &e) {
             SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
@@ -120,7 +120,8 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
                 SPDLOG_TRACE("处理会话");
                 co_await session->run(ec2);
                 if (ec2) {
-                    SPDLOG_ERROR("An error occurs in session from {}: {}", remote_endpoint_name, ec2.message());
+                    SPDLOG_ERROR("An error occurs in session from {}: {}", remote_endpoint_name,
+                                 ec2.message());
                 }
                 spdlog::info("Connection from {} was closed", remote_endpoint_name);
 
@@ -131,7 +132,7 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
                     }
                 }
                 co_return;
-            }, asio::detached);
+            }, if_has_value_than_rethrow);
             SPDLOG_TRACE("成功添加会话处理协程");
 
             {

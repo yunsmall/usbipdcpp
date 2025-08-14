@@ -87,7 +87,15 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 ---
 
 ## 编译安装
+有三个选项
 
+`USBIPDCPP_BUILD_EXAMPLES`
+`USBIPDCPP_BUILD_LIBUSB_COMPONENTS`
+`USBIPDCPP_BUILD_TESTS`
+
+控制相应模块是否编译。
+
+完整编译命令：
 ```bash
 cmake -B build
 cmake --build build

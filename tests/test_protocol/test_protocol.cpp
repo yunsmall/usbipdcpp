@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "protocol.h"
-#include "utils.h"
+#include "test_utils.h"
 
 #include <thread>
 
@@ -28,7 +28,7 @@ TEST(TestProtocol, UsbIpHeaderBasic) {
             0x00, 0x00, 0x00, 0x80
     };
     ASSERT_EQ(as_byte.size(), target_data.size());
-    for (auto i = 0; i < as_byte.size(); i++) {
+    for (std::size_t i = 0; i < as_byte.size(); i++) {
         ASSERT_EQ(as_byte[i], target_data[i]);
     }
 }
@@ -73,7 +73,7 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocket) {
 TEST(TestProtocol, UsbIpCmdSubmitISOReadSocket) {
     std::uint32_t transfer_buffer_length = 100;
     data_type data(transfer_buffer_length, 0);
-    for (int i=0;i<transfer_buffer_length;i++) {
+    for (std::size_t i = 0; i < transfer_buffer_length; i++) {
         data[i] = i;
     }
     std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{

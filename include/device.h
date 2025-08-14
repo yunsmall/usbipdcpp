@@ -49,9 +49,10 @@ namespace usbipdcpp {
         std::shared_ptr<AbstDeviceHandler> handler;
 
         template<typename T, typename... Args>
-        void with_handler(Args &&... args) {
-            handler = std::dynamic_pointer_cast<AbstDeviceHandler>(
-                    std::make_shared<T>(*this, std::forward<Args>(args)...));
+        std::shared_ptr<T> with_handler(Args &&... args) {
+            auto new_handler = std::make_shared<T>(*this, std::forward<Args>(args)...);
+            handler = std::static_pointer_cast<AbstDeviceHandler>(new_handler);
+            return new_handler;
         }
 
         [[nodiscard]] std::vector<std::uint8_t> to_bytes_with_interfaces() const;
@@ -65,7 +66,7 @@ namespace usbipdcpp {
 
         void handle_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd,
                         std::uint32_t seqnum, const UsbEndpoint &ep,
-                        std::optional<UsbInterface>& interface, std::uint32_t transfer_buffer_length,
+                        std::optional<UsbInterface> &interface, std::uint32_t transfer_buffer_length,
                         const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
         void handle_unlink_seqnum(std::uint32_t seqnum);

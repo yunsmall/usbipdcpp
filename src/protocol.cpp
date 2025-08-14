@@ -140,6 +140,7 @@ usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::cre
         std::uint32_t status) {
     return {
             .status = status,
+            .device = {}
     };
 }
 
@@ -439,7 +440,7 @@ bool usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::operator==(const UsbIpCmdSubmit &o
                data == other.data;
     }
     //iso描述符不为空则为iso包，则要判断每一个iso包描述符中的数据是否相等，允许data字段不相等
-    for (int i = 0; i < iso_packet_descriptor.size(); i++) {
+    for (std::size_t i = 0; i < iso_packet_descriptor.size(); i++) {
         //包描述符不相等则肯定不相等
         if (iso_packet_descriptor[i] != other.iso_packet_descriptor[i]) {
             return false;

@@ -15,12 +15,24 @@ std::vector<std::uint8_t> usbipdcpp::UsbDevice::to_bytes_with_interfaces() const
 
 std::vector<std::uint8_t> usbipdcpp::UsbDevice::to_bytes_without_interfaces() const {
     std::vector<std::uint8_t> result;
-    std::array<char, 256> path = {0};
-    std::strncpy(path.data(), this->path.string().c_str(), path.size());
-    result.insert(result.end(), path.begin(), path.end());
-    std::array<char, 32> busid = {0};;
-    std::strncpy(busid.data(), this->busid.c_str(), busid.size());
-    result.insert(result.end(), busid.begin(), busid.end());
+
+    std::array<char, 256> path_buffer = {0};
+    auto path_str = this->path.string();
+    std::memcpy(
+            path_buffer.data(),
+            path_str.c_str(),
+            std::min(path_str.size(), std::size(path_buffer) - 1)
+            );
+    result.insert(result.end(), path_buffer.begin(), path_buffer.end());
+
+    std::array<char, 32> busid_buffer = {0};;
+    std::memcpy(
+            busid_buffer.data(),
+            this->busid.c_str(),
+            std::min(this->busid.size(), std::size(busid_buffer) - 1)
+            );
+    result.insert(result.end(), busid_buffer.begin(), busid_buffer.end());
+
     vector_append_to_net(
             result,
             bus_num,
@@ -80,14 +92,14 @@ find_ep(std::uint8_t ep) {
 }
 
 void usbipdcpp::UsbDevice::handle_urb(Session &session,
-                                     const UsbIpCommand::UsbIpCmdSubmit &cmd,
-                                     std::uint32_t seqnum,
-                                     const UsbEndpoint &ep,
-                                     std::optional<UsbInterface>& interface,
-                                     std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                                     const std::vector<std::uint8_t> &out_data,
-                                     const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                                     std::error_code &ec) {
+                                      const UsbIpCommand::UsbIpCmdSubmit &cmd,
+                                      std::uint32_t seqnum,
+                                      const UsbEndpoint &ep,
+                                      std::optional<UsbInterface> &interface,
+                                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+                                      const std::vector<std::uint8_t> &out_data,
+                                      const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                                      std::error_code &ec) {
     SPDLOG_TRACE("设备处理URB，将其转发到对应handler中");
     if (handler) {
         handler->dispatch_urb(session, cmd, seqnum, ep, interface, transfer_buffer_length,

@@ -213,7 +213,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
             transfer, native_handle, ep.address, buffer, transfer_buffer_length, iso_packet_descriptors.size(),
             LibusbDeviceHandler::transfer_callback, callback_args, timeout_milliseconds);
 
-    for (int i = 0; i < iso_packet_descriptors.size(); i++) {
+    for (std::size_t i = 0; i < iso_packet_descriptors.size(); i++) {
         auto &libusb_iso_desc_i = transfer->iso_packet_desc[i];
         /* ignore iso->offset; */
         libusb_iso_desc_i.status = error2trxstat(iso_packet_descriptors[i].status);

@@ -12,6 +12,6 @@ asio::awaitable<void> usbipdcpp::UsbInterface::from_socket(asio::ip::tcp::socket
     interface_class = co_await read_u8(sock);
     interface_subclass = co_await read_u8(sock);
     interface_protocol = co_await read_u8(sock);
-    auto padding = co_await read_u8(sock);
+    [[maybe_unused]] auto padding = co_await read_u8(sock);
     co_return;
 }

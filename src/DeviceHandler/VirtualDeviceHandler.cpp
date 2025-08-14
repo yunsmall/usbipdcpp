@@ -24,6 +24,7 @@ void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
     switch (speed) {
         case UsbSpeed::Unknown: {
             SPDLOG_WARN("Unknown device speed");
+            [[fallthrough]];
         }
         case UsbSpeed::Low: {
             handle_device.ep0_in.max_packet_size = 8;
@@ -650,7 +651,7 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(
             0x80, // bmAttributes Bus Powered
             0x32, // bMaxPower 100mA
     };
-    for (auto i = 0; i < handle_device.interfaces.size(); i++) {
+    for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
         data_type intf_desc = {
                 0x09, // bLength

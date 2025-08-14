@@ -7,6 +7,7 @@
 #include "Server.h"
 #include "device.h"
 #include "protocol.h"
+#include "utils.h"
 
 usbipdcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
     server(server), socket(std::move(socket)), no_urb_processing_notify_channel(server.asio_io_context) {
@@ -36,7 +37,6 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
             else if (ec2.value() == static_cast<int>(ErrorType::SOCKET_ERR)) {
                 SPDLOG_DEBUG("发生socket错误");
             }
-
             break;
         }
         //这里cmd肯定有值，不用再判断了
@@ -116,7 +116,8 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 }
 
                 auto to_be_sent = op_rep_import.to_bytes();
-                auto size = co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
+                [[maybe_unused]] auto size = co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                                                        asio::use_awaitable);
                 SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
                 SPDLOG_TRACE("成功发送 OpRepImport 包", size);
             }
@@ -257,12 +258,20 @@ void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlin
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
         auto to_be_sent = unlink.to_bytes();
-        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetUnlink 包 {}，序列号：{}，共{}字节", get_every_byte(to_be_sent), unlink.header.seqnum,
+        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetUnlink 包 {}，序列号：{}，共{}字节", get_every_byte(to_be_sent),
+                     unlink.header.seqnum,
                      to_be_sent.size());
-        co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
-        SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
+        asio::error_code write_ec;
+        co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                   asio::redirect_error(asio::use_awaitable, write_ec));
+        if (write_ec) {
+            SPDLOG_ERROR("尝试发送 UsbIpRetUnlink 包时出错：{}", write_ec.message());
+        }
+        else {
+            SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
+        }
         end_processing_urb();
-    }, asio::detached);
+    }, if_has_value_than_rethrow);
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
@@ -270,24 +279,32 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
     //从其他线程提交任务到io_context的run线程
     asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
         auto to_be_sent = submit.to_bytes();
-        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetSubmit 包{}，序列号: {}，共{}字节", get_every_byte(to_be_sent), submit.header.seqnum,
+        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetSubmit 包{}，序列号: {}，共{}字节", get_every_byte(to_be_sent),
+                     submit.header.seqnum,
                      to_be_sent.size());
-        co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
-        SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
+        asio::error_code write_ec;
+        co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                   asio::redirect_error(asio::use_awaitable, write_ec));
+        if (write_ec) {
+            SPDLOG_ERROR("尝试发送 UsbIpRetSubmit 包时出错：{}", write_ec.message());
+        }
+        else {
+            SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
+        }
         end_processing_urb();
-    }, asio::detached);
+    }, if_has_value_than_rethrow);
 }
 
 void usbipdcpp::Session::start_processing_urb() {
-    SPDLOG_TRACE("开始处理urb,urb_processing_counter:{}", urb_processing_counter);
+    SPDLOG_TRACE("开始处理urb时，urb_processing_counter:{}", urb_processing_counter);
     urb_processing_counter++;
 }
 
 void usbipdcpp::Session::end_processing_urb() {
-    SPDLOG_TRACE("结束处理urb,urb_processing_counter:{}", urb_processing_counter);
     if (--urb_processing_counter == 0) {
         no_urb_processing_notify_channel.try_send(asio::error_code{});
     }
+    SPDLOG_TRACE("结束处理urb后,urb_processing_counter:{}", urb_processing_counter);
 }
 
 asio::awaitable<void> usbipdcpp::Session::wait_for_all_urb_processed() {

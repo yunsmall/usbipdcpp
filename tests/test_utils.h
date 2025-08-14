@@ -4,6 +4,7 @@
 
 #include "protocol.h"
 #include "type.h"
+#include "utils.h"
 
 namespace usbipdcpp {
     namespace test {
@@ -40,7 +41,7 @@ namespace usbipdcpp {
             server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), ec);
 
             asio::co_spawn(io_context, [&]()-> asio::awaitable<void> {
-                auto version = co_await usbipdcpp::read_u16(server_socket);
+                [[maybe_unused]] auto version = co_await usbipdcpp::read_u16(server_socket);
                 auto op_command = co_await usbipdcpp::read_u16(server_socket);
                 co_await received.from_socket(server_socket);
                 // SPDLOG_INFO("Received header from server");
@@ -52,7 +53,7 @@ namespace usbipdcpp {
                 }
                 server_socket.close();
                 io_context.stop();
-            }, asio::detached);
+            }, if_has_value_than_rethrow);
 
             io_context.run();
             sender.join();
