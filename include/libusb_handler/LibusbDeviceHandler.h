@@ -47,7 +47,7 @@ namespace usbipdcpp {
 
         bool tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
             auto target_endp = setup_packet.index;
-            spdlog::info("tweak_clear_halt_cmd");
+            SPDLOG_DEBUG("tweak_clear_halt_cmd");
 
             auto ret = libusb_clear_halt(native_handle, target_endp);
 
@@ -86,7 +86,7 @@ namespace usbipdcpp {
         }
 
         bool tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
-
+            SPDLOG_DEBUG("tweak_set_configuration_cmd");
             uint16_t config = libusb_le16_to_cpu(setup_packet.value);
 
             auto ret = libusb_set_configuration(native_handle, config);
@@ -109,8 +109,8 @@ namespace usbipdcpp {
 
         int tweak_reset_device_cmd(const SetupPacket &setup_packet) {
 
-            SPDLOG_INFO("{}: usb_queue_reset_device",
-                        get_device_busid(libusb_get_device(native_handle)));
+            SPDLOG_DEBUG("{}: usb_queue_reset_device",
+                         get_device_busid(libusb_get_device(native_handle)));
 
             // libusb_reset_device(native_handle);
             return 0;
@@ -163,8 +163,9 @@ namespace usbipdcpp {
                     return static_cast<int>(UrbStatusType::StatusEPIPE);
                 case LIBUSB_TRANSFER_NO_DEVICE:
                     return static_cast<int>(UrbStatusType::StatusESHUTDOWN);
+                default:
+                    return static_cast<int>(UrbStatusType::StatusENOENT);
             }
-            return static_cast<int>(UrbStatusType::StatusENOENT);
         }
 
         struct libusb_callback_args {
@@ -190,8 +191,9 @@ namespace usbipdcpp {
                     return LIBUSB_TRANSFER_NO_DEVICE;
                 case static_cast<int>(UrbStatusType::StatusEEOVERFLOW): //EOVERFLOW
                     return LIBUSB_TRANSFER_OVERFLOW;
+                default:
+                    return LIBUSB_TRANSFER_ERROR;
             }
-            return LIBUSB_TRANSFER_ERROR;
         }
 
         static void transfer_callback(libusb_transfer *trx);

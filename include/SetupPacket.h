@@ -112,6 +112,15 @@ namespace usbipdcpp {
             return !(request_type & 0x80) || !length;
         }
 
+        std::uint8_t calc_ep0_address() const {
+            if (is_out()) {
+                return 0x80;
+            }
+            else {
+                return 0x00;
+            }
+        }
+
 
         [[nodiscard]] bool is_reset_device_cmd() const {
             uint8_t request_type = calc_request_type();

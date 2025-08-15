@@ -127,7 +127,9 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
                 auto out = cmd2.header.direction == UsbIpDirection::Out;
                 SPDLOG_TRACE("Usbip传输方向为：{}", out ? "out" : "in");
-                auto real_ep = out ? cmd2.header.ep : (cmd2.header.ep | 0x80);
+                std::uint8_t real_ep = out
+                                           ? static_cast<std::uint8_t>(cmd2.header.ep)
+                                           : (static_cast<std::uint8_t>(cmd2.header.ep) | 0x80);
                 SPDLOG_TRACE("传输的真实端口为 {:02x}", real_ep);
                 auto current_seqnum = cmd2.header.seqnum;
 
@@ -160,9 +162,10 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
                         if (ec_during_handling_urb) {
                             SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
+                            //发生错误代表已经不能继续通信了
+                            need_break = true;
                         }
                     }
-
                 }
                 else {
                     SPDLOG_WARN("找不到端点{}", real_ep);

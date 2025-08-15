@@ -121,6 +121,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
     auto err = libusb_submit_transfer(transfer);
     if (err < 0) {
         SPDLOG_ERROR("块传输失败，{}", libusb_strerror(err));
+        delete callback_args;
+        delete buffer;
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
         session.submit_ret_submit(
@@ -163,6 +165,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
     auto err = libusb_submit_transfer(transfer);
     if (err < 0) {
         SPDLOG_ERROR("中断传输失败，{}", libusb_strerror(err));
+        delete callback_args;
+        delete buffer;
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
         session.submit_ret_submit(
@@ -231,6 +235,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
     auto err = libusb_submit_transfer(transfer);
     if (err < 0) {
         SPDLOG_ERROR("同步传输失败，{}", libusb_strerror(err));
+        delete callback_args;
+        delete buffer;
         libusb_free_transfer(transfer);
         ec = make_error_code(ErrorType::TRANSFER_ERROR);
         session.submit_ret_submit(

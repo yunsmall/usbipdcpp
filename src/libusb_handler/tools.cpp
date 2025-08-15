@@ -16,6 +16,6 @@ UsbSpeed usbipdcpp::libusb_speed_to_usb_speed(int speed) {
             return UsbSpeed::Super;
         default:
             SPDLOG_DEBUG("unknown speed enum {}", speed);
+            return UsbSpeed::Unknown;
     }
-    return UsbSpeed::Unknown;
 }
