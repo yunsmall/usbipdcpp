@@ -11,59 +11,27 @@
 
 namespace usbipdcpp {
 
-    consteval bool is_little_endian() {
-        return std::endian::native == std::endian::little;
-    }
-
-    constexpr std::uint8_t ntoh(std::uint8_t num) {
-        return num;
-    }
-
-    constexpr std::uint16_t ntoh(std::uint16_t num) {
-        if constexpr (is_little_endian()) {
-            return (num >> 8) | (num << 8);
+    constexpr bool is_little_endian() {
+        if (std::is_constant_evaluated()) {
+            return std::endian::native == std::endian::little;
         }
-        return num;
-    }
-
-    constexpr std::uint32_t ntoh(std::uint32_t num) {
-        if constexpr (is_little_endian()) {
-            return ((num >> 24) & 0xFF) |
-                   ((num >> 8) & 0xFF00) |
-                   ((num << 8) & 0xFF0000) |
-                   ((num << 24) & 0xFF000000);
+        else {
+            std::uint16_t tmp = 0x1234u;
+            return *reinterpret_cast<std::uint8_t *>(&tmp) != 0x12u;
         }
-        return num;
     }
 
-    constexpr std::uint64_t ntoh(std::uint64_t num) {
+    template<std::unsigned_integral T>
+    constexpr T ntoh(T num) {
         if (is_little_endian()) {
-            return ((num >> (8 * 7)) & 0xFFllu) |
-                   ((num >> (8 * 5)) & 0xFF00llu) |
-                   ((num >> (8 * 3)) & 0xFF0000llu) |
-                   ((num >> (8 * 1)) & 0xFF000000llu) |
-                   ((num << (8 * 1)) & 0xFF00000000llu) |
-                   ((num << (8 * 3)) & 0xFF0000000000llu) |
-                   ((num << (8 * 5)) & 0xFF000000000000llu) |
-                   ((num << (8 * 7)) & 0xFF00000000000000llu);
+            return std::byteswap(num);
         }
         return num;
     }
 
-    constexpr std::uint8_t hton(std::uint8_t num) {
-        return num;
-    }
-
-    constexpr std::uint16_t hton(std::uint16_t num) {
-        return ntoh(num);
-    }
-
-    constexpr std::uint32_t hton(std::uint32_t num) {
-        return ntoh(num);
-    }
-
-    constexpr std::uint64_t hton(std::uint64_t num) {
-        return ntoh(num);
+    template<std::unsigned_integral T>
+    constexpr T hton(T num) {
+        return ntoh<T>(num);
     }
 
     /**
