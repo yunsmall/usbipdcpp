@@ -43,6 +43,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
             SPDLOG_TRACE("成功发送 OpRepDevlist 包");
         }
         else if constexpr (std::is_same_v<UsbIpCommand::OpReqImport, T>) {
+            SPDLOG_TRACE("收到 OpReqImport 包");
             auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
             UsbIpResponse::OpRepImport op_rep_import{};
             SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
@@ -56,8 +57,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 target_device_is_using = true;
             }
             else {
-                auto using_device = server.try_moving_device_to_using(wanted_busid);
-                if (using_device) {
+                if (auto using_device = server.try_moving_device_to_using(wanted_busid)) {
                     //从这里开始会一直占用锁
                     std::lock_guard lock(current_import_device_data_mutex);
                     spdlog::info("成功将设备放入正在使用的设备中");
@@ -92,6 +92,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
                 co_await transfer_loop(transferring_ec);
                 if (transferring_ec) {
                     SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
+                    ec = transferring_ec;
                 }
             }
         }

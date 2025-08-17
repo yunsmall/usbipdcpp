@@ -27,20 +27,20 @@ namespace usbipdcpp {
     }
 
     struct UsbDevice {
-        std::filesystem::path path;
-        std::string busid;
+        std::filesystem::path path{};
+        std::string busid{};
         std::uint32_t bus_num;
         std::uint32_t dev_num;
         std::uint32_t speed;
         std::uint16_t vendor_id;
         std::uint16_t product_id;
-        Version device_bcd;
+        Version device_bcd{0, 0, 0};
         std::uint8_t device_class;
         std::uint8_t device_subclass;
         std::uint8_t device_protocol;
         std::uint8_t configuration_value;
         std::uint8_t num_configurations;
-        std::vector<UsbInterface> interfaces;
+        std::vector<UsbInterface> interfaces{};
 
 
         UsbEndpoint ep0_in;
@@ -55,11 +55,28 @@ namespace usbipdcpp {
             return new_handler;
         }
 
+        static constexpr std::size_t bytes_without_interfaces_num = calculate_total_size_with_array<
+            array_data_type<256>,
+            array_data_type<32>,
+            decltype(bus_num),
+            decltype(dev_num),
+            decltype(speed),
+            decltype(vendor_id),
+            decltype(product_id),
+            std::uint16_t,
+            decltype(device_class),
+            decltype(device_subclass),
+            decltype(device_protocol),
+            decltype(configuration_value),
+            decltype(num_configurations),
+            std::uint8_t
+        >();
+
         [[nodiscard]] std::vector<std::uint8_t> to_bytes_with_interfaces() const;
-        [[nodiscard]] std::vector<std::uint8_t> to_bytes_without_interfaces() const;
+        [[nodiscard]] array_data_type<bytes_without_interfaces_num> to_bytes_without_interfaces() const;
 
         //devlist请求的时候要发送接口信息，import请求时不发送接口信息
-        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+        [[nodiscard]] array_data_type<bytes_without_interfaces_num> to_bytes() const;
         asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
         std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);

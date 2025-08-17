@@ -7,6 +7,8 @@
 #include <spdlog/spdlog.h>
 
 
+using namespace usbipdcpp;
+
 const usbipdcpp::TransferErrorCategory g_error_category;
 
 const char *usbipdcpp::TransferErrorCategory::name() const noexcept {
@@ -59,34 +61,31 @@ std::error_code usbipdcpp::make_error_code(ErrorType e) {
     return {static_cast<int>(e), g_error_category};
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpHeaderBasic::to_bytes() const {
-    std::vector<std::uint8_t> result;
-    vector_append_to_net(result, command, seqnum, devid, direction, ep);
-    // vector_append_to_net(result, command);
-    // vector_append_to_net(result, seqnum);
-    // vector_append_to_net(result, devid);
-    // vector_append_to_net(result, direction);
-    // vector_append_to_net(result, ep);
-    return result;
+array_data_type<usbipdcpp::calculate_total_size_with_array<
+    decltype(UsbIpHeaderBasic::command),
+    decltype(UsbIpHeaderBasic::seqnum),
+    decltype(UsbIpHeaderBasic::devid),
+    decltype(UsbIpHeaderBasic::direction),
+    decltype(UsbIpHeaderBasic::ep)
+>()> UsbIpHeaderBasic::to_bytes() const {
+    return to_network_array(command, seqnum, devid, direction, ep);
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpHeaderBasic::from_socket(asio::ip::tcp::socket &sock) {
-    co_await read_from_socket(sock, seqnum, devid, direction, ep);
+    co_await unsigned_integral_read_from_socket(sock, seqnum, devid, direction, ep);
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
-    // std::vector<std::uint8_t> result;
-    // result.reserve(sizeof(UsbIpIsoPacketDescriptor));
-    // vector_append_to_net(result, offset);
-    // vector_append_to_net(result, length);
-    // vector_append_to_net(result, actual_length);
-    // vector_append_to_net(result, status);
-    return to_network_data(offset, length, actual_length, status);
-    // return result;
+array_data_type<calculate_total_size_with_array<
+    decltype(UsbIpIsoPacketDescriptor::offset),
+    decltype(UsbIpIsoPacketDescriptor::length),
+    decltype(UsbIpIsoPacketDescriptor::actual_length),
+    decltype(UsbIpIsoPacketDescriptor::status)
+>()> usbipdcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
+    return to_network_array(offset, length, actual_length, status);
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip::tcp::socket &sock) {
-    co_await read_from_socket(sock, offset, length, actual_length, status);
+    co_await unsigned_integral_read_from_socket(sock, offset, length, actual_length, status);
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepDevlist::to_bytes() const {
@@ -126,13 +125,9 @@ create_from_devices(const std::vector<std::shared_ptr<UsbDevice>> &devices) {
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepImport::to_bytes() const {
     std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REP_IMPORT, status);
-    // vector_append_to_net(result, USBIP_VERSION);
-    // vector_append_to_net(result, OP_REP_IMPORT);
-    // vector_append_to_net(result, status);
     if (status == 0) {
         if (device) {
-            auto bytes = device->to_bytes();
-            result.insert(result.end(), bytes.begin(), bytes.end());
+            vector_append_to_net(result, device->to_bytes());
         }
     }
     return result;
@@ -163,7 +158,7 @@ usbipdcpp::UsbIpResponse::OpRepImport usbipdcpp::UsbIpResponse::OpRepImport::cre
 }
 
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
+data_type usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
     assert(header.command==USBIP_RET_SUBMIT);
     //检查个软，服务端方向恒为0，导致这里直接报错
     // SPDLOG_TRACE(
@@ -171,27 +166,25 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() c
     //         header.direction==UsbIpDirection::In, actual_length, transfer_buffer.size());
     // assert(header.direction==UsbIpDirection::In?(actual_length==transfer_buffer.size()):(actual_length==0));
     assert(actual_length==transfer_buffer.size());
-    auto result = header.to_bytes();
-    auto result2 = to_network_data(status, actual_length, start_frame, number_of_packets, error_count);
-    result.insert(result.end(), result2.begin(), result2.end());
-    // vector_append_to_net(result, status);
-    // vector_append_to_net(result, actual_length);
-    // vector_append_to_net(result, start_frame);
-    // vector_append_to_net(result, number_of_packets);
-    // vector_append_to_net(result, error_count);
-    result.resize(result.size() + 8, 0);
+
+    auto result1 = header.to_bytes();
+    auto result2 = to_network_array(status, actual_length, start_frame, number_of_packets, error_count);
+    auto total_result = to_network_data(result1, result2);
+
+    //padding
+    total_result.resize(total_result.size() + 8, 0);
     // if (header.direction == UsbIpDirection::In) {
     //     result.insert(result.end(), transfer_buffer.begin(), transfer_buffer.end());
     // }
     if (!transfer_buffer.empty()) {
-        result.insert(result.end(), transfer_buffer.begin(), transfer_buffer.end());
+        vector_append_to_net(total_result, transfer_buffer);
     }
     for (auto &iso_desc: iso_packet_descriptor) {
         auto iso_byte = iso_desc.to_bytes();
-        result.insert(result.end(), iso_byte.begin(), iso_byte.end());
+        vector_append_to_net(total_result, iso_byte);
     }
 
-    return result;
+    return total_result;
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
@@ -321,12 +314,14 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
                                                     transfer_buffer);
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::UsbIpRetUnlink::to_bytes() const {
+array_data_type<
+    calculate_total_size_with_array<
+        decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(UsbIpResponse::UsbIpRetUnlink::status)
+    >() + 24
+> UsbIpResponse::UsbIpRetUnlink::to_bytes() const {
     assert(header.command==USBIP_RET_UNLINK);
-    auto result = header.to_bytes();
-    vector_append_to_net(result, status);
-    result.resize(result.size() + 24, 0);
-    return result;
+    auto result = to_network_array(header.to_bytes(), status);
+    return array_add_padding<24>(result);
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock) {
@@ -349,12 +344,10 @@ usbipdcpp::UsbIpResponse::UsbIpRetUnlink usbipdcpp::UsbIpResponse::UsbIpRetUnlin
     };
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
-    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
-    // vector_append_to_net(result, USBIP_VERSION);
-    // vector_append_to_net(result, OP_REQ_DEVLIST);
-    // vector_append_to_net(result, status);
-    return result;
+array_data_type<calculate_total_size_with_array<
+    decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(UsbIpCommand::OpReqDevlist::status)
+>()> usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
+    return to_network_array(USBIP_VERSION, OP_REQ_DEVLIST, status);
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
@@ -362,39 +355,42 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqDevlist::from_socket(asio::i
     assert(status == 0);
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::OpReqImport::to_bytes() const {
-    std::vector<std::uint8_t> result = to_network_data(USBIP_VERSION, OP_REQ_DEVLIST, status);
-    // vector_append_to_net(result, USBIP_VERSION);
-    // vector_append_to_net(result, OP_REQ_DEVLIST);
-    // vector_append_to_net(result, status);
-    result.insert(result.end(), busid.begin(), busid.end());
-    return result;
+array_data_type<
+    calculate_total_size_with_array<
+        decltype(USBIP_VERSION),
+        decltype(OP_REQ_DEVLIST),
+        decltype(UsbIpCommand::OpReqImport::status),
+        decltype(UsbIpCommand::OpReqImport::busid)
+    >()
+> usbipdcpp::UsbIpCommand::OpReqImport::to_bytes() const {
+    return to_network_array(USBIP_VERSION, OP_REQ_DEVLIST, status, busid);
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock) {
-    status = co_await read_u32(sock);
+    co_await data_read_from_socket(sock, status, busid);
     assert(status == 0);
-    co_await asio::async_read(sock, asio::buffer(busid), asio::use_awaitable);
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() const {
     assert(header.direction!=UsbIpDirection::Out||transfer_buffer_length==data.size());
-    auto result = header.to_bytes();
-    auto result2 = to_network_data(transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
-    result.insert(result.end(), result2.begin(), result2.end());
-    // vector_append_to_net(result, transfer_flags);
-    // vector_append_to_net(result, transfer_buffer_length);
-    // vector_append_to_net(result, start_frame);
-    // vector_append_to_net(result, number_of_packets);
-    // vector_append_to_net(result, interval);
-    auto setup_data = setup.to_bytes();
-    result.insert(result.end(), setup_data.begin(), setup_data.end());
-    result.insert(result.end(), data.begin(), data.end());
+    auto total_result =
+            to_network_data(
+                    to_network_array(
+                            header.to_bytes(),
+                            transfer_flags,
+                            transfer_buffer_length,
+                            start_frame,
+                            number_of_packets,
+                            interval,
+                            setup.to_bytes()
+                            ),
+                    data
+                    );
     for (auto &iso_des: iso_packet_descriptor) {
         auto iso_byte = iso_des.to_bytes();
-        result.insert(result.end(), iso_byte.begin(), iso_byte.end());
+        vector_append_to_net(total_result, iso_byte);
     }
-    return result;
+    return total_result;
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
@@ -402,7 +398,9 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket(asio:
     //设置命令类型
     header.command = USBIP_CMD_SUBMIT;
 
-    co_await read_from_socket(sock, transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval);
+    co_await unsigned_integral_read_from_socket(sock, transfer_flags, transfer_buffer_length, start_frame,
+                                                number_of_packets,
+                                                interval);
     co_await setup.from_socket(sock);
 
     if (header.direction == UsbIpDirection::In) {
@@ -461,11 +459,18 @@ bool usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::operator==(const UsbIpCmdSubmit &o
     return true;
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::to_bytes() const {
-    auto result = header.to_bytes();
-    vector_append_to_net(result, unlink_seqnum);
-    result.resize(result.size() + 24, 0);
-    return result;
+array_data_type<
+    calculate_total_size_with_array<
+        decltype(UsbIpHeaderBasic{}.to_bytes()),
+        decltype(UsbIpCommand::UsbIpCmdUnlink::unlink_seqnum)
+    >() + 24
+> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::to_bytes() const {
+    return array_add_padding<24>(
+            to_network_array(
+                    header.to_bytes(),
+                    unlink_seqnum
+                    )
+            );
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
@@ -558,6 +563,15 @@ asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::ge
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::to_bytes(const AllCmdVariant &cmd) {
     return std::visit([](auto &&package) {
-        return package.to_bytes();
+        auto bytes = package.to_bytes();
+        using Type = decltype(bytes);
+        if constexpr (std::is_same_v<Type, data_type>) {
+            return bytes;
+        }
+        else {
+            data_type result;
+            vector_append_to_net(result, bytes);
+            return result;
+        }
     }, cmd);
 }

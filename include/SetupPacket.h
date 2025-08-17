@@ -17,8 +17,8 @@ namespace usbipdcpp {
         std::uint16_t length;
 
         //转成小端
-        [[nodiscard]] data_type to_bytes() const {
-            data_type result(8, 0);
+        [[nodiscard]] array_data_type<8> to_bytes() const {
+            array_data_type<8> result;
 
             result[0] = request_type;
             result[1] = request;
@@ -37,8 +37,8 @@ namespace usbipdcpp {
         }
 
         [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock) {
-            std::array<std::uint8_t, 8> setup{};
-            co_await asio::async_read(sock, asio::buffer(setup), asio::use_awaitable);
+            array_data_type<8> setup{};
+            co_await data_read_from_socket(sock, setup);
             *this = parse(setup);
         }
 

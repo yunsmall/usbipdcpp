@@ -22,10 +22,10 @@ namespace usbipdcpp {
     constexpr std::uint16_t OP_REP_IMPORT = 0x0003;
 
 
-    constexpr std::uint16_t USBIP_CMD_SUBMIT = 0x0001;
-    constexpr std::uint16_t USBIP_CMD_UNLINK = 0x0002;
-    constexpr std::uint16_t USBIP_RET_SUBMIT = 0x0003;
-    constexpr std::uint16_t USBIP_RET_UNLINK = 0x0004;
+    constexpr std::uint32_t USBIP_CMD_SUBMIT = 0x0001;
+    constexpr std::uint32_t USBIP_CMD_UNLINK = 0x0002;
+    constexpr std::uint32_t USBIP_RET_SUBMIT = 0x0003;
+    constexpr std::uint32_t USBIP_RET_UNLINK = 0x0004;
 
     enum UsbIpDirection {
         Out = 0,
@@ -86,10 +86,7 @@ namespace usbipdcpp {
     struct UsbIpHeaderBasic {
         /**
          * 这个字段并不需要从socket里面读，由子命令设置。
-         *
-         * 这个字段是四个字节的，刚好和OP包的两个字节的version和command字段占用同一个位子。
-         *
-         * 因此之前读过这两字段用来检测是哪个包了，不用重复读。
+         * 根据先读的字段判断应该创建哪个包
         */
         std::uint32_t command;
         std::uint32_t seqnum;
@@ -97,7 +94,10 @@ namespace usbipdcpp {
         std::uint32_t direction;
         std::uint32_t ep;
 
-        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+        [[nodiscard]] array_data_type<calculate_total_size_with_array<
+            decltype(command), decltype(seqnum), decltype(devid), decltype(direction), decltype(ep)
+        >()>
+        to_bytes() const;
         [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
         bool operator==(const UsbIpHeaderBasic &other) const = default;
@@ -129,7 +129,9 @@ namespace usbipdcpp {
         std::uint32_t actual_length;
         std::uint32_t status;
 
-        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+        [[nodiscard]] array_data_type<calculate_total_size_with_array<
+            decltype(offset), decltype(length), decltype(actual_length), decltype(status)
+        >()> to_bytes() const;
         [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
         bool operator==(const UsbIpIsoPacketDescriptor &other) const = default;
@@ -141,7 +143,9 @@ namespace usbipdcpp {
         struct OpReqDevlist {
             std::uint32_t status;
 
-            [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+            [[nodiscard]] array_data_type<calculate_total_size_with_array<
+                decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status)
+            >()> to_bytes() const;
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
             bool operator==(const OpReqDevlist &) const = default;
         };
@@ -150,9 +154,11 @@ namespace usbipdcpp {
 
         struct OpReqImport {
             std::uint32_t status;
-            std::array<uint8_t, 32> busid;
+            array_data_type<32> busid;
 
-            [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+            [[nodiscard]] array_data_type<calculate_total_size_with_array<
+                decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status), decltype(busid)
+            >()> to_bytes() const;
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const OpReqImport &other) const = default;
@@ -187,7 +193,11 @@ namespace usbipdcpp {
             UsbIpHeaderBasic header;
             std::uint32_t unlink_seqnum;
 
-            [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+            [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<
+                    decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(unlink_seqnum)
+                >() + 24
+            > to_bytes() const;
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpCmdUnlink &other) const = default;
@@ -266,10 +276,10 @@ namespace usbipdcpp {
             std::uint32_t start_frame;
             std::uint32_t number_of_packets;
             std::uint32_t error_count;
-            std::vector<std::uint8_t> transfer_buffer;
+            data_type transfer_buffer;
             std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
 
-            [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+            [[nodiscard]] data_type to_bytes() const;
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpRetSubmit &other) const = default;
@@ -301,7 +311,11 @@ namespace usbipdcpp {
             UsbIpHeaderBasic header;
             std::uint32_t status;
 
-            [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+            [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<
+                    decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(status)
+                >() + 24
+            > to_bytes() const;
             [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpRetUnlink &other) const = default;
