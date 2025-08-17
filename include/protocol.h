@@ -36,6 +36,8 @@ namespace usbipdcpp {
         OK = 0,
         UNKNOWN_VERSION,
         UNKNOWN_CMD,
+        PROTOCOL_ERROR,
+        NO_DEVICE,
         SOCKET_EOF,
         SOCKET_ERR,
         INTERNAL_ERROR,
@@ -193,8 +195,18 @@ namespace usbipdcpp {
 
         static_assert(Serializable<UsbIpCmdUnlink>);
 
-        using CmdVariant = std::variant<OpReqDevlist, OpReqImport, UsbIpCmdSubmit, UsbIpCmdUnlink>;
+        using OpVariant = std::variant<OpReqDevlist, OpReqImport>;
+        using CmdVariant = std::variant<UsbIpCmdSubmit, UsbIpCmdUnlink>;
 
+
+        /**
+         * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
+         * @param sock
+         * @param ec
+         * @return 获取到的命令
+         */
+        asio::awaitable<usbipdcpp::UsbIpCommand::OpVariant> get_op_from_socket(
+                asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
         /**
          * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
          * @param sock
@@ -203,7 +215,8 @@ namespace usbipdcpp {
          */
         asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> get_cmd_from_socket(
                 asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
-        std::vector<std::uint8_t> to_bytes(const CmdVariant &cmd);
+
+        std::vector<std::uint8_t> to_bytes(const AllCmdVariant &cmd);
     }
 
     namespace UsbIpResponse {
@@ -299,7 +312,7 @@ namespace usbipdcpp {
 
         static_assert(Serializable<UsbIpRetUnlink>);
 
-        using RepVariant = std::variant<OpRepDevlist, OpRepImport, UsbIpRetSubmit, UsbIpRetUnlink>;
+        using AllRepVariant = std::variant<OpRepDevlist, OpRepImport, UsbIpRetSubmit, UsbIpRetUnlink>;
     }
 
 

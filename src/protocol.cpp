@@ -25,6 +25,12 @@ std::string usbipdcpp::TransferErrorCategory::message(int _Errval) const {
         case ErrorType::UNKNOWN_CMD: {
             return "Unknown Command";
         }
+        case ErrorType::PROTOCOL_ERROR: {
+            return "Protocol Error";
+        }
+        case ErrorType::NO_DEVICE: {
+            return "No Device";
+        }
         case ErrorType::SOCKET_EOF: {
             return "Connection closed by peer";
         }
@@ -473,19 +479,18 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket(asio:
     co_await asio::async_read(sock, asio::buffer(padding), asio::use_awaitable);
 }
 
-
-asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::get_cmd_from_socket(
+asio::awaitable<usbipdcpp::UsbIpCommand::OpVariant> usbipdcpp::UsbIpCommand::get_op_from_socket(
         asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     try {
         auto version = co_await read_u16(sock);
         if (version != 0 && version != USBIP_VERSION) {
             ec = make_error_code(ErrorType::UNKNOWN_VERSION);
-            co_return UsbIpCommand::CmdVariant{};
+            co_return OpVariant{};
         }
-        auto op_command = co_await read_u16(sock);
-        SPDLOG_DEBUG("收到command: 0x{:04x}", op_command);
+        auto op = co_await read_u16(sock);
+        SPDLOG_DEBUG("收到op: 0x{:04x}", op);
 
-        switch (op_command) {
+        switch (op) {
             case OP_REQ_DEVLIST: {
                 auto req = OpReqDevlist{};
                 co_await req.from_socket(sock);
@@ -498,6 +503,30 @@ asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::ge
                 co_return req;
                 break;
             }
+            default: {
+                ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                co_return UsbIpCommand::OpVariant{};
+            }
+        }
+    } catch (const asio::system_error &e) {
+        SPDLOG_DEBUG("asio错误：{}", e.what());
+        if (e.code() == asio::error::eof) {
+            ec = make_error_code(ErrorType::SOCKET_EOF);
+        }
+        else {
+            ec = make_error_code(ErrorType::SOCKET_ERR);
+        }
+    }
+    co_return UsbIpCommand::OpVariant{};
+}
+
+asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::get_cmd_from_socket(
+        asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    try {
+        auto command = co_await read_u32(sock);
+        SPDLOG_DEBUG("收到command: 0x{:04x}", command);
+
+        switch (command) {
             case USBIP_CMD_SUBMIT: {
                 auto cmd = UsbIpCmdSubmit{};
                 co_await cmd.from_socket(sock);
@@ -527,7 +556,7 @@ asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::ge
     co_return UsbIpCommand::CmdVariant{};
 }
 
-std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::to_bytes(const CmdVariant &cmd) {
+std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::to_bytes(const AllCmdVariant &cmd) {
     return std::visit([](auto &&package) {
         return package.to_bytes();
     }, cmd);

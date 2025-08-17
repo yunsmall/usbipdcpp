@@ -16,6 +16,8 @@ namespace usbipdcpp {
     class Server;
 
     class Session {
+        friend class Server;
+
     public:
         Session(Server &server, asio::ip::tcp::socket &&socket);
 
@@ -34,7 +36,7 @@ namespace usbipdcpp {
          */
         void remove_seqnum_unlink(std::uint32_t seqnum);
 
-        void stop();
+        void immediately_stop();
 
         /**
          * @brief 推荐使用这个函数。该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
@@ -58,9 +60,11 @@ namespace usbipdcpp {
         void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
 
-        ~Session() = default;
+        ~Session();
 
     private:
+        asio::awaitable<void> transfer_loop(usbipdcpp::error_code &transferring_ec);
+
         //防止urb还没处理好,session对象就析构了
         void start_processing_urb();
         //防止urb还没处理好,session对象就析构了
@@ -68,11 +72,16 @@ namespace usbipdcpp {
         //防止urb还没处理好,session对象就析构了
         asio::awaitable<void> wait_for_all_urb_processed();
 
+        std::atomic_bool should_immediately_stop;
 
-        std::atomic<bool> should_stop;
+        //是否在传输ret_submit的阶段
+        std::atomic_bool cmd_transferring = false;
 
+        //传输过程中不允许为空，传输过程中禁止任何写入。不允许在非网络线程读，除非加锁
         std::optional<std::string> current_import_device_id = std::nullopt;
+        //传输过程中不允许为空，传输过程中禁止任何写入。不允许在非网络线程读，除非加锁
         std::shared_ptr<UsbDevice> current_import_device = nullptr;
+        //上面两个变量的值的锁
         std::shared_mutex current_import_device_data_mutex;
 
         //从原本的ret_submit的seqnum映射到ret_unlink的seqnum

@@ -38,10 +38,14 @@ namespace usbipdcpp {
                 &ec
                 );
         /**
+         * @brief 完全终止传输
+         */
+        virtual void cancer_all_transfer() =0;
+        /**
          * @brief 处理unlink。传入想要取消的序号。默认是空实现，就当全部发得太快了来不及取消了
          * @param seqnum 包序号
          */
-        virtual void handle_unlink_seqnum(std::uint32_t seqnum);
+        virtual void handle_unlink_seqnum(std::uint32_t seqnum) =0;
 
     protected:
         // 对于Out传输，transfer_buffer_length必须要等于out_data.size()

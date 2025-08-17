@@ -52,7 +52,7 @@ void usbipdcpp::Server::stop() {
     {
         std::shared_lock lock(session_list_mutex);
         for (const auto &session: sessions) {
-            session->stop();
+            session->immediately_stop();
         }
     }
     spdlog::info("All sessions were successfully closed");

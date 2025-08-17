@@ -110,6 +110,16 @@ void usbipdcpp::UsbDevice::handle_urb(Session &session,
     }
 }
 
+void usbipdcpp::UsbDevice::cancer_all_transfer() {
+    SPDLOG_TRACE("设备处理cancer_all_transfer，将其转发到对应handler中");
+    if (handler) {
+        handler->cancer_all_transfer();
+    }
+    else {
+        SPDLOG_ERROR("设备没注册handler");
+    }
+}
+
 void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
     SPDLOG_TRACE("设备处理unlink，将其转发到对应handler中");
     if (handler) {

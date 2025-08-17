@@ -23,7 +23,7 @@ namespace usbipdcpp {
         struct OpReqImport;
         struct UsbIpCmdSubmit;
         struct UsbIpCmdUnlink;
-        using CmdVariant = std::variant<OpReqDevlist, OpReqImport, UsbIpCmdSubmit, UsbIpCmdUnlink>;
+        using AllCmdVariant = std::variant<OpReqDevlist, OpReqImport, UsbIpCmdSubmit, UsbIpCmdUnlink>;
     }
 
     struct UsbDevice {
@@ -69,6 +69,14 @@ namespace usbipdcpp {
                         std::optional<UsbInterface> &interface, std::uint32_t transfer_buffer_length,
                         const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
+        /**
+         * @brief 当发生错误等情况需要完全终止传输时会调用这个函数
+         */
+        void cancer_all_transfer();
+        /**
+         * @brief 当收到cmd_unlink时会调用这个函数，负责unlink某个seqnum
+         * @param seqnum
+         */
         void handle_unlink_seqnum(std::uint32_t seqnum);
 
         bool operator==(const UsbDevice &other) const {

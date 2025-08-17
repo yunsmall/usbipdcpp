@@ -19,8 +19,7 @@ namespace usbipdcpp {
         explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
 
         ~LibusbDeviceHandler() override;
-
-
+        void cancer_all_transfer() override;
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
 
     protected:
@@ -45,128 +44,22 @@ namespace usbipdcpp {
                                          const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                          std::error_code &ec) override;
 
-        bool tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
-            auto target_endp = setup_packet.index;
-            SPDLOG_DEBUG("tweak_clear_halt_cmd");
-
-            auto ret = libusb_clear_halt(native_handle, target_endp);
-
-            if (ret) {
-                SPDLOG_ERROR("libusb_clear_halt() error: endp {} returned {}", target_endp, ret);
-            }
-            else {
-                SPDLOG_DEBUG("libusb_clear_halt() done: endp {}", target_endp);
-            }
-            // return ret;
-            return true;
-        }
-
-        bool tweak_set_interface_cmd(const SetupPacket &setup_packet) {
-            uint16_t alternate = setup_packet.value;
-            uint16_t interface = setup_packet.index;
-
-            SPDLOG_DEBUG("set_interface: inf {} alt {}",
-                         interface, alternate);
-
-            int ret = libusb_set_interface_alt_setting(native_handle, interface, alternate);
-            if (ret) {
-                SPDLOG_ERROR(
-                        "{}: usb_set_interface error: inf {} alt {} ret {}",
-                        get_device_busid(libusb_get_device(native_handle)),
-                        interface, alternate, ret);
-            }
-            else {
-                SPDLOG_DEBUG(
-                        "{}: usb_set_interface done: inf {} alt {}",
-                        get_device_busid(libusb_get_device(native_handle)),
-                        interface, alternate);
-            }
-            // return ret;
-            return true;
-        }
-
-        bool tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
-            SPDLOG_DEBUG("tweak_set_configuration_cmd");
-            uint16_t config = libusb_le16_to_cpu(setup_packet.value);
-
-            auto ret = libusb_set_configuration(native_handle, config);
-            if (ret) {
-                SPDLOG_ERROR(
-                        "{}: libusb_set_configuration error: config {} ret {}",
-                        get_device_busid(libusb_get_device(native_handle)), config, ret);
-            }
-            else {
-                SPDLOG_DEBUG(
-                        "{}: libusb_set_configuration done: config {}",
-                        get_device_busid(libusb_get_device(native_handle)), config);
-            }
-
-            // return 0;
-            // return -1;
-            return true;
-        }
-
-
-        int tweak_reset_device_cmd(const SetupPacket &setup_packet) {
-
-            SPDLOG_DEBUG("{}: usb_queue_reset_device",
-                         get_device_busid(libusb_get_device(native_handle)));
-
-            // libusb_reset_device(native_handle);
-            return 0;
-        }
+        bool tweak_clear_halt_cmd(const SetupPacket &setup_packet);
+        bool tweak_set_interface_cmd(const SetupPacket &setup_packet);
+        bool tweak_set_configuration_cmd(const SetupPacket &setup_packet);
+        bool tweak_reset_device_cmd(const SetupPacket &setup_packet);
 
         /**
          * @brief 返回是否做了特殊操作
          * @param setup_packet
          * @return
          */
-        bool tweak_special_requests(const SetupPacket &setup_packet) {
-            if (setup_packet.is_clear_halt_cmd()) {
-                return tweak_clear_halt_cmd(setup_packet);
-            }
-            else if (setup_packet.is_set_interface_cmd()) {
-                return tweak_set_interface_cmd(setup_packet);
-            }
-            else if (setup_packet.is_set_configuration_cmd()) {
-                return tweak_set_configuration_cmd(setup_packet);
-            }
-            // else if (setup_packet.is_reset_device_cmd()) {
-            //     return tweak_reset_device_cmd(setup_packet);
-            // }
-            SPDLOG_DEBUG("不需要调整包");
-            return false;
-        }
+        bool tweak_special_requests(const SetupPacket &setup_packet);
 
-        static uint8_t get_libusb_transfer_flags(uint32_t in) {
-            uint8_t flags = 0;
+        static uint8_t get_libusb_transfer_flags(uint32_t in);
 
-            if (in & static_cast<std::uint32_t>(TransferFlag::URB_SHORT_NOT_OK))
-                flags |= LIBUSB_TRANSFER_SHORT_NOT_OK;
-            if (in & static_cast<std::uint32_t>(TransferFlag::URB_ZERO_PACKET))
-                flags |= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
-
-            return flags;
-        }
-
-        static int trxstat2error(enum libusb_transfer_status trxstat) {
-            //具体数值抄的linux的
-            switch (trxstat) {
-                case LIBUSB_TRANSFER_COMPLETED:
-                    return static_cast<int>(UrbStatusType::StatusOK);
-                case LIBUSB_TRANSFER_CANCELLED:
-                    return static_cast<int>(UrbStatusType::StatusECONNRESET);
-                case LIBUSB_TRANSFER_ERROR:
-                case LIBUSB_TRANSFER_STALL:
-                case LIBUSB_TRANSFER_TIMED_OUT:
-                case LIBUSB_TRANSFER_OVERFLOW:
-                    return static_cast<int>(UrbStatusType::StatusEPIPE);
-                case LIBUSB_TRANSFER_NO_DEVICE:
-                    return static_cast<int>(UrbStatusType::StatusESHUTDOWN);
-                default:
-                    return static_cast<int>(UrbStatusType::StatusENOENT);
-            }
-        }
+        static int trxstat2error(enum libusb_transfer_status trxstat);
+        static enum libusb_transfer_status error2trxstat(int e);
 
         struct libusb_callback_args {
             LibusbDeviceHandler &handler;
@@ -175,34 +68,16 @@ namespace usbipdcpp {
             bool is_out;
         };
 
-        static enum libusb_transfer_status error2trxstat(int e) {
-            switch (e) {
-                case static_cast<int>(UrbStatusType::StatusOK):
-                    return LIBUSB_TRANSFER_COMPLETED;
-                case static_cast<int>(UrbStatusType::StatusENOENT):
-                    return LIBUSB_TRANSFER_ERROR;
-                case static_cast<int>(UrbStatusType::StatusECONNRESET):
-                    return LIBUSB_TRANSFER_CANCELLED;
-                case static_cast<int>(UrbStatusType::StatusETIMEDOUT):
-                    return LIBUSB_TRANSFER_TIMED_OUT;
-                case static_cast<int>(UrbStatusType::StatusEPIPE):
-                    return LIBUSB_TRANSFER_STALL;
-                case static_cast<int>(UrbStatusType::StatusESHUTDOWN):
-                    return LIBUSB_TRANSFER_NO_DEVICE;
-                case static_cast<int>(UrbStatusType::StatusEEOVERFLOW): //EOVERFLOW
-                    return LIBUSB_TRANSFER_OVERFLOW;
-                default:
-                    return LIBUSB_TRANSFER_ERROR;
-            }
-        }
-
         static void transfer_callback(libusb_transfer *trx);
 
         std::map<std::uint32_t, libusb_transfer *> transferring_data;
         std::shared_mutex transferring_data_mutex;
 
         libusb_device_handle *native_handle;
-        int timeout_milliseconds = 1000;
+
+        //不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
+        //发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交
+        int timeout_milliseconds = 0;
     };
 
 }

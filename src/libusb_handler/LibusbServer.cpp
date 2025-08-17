@@ -202,7 +202,7 @@ void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev) {
 
         err = libusb_claim_interface(dev_handle, intf_i);
         if (err) {
-            SPDLOG_ERROR("无法声明接口{}：{}", libusb_strerror(err));
+            SPDLOG_ERROR("无法声明接口{}：{}", intf_i, libusb_strerror(err));
             libusb_free_config_descriptor(active_config_desc);
             libusb_close(dev_handle);
             libusb_unref_device(dev);
