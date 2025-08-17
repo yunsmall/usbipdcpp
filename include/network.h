@@ -15,46 +15,55 @@ namespace usbipdcpp {
         return std::endian::native == std::endian::little;
     }
 
-    inline std::uint8_t ntoh(std::uint8_t num) {
+    constexpr std::uint8_t ntoh(std::uint8_t num) {
         return num;
     }
 
-    inline std::uint16_t ntoh(std::uint16_t num) {
-        return asio::detail::socket_ops::network_to_host_short(num);
-    }
-
-    inline std::uint32_t ntoh(std::uint32_t num) {
-        return asio::detail::socket_ops::network_to_host_long(num);
-    }
-
-    inline std::uint64_t ntoh(std::uint64_t num) {
-        if (is_little_endian()) {
-            char *data = reinterpret_cast<char *>(&num);
-            std::ranges::reverse(data, data + sizeof(num));
-            return *reinterpret_cast<std::uint64_t *>(data);
+    constexpr std::uint16_t ntoh(std::uint16_t num) {
+        if constexpr (is_little_endian()) {
+            return (num >> 8) | (num << 8);
         }
         return num;
     }
 
-    inline std::uint8_t hton(std::uint8_t num) {
-        return num;
-    }
-
-    inline std::uint16_t hton(std::uint16_t num) {
-        return asio::detail::socket_ops::host_to_network_short(num);
-    }
-
-    inline std::uint32_t hton(std::uint32_t num) {
-        return asio::detail::socket_ops::host_to_network_long(num);
-    }
-
-    inline std::uint64_t hton(std::uint64_t num) {
-        if (is_little_endian()) {
-            char *data = reinterpret_cast<char *>(&num);
-            std::ranges::reverse(data, data + sizeof(num));
-            return *reinterpret_cast<std::uint64_t *>(data);
+    constexpr std::uint32_t ntoh(std::uint32_t num) {
+        if constexpr (is_little_endian()) {
+            return ((num >> 24) & 0xFF) |
+                   ((num >> 8) & 0xFF00) |
+                   ((num << 8) & 0xFF0000) |
+                   ((num << 24) & 0xFF000000);
         }
         return num;
+    }
+
+    constexpr std::uint64_t ntoh(std::uint64_t num) {
+        if (is_little_endian()) {
+            return ((num >> (8 * 7)) & 0xFFllu) |
+                   ((num >> (8 * 5)) & 0xFF00llu) |
+                   ((num >> (8 * 3)) & 0xFF0000llu) |
+                   ((num >> (8 * 1)) & 0xFF000000llu) |
+                   ((num << (8 * 1)) & 0xFF00000000llu) |
+                   ((num << (8 * 3)) & 0xFF0000000000llu) |
+                   ((num << (8 * 5)) & 0xFF000000000000llu) |
+                   ((num << (8 * 7)) & 0xFF00000000000000llu);
+        }
+        return num;
+    }
+
+    constexpr std::uint8_t hton(std::uint8_t num) {
+        return num;
+    }
+
+    constexpr std::uint16_t hton(std::uint16_t num) {
+        return ntoh(num);
+    }
+
+    constexpr std::uint32_t hton(std::uint32_t num) {
+        return ntoh(num);
+    }
+
+    constexpr std::uint64_t hton(std::uint64_t num) {
+        return ntoh(num);
     }
 
     /**
