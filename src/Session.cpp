@@ -52,8 +52,9 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
             //已经在使用的不支持导出
             if (server.is_device_using(wanted_busid)) {
                 spdlog::warn("正在使用的设备不支持导出");
+                //查看内核源码中 tools/usbip/src/usbipd.c 函数 recv_request_import 源码可以发现应该返回NA而不是DevBusy
                 op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-                        static_cast<std::uint32_t>(OperationStatuType::DevBusy));
+                        static_cast<std::uint32_t>(OperationStatuType::NA));
                 target_device_is_using = true;
             }
             else {
@@ -206,6 +207,8 @@ asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &t
             break;
         }
         else {
+            if (should_immediately_stop)
+                break;
             co_await std::visit([&,this](auto &&cmd)-> asio::awaitable<void> {
                 using T = std::remove_cvref_t<decltype(cmd)>;
                 if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdSubmit, T>) {
