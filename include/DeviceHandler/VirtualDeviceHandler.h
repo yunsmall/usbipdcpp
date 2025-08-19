@@ -28,7 +28,7 @@ namespace usbipdcpp {
          * @brief 新的客户端连接时会调这个函数
          * @param ec 发生的ec
          */
-        virtual void on_new_connection(error_code &ec);
+        virtual void on_new_connection(error_code &ec) override;
         /**
          * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
          */
