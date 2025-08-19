@@ -1,6 +1,5 @@
 #include <asio.hpp>
 #include <iostream>
-#include <print>
 #include <libusb-1.0/libusb.h>
 #include <spdlog/spdlog.h>
 

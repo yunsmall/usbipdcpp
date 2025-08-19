@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <shared_mutex>
 #include <map>
 

@@ -1,4 +1,3 @@
-#include <print>
 #include <iostream>
 
 #include <spdlog/spdlog.h>
@@ -54,7 +53,7 @@ int main() {
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54321);
     server.start(endpoint);
 
-    std::cout<<"press enter to exit"<<std::endl;
+    std::cout << "press enter to exit" << std::endl;
     std::cin.get();
 
     server.stop();

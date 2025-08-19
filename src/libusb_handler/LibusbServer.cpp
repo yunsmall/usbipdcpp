@@ -1,6 +1,5 @@
 #include "libusb_handler/LibusbServer.h"
 
-#include <print>
 #include <iostream>
 
 
@@ -70,37 +69,36 @@ void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
             }
         }
     }
-    std::println(std::cout, "Device name: {}-{} ({})", device_name.first, device_name.second,
-                 is_used ? "exported" : (is_available ? "available" : "unbinded"));
-    std::println(std::cout, "busid: {}", busid);
-    std::println(std::cout, "  VID: 0x{:2x}", desc.idVendor);
-    std::println(std::cout, "  PID: 0x{:2x}", desc.idProduct);
+    std::cout << fmt::format("Device name: {}-{} ({})", device_name.first, device_name.second,
+                             is_used ? "exported" : (is_available ? "available" : "unbinded")) << std::endl;
+    std::cout << fmt::format("busid: {}", busid) << std::endl;
+    std::cout << fmt::format("  VID: 0x{:2x}", desc.idVendor) << std::endl;
+    std::cout << fmt::format("  PID: 0x{:2x}", desc.idProduct) << std::endl;
     auto version = Version(desc.bcdUSB);
-    std::println(std::cout, "  USB version: {}.{}.{}", version.major, version.minor, version.patch);
-    std::println(std::cout, "  Class: 0x{:2x}", static_cast<int>(desc.bDeviceClass));
-    std::print(std::cout, "  Speed: ");
+    std::cout << fmt::format("  USB version: {}.{}.{}", version.major, version.minor, version.patch) << std::endl;
+    std::cout << fmt::format("  Class: 0x{:2x}", static_cast<int>(desc.bDeviceClass)) << std::endl;
+    std::cout << "  Speed: ";
     // 解析设备速度
     switch (libusb_get_device_speed(dev)) {
         case LIBUSB_SPEED_LOW:
-            std::print(std::cout, "1.5 Mbps (Low)");
+            std::cout << "1.5 Mbps (Low)";
             break;
         case LIBUSB_SPEED_FULL:
-            std::print(std::cout, "12 Mbps (Full)");
+            std::cout << "12 Mbps (Full)";
             break;
         case LIBUSB_SPEED_HIGH:
-            std::print(std::cout, "480 Mbps (High)");
+            std::cout << "480 Mbps (High)";
             break;
         case LIBUSB_SPEED_SUPER:
-            std::print(std::cout, "5 Gbps (Super)");
+            std::cout << "5 Gbps (Super)";
             break;
         case LIBUSB_SPEED_SUPER_PLUS:
-            std::print(std::cout, "10 Gbps (Super+)");
+            std::cout << "10 Gbps (Super+)";
             break;
         default:
-            std::print(std::cout, "Unknown speed");
+            std::cout << "Unknown speed";
     }
     std::cout << std::endl;
-    // std::println(std::cout);
 }
 
 void usbipdcpp::LibusbServer::list_host_devices() {
@@ -109,7 +107,6 @@ void usbipdcpp::LibusbServer::list_host_devices() {
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
         print_device(devs[dev_i]);
         std::cout << std::endl;
-        // std::println(std::cout);
     }
     libusb_free_device_list(devs, 1);
 }

@@ -1,10 +1,9 @@
 #include "Mouse.h"
 
-
 #include <fcntl.h>
 #include <unistd.h>
-#include <poll.h>
 
+#include <format>
 #include <iostream>
 
 using namespace usbipdcpp::umouse;
@@ -20,7 +19,6 @@ std::vector<MouseDescript> usbipdcpp::umouse::findAllMouses() {
             if (fd >= 0) {
                 libevdev *dev = nullptr;
                 if (libevdev_new_from_fd(fd, &dev) == 0) {
-                    // std::println(std::cout, "libevdev成功打开");
                     // 检查设备是否为鼠标
                     if (libevdev_has_event_type(dev, EV_REL) &&
                         (libevdev_has_event_code(dev, EV_KEY, BTN_LEFT) ||
@@ -66,11 +64,11 @@ MouseDevice usbipdcpp::umouse::openMouse(const std::filesystem::path &path) {
 
     mouse_device.path = path;
 
-    std::println(std::cout, "成功打开鼠标设备:");
-    std::println(std::cout, "\t名字: {}", libevdev_get_name(mouse_device.dev));
-    std::println(std::cout, "\t路径: {}", path.string());
-    std::println(std::cout, "\t厂家: {:4x}", libevdev_get_id_vendor(mouse_device.dev));
-    std::println(std::cout, "\t产品: {:4x}", libevdev_get_id_product(mouse_device.dev));
+    std::cout << "成功打开鼠标设备:" << std::endl;
+    std::cout << std::format("\t名字: {}", libevdev_get_name(mouse_device.dev)) << std::endl;;
+    std::cout << std::format("\t路径: {}", path.string()) << std::endl;;
+    std::cout << std::format("\t厂家: {:4x}", libevdev_get_id_vendor(mouse_device.dev)) << std::endl;;
+    std::cout << std::format("\t产品: {:4x}", libevdev_get_id_product(mouse_device.dev)) << std::endl;;
 
 
     return mouse_device;

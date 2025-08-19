@@ -1,6 +1,8 @@
 #include "DeviceHandler/SimpleVirtualDeviceHandler.h"
 #include "InterfaceHandler/HidVirtualInterfaceHandler.h"
 
+#include <iostream>
+
 #include "Session.h"
 #include "Server.h"
 
@@ -358,13 +360,13 @@ int main() {
     auto mouses = findAllMouses();
 
     if (mouses.size() > 0) {
-        std::println(std::cout, "当前系统有{}个可用的鼠标设备", mouses.size());
+        std::cout << std::format("当前系统有{}个可用的鼠标设备", mouses.size()) << std::endl;
         for (std::size_t i = 0; i < mouses.size(); i++) {
-            std::println(std::cout, "第{}个鼠标设备：{}", i, mouses[i].name);
-            std::println(std::cout, "路径：{}", mouses[i].path.string());
+            std::cout << std::format("第{}个鼠标设备：{}", i, mouses[i].name) << std::endl;
+            std::cout << std::format("路径：{}", mouses[i].path.string()) << std::endl;
             std::cout << std::endl;
         }
-        std::println(std::cout, "请输入想使用的鼠标设备编号：");
+        std::cout << std::format("请输入想使用的鼠标设备编号：");
 
         std::size_t index;
         while (std::cin >> index) {
@@ -373,7 +375,7 @@ int main() {
             }
             std::cin.clear();
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::println(std::cout, "编号不合法，请重新输入");
+            std::cout << std::format("编号不合法，请重新输入")<< std::endl;
         }
         MouseDevice opened_mouse;
 
@@ -445,8 +447,8 @@ int main() {
         struct input_event ev;
         int rc;
 
-        std::println(std::cout, "Reading mouse events. Press Ctrl+C to exit...");
-        std::println(std::cout, "-------- Start of Event Group --------");
+        std::cout << "Reading mouse events. Press Ctrl+C to exit..." << std::endl;
+        std::cout << "-------- Start of Event Group --------" << std::endl;
 
         // 使用 poll 监控文件描述符
         struct pollfd fds[1];
@@ -487,7 +489,7 @@ int main() {
                                     mouse_interface_handler.move_horizontal = result;
                                 }
 
-                                std::println(std::cout, "Mouse moved: X={}", ev.value);
+                                std::cout << std::format("Mouse moved: X={}", ev.value) << std::endl;
                                 break;
                             }
 
@@ -503,16 +505,16 @@ int main() {
                                     mouse_interface_handler.move_vertical = result;
                                 }
 
-                                std::println(std::cout, "Mouse moved: Y={}", ev.value);
+                                std::cout << std::format("Mouse moved: Y={}", ev.value) << std::endl;
                                 break;
                             }
 
                             case REL_WHEEL:
                                 // mouse_interface_handler.wheel_vertical = ev.value;
-                                std::println(std::cout, "Mouse wheel: Vertical Ident={}", ev.value);
+                                std::cout << std::format("Mouse wheel: Vertical Ident={}", ev.value) << std::endl;
                                 break;
                             case REL_HWHEEL:
-                                std::println(std::cout, "Mouse wheel: Horizontal Ident={}", ev.value);
+                                std::cout << std::format("Mouse wheel: Horizontal Ident={}", ev.value) << std::endl;
                                 break;
                             case REL_WHEEL_HI_RES: {
                                 auto resized = ev.value / 120;
@@ -527,14 +529,17 @@ int main() {
                                     mouse_interface_handler.wheel_vertical = result;
                                 }
 
-                                std::println(std::cout, "Mouse wheel high resolution: Vertical={}", ev.value);
+                                std::cout << std::format("Mouse wheel high resolution: Vertical={}", ev.value) <<
+                                        std::endl;
                                 break;
                             }
                             case REL_HWHEEL_HI_RES:
-                                std::println(std::cout, "Mouse wheel high resolution: Horizontal={}", ev.value);
+                                std::cout << std::format("Mouse wheel high resolution: Horizontal={}", ev.value) <<
+                                        std::endl;
                                 break;
                             default:
-                                std::println(std::cout, "Unknown relative event: code={}, value={}", ev.code, ev.value);
+                                std::cout << std::format("Unknown relative event: code={}, value={}", ev.code, ev.value)
+                                        << std::endl;
                         }
                         break;
 
@@ -543,39 +548,45 @@ int main() {
                         switch (ev.code) {
                             case BTN_LEFT:
                                 mouse_interface_handler.left_pressed = ev.value;
-                                std::println(std::cout, "Left button: {}", ev.value ? "PRESSED" : "RELEASED");
+                                std::cout << std::format("Left button: {}", ev.value ? "PRESSED" : "RELEASED") <<
+                                        std::endl;
                                 break;
                             case BTN_RIGHT:
                                 mouse_interface_handler.right_pressed = ev.value;
-                                std::println(std::cout, "Right button: {}", ev.value ? "PRESSED" : "RELEASED");
+                                std::cout << std::format("Right button: {}", ev.value ? "PRESSED" : "RELEASED") <<
+                                        std::endl;
                                 break;
                             case BTN_MIDDLE:
                                 mouse_interface_handler.middle_pressed = ev.value;
-                                std::println(std::cout, "Middle button: {}", ev.value ? "PRESSED" : "RELEASED");
+                                std::cout << std::format("Middle button: {}", ev.value ? "PRESSED" : "RELEASED") <<
+                                        std::endl;
                                 break;
                             case BTN_SIDE:
                                 mouse_interface_handler.side_pressed = ev.value;
-                                std::println(std::cout, "Side button: {}", ev.value ? "PRESSED" : "RELEASED");
+                                std::cout << std::format("Side button: {}", ev.value ? "PRESSED" : "RELEASED") <<
+                                        std::endl;
                                 break;
                             case BTN_EXTRA:
                                 mouse_interface_handler.extra_pressed = ev.value;
-                                std::println(std::cout, "Extra button: {}", ev.value ? "PRESSED" : "RELEASED");
+                                std::cout << std::format("Extra button: {}", ev.value ? "PRESSED" : "RELEASED") <<
+                                        std::endl;
                                 break;
                             default:
-                                std::println(std::cout, "Unknown key event: code={}, value={}", ev.code, ev.value);
+                                std::cout << std::format("Unknown key event: code={}, value={}", ev.code, ev.value) <<
+                                        std::endl;
                         }
                         break;
 
                     case EV_SYN:
                         // 同步事件 - 表示一组事件结束
                         if (ev.code == SYN_REPORT) {
-                            std::println(std::cout, "-------- End of Event Group --------");
+                            std::cout << "-------- End of Event Group --------" << std::endl;
                         }
                         break;
 
                     default:
-                        std::println(std::cout, "Unknown event type: {}, code={}, value={}", ev.type, ev.code,
-                                     ev.value);
+                        std::cout << std::format("Unknown event type: {}, code={}, value={}", ev.type, ev.code,
+                                                 ev.value) << std::endl;
                 }
             }
 
@@ -591,7 +602,7 @@ int main() {
 
     }
     else {
-        std::println(std::cout, "！无可使用的鼠标设备");
+        std::cout << "！无可使用的鼠标设备" << std::endl;
     }
 
 
