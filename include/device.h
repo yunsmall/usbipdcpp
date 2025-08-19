@@ -87,9 +87,14 @@ namespace usbipdcpp {
                         const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
         /**
-         * @brief 当发生错误等情况需要完全终止传输时会调用这个函数
+         * @brief 新的客户端连接时会调这个函数
+         * @param ec 发生的ec
          */
-        void cancer_all_transfer();
+        void on_new_connection(error_code &ec);
+        /**
+         * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         */
+        void on_disconnection(error_code &ec);
         /**
          * @brief 当收到cmd_unlink时会调用这个函数，负责unlink某个seqnum
          * @param seqnum

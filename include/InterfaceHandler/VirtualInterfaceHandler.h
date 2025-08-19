@@ -15,7 +15,7 @@ namespace usbipdcpp {
         void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                   const data_type &out_data,
-                                  std::error_code &ec) override;
+                                  error_code &ec) override;
         void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
                                        std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                        const data_type &out_data,
@@ -38,16 +38,26 @@ namespace usbipdcpp {
                                                                               std::uint32_t transfer_buffer_length,
                                                                               const SetupPacket &setup,
                                                                               const data_type &out_data,
-                                                                              std::error_code &ec) ;
+                                                                              std::error_code &ec);
+        /**
+         * @brief 新的客户端连接时会调这个函数
+         * @param ec 发生的ec
+         */
+        void on_new_connection(error_code &ec) override;
+        /**
+         * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         */
+        void on_disconnection(error_code &ec) override;
 
-        virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t* p_status) =0;
-        virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t* p_status) =0;
+        virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+        virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                                    std::uint32_t *p_status) =0;
 
-        virtual std::uint8_t request_get_interface(std::uint32_t* p_status) =0;
-        virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t* p_status) =0;
+        virtual std::uint8_t request_get_interface(std::uint32_t *p_status) =0;
+        virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) =0;
 
-        virtual std::uint16_t request_get_status(std::uint32_t* p_status) =0;
-        virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t* p_status) =0;
+        virtual std::uint16_t request_get_status(std::uint32_t *p_status) =0;
+        virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) =0;
 
         /**
          * @brief this function is not necessary for all device,
@@ -59,10 +69,11 @@ namespace usbipdcpp {
          * @return
          */
         virtual data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                                 std::uint16_t descriptor_length, std::uint32_t* p_status);
+                                                 std::uint16_t descriptor_length, std::uint32_t *p_status);
 
-        virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t* p_status) =0;
-        virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t* p_status) =0;
+        virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+        virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                                  std::uint32_t *p_status) =0;
 
         /**
          * @brief Only use for isochronous transfer, so give a default empty implement.
@@ -70,7 +81,7 @@ namespace usbipdcpp {
          * @param p_status
          * @return
          */
-        virtual std::uint16_t request_endpoint_sync_frame(std::uint8_t ep_address, std::uint32_t* p_status) {
+        virtual std::uint16_t request_endpoint_sync_frame(std::uint8_t ep_address, std::uint32_t *p_status) {
             return 0;
         }
 

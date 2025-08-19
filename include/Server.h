@@ -22,18 +22,22 @@ namespace usbipdcpp {
         Server() = default;
         explicit Server(std::vector<UsbDevice> &&devices);
         /**
-         * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程
+         * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
+         * 在start前后调用add_device都可以。
          * @param ep 监听地址
          */
         virtual void start(asio::ip::tcp::endpoint &ep);
         /**
-         * @brief 关闭服务，内部关闭监听线程，关闭每个device，关闭每个当前连接
+         * @brief 内部先关闭每一个session的socket，再关闭io_context。
+         * 效果相当于每个客户端都调用了detach
          */
         virtual void stop();
 
+        /**
+         * @brief 添加一个device，线程安全。不管server是否启动都可以调用
+         * @param device 待添加的设备
+         */
         virtual void add_device(std::shared_ptr<UsbDevice> &&device);
-
-        // virtual bool remove_device(const std::string &busid);
 
         virtual ~Server();
 

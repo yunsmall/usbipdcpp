@@ -37,10 +37,17 @@ namespace usbipdcpp {
                 usbipdcpp::error_code
                 &ec
                 );
+
         /**
-         * @brief 完全终止传输
+         * @brief 新的客户端连接时会调这个函数
+         * @param ec 发生的ec
          */
-        virtual void cancer_all_transfer() =0;
+        virtual void on_new_connection(error_code &ec) =0;
+
+        /**
+         * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         */
+        virtual void on_disconnection(error_code& ec) =0;
         /**
          * @brief 处理unlink。传入想要取消的序号。默认是空实现，就当全部发得太快了来不及取消了
          * @param seqnum 包序号

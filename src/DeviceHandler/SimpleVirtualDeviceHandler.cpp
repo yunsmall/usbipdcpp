@@ -1,5 +1,6 @@
 #include "DeviceHandler/SimpleVirtualDeviceHandler.h"
 #include "Session.h"
+#include "InterfaceHandler/VirtualInterfaceHandler.h"
 
 
 using namespace usbipdcpp;
@@ -54,11 +55,6 @@ usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_desc
 
 void usbipdcpp::SimpleVirtualDeviceHandler::set_descriptor(std::uint16_t configuration_value) {
     SPDLOG_WARN("Unimplement set_descriptor to simple device");
-}
-
-
-void SimpleVirtualDeviceHandler::cancer_all_transfer() {
-    SPDLOG_WARN("Unimplemented cancer_all_transfer");
 }
 
 void SimpleVirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {

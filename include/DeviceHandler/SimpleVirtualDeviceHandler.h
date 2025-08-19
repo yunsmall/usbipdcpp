@@ -36,7 +36,6 @@ namespace usbipdcpp {
         void set_descriptor(std::uint16_t configuration_value) override;
 
     public:
-        void cancer_all_transfer() override;
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
     };
 }

@@ -14,7 +14,10 @@ usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, li
 usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
 }
 
-void usbipdcpp::LibusbDeviceHandler::cancer_all_transfer() {
+void usbipdcpp::LibusbDeviceHandler::on_new_connection(error_code &ec) {
+}
+
+void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code& ec) {
     std::lock_guard lock(transferring_data_mutex);
     for (auto &data: transferring_data) {
         auto err = libusb_cancel_transfer(data.second);

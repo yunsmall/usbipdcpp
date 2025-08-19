@@ -42,19 +42,19 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 }
 
 void usbipdcpp::Server::stop() {
-    asio_io_context.stop();
-    SPDLOG_TRACE("Successfully stop io_context");
-    should_stop = true;
-    network_io_thread.join();
-
-    spdlog::info("Successfully shut down transmissions for all devices");
-
     {
         std::shared_lock lock(session_list_mutex);
         for (const auto &session: sessions) {
             session->immediately_stop();
         }
     }
+    spdlog::info("Successfully shut down transmissions for all devices");
+
+    asio_io_context.stop();
+    SPDLOG_TRACE("Successfully stop io_context");
+    should_stop = true;
+    network_io_thread.join();
+
     spdlog::info("All sessions were successfully closed");
 }
 

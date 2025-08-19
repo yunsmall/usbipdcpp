@@ -24,7 +24,15 @@ namespace usbipdcpp {
                           const data_type &out_data,
                           const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                           usbipdcpp::error_code &ec) override;
-
+        /**
+         * @brief 新的客户端连接时会调这个函数
+         * @param ec 发生的ec
+         */
+        virtual void on_new_connection(error_code &ec);
+        /**
+         * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         */
+        void on_disconnection(error_code& ec) override;
 
     protected:
         void change_device_ep0_max_size_by_speed();
@@ -77,12 +85,18 @@ namespace usbipdcpp {
         void request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf, std::uint32_t *p_status);
 
 
-        virtual data_type get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
-        virtual data_type get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
-        virtual data_type get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
-        virtual data_type get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
-        virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status);
-        virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length, std::uint32_t* p_status) =0;
+        virtual data_type get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                                std::uint32_t *p_status);
+        virtual data_type get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                             std::uint32_t *p_status);
+        virtual data_type get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                                       std::uint32_t *p_status);
+        virtual data_type get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
+                                                std::uint32_t *p_status);
+        virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
+                                                          std::uint32_t *p_status);
+        virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
+                                                     std::uint32_t *p_status) =0;
 
         /**
          * @brief If host wants a descriptor which is not in enum DescriptorType, then this function will be called
@@ -93,7 +107,7 @@ namespace usbipdcpp {
          * @return descriptor
          */
         virtual data_type get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                                std::uint16_t descriptor_length, std::uint32_t* p_status);
+                                                std::uint16_t descriptor_length, std::uint32_t *p_status);
 
         virtual void set_descriptor(std::uint16_t configuration_value) =0;
 

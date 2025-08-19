@@ -21,7 +21,6 @@ namespace usbipdcpp {
     public:
         Session(Server &server, asio::ip::tcp::socket &&socket);
 
-        asio::awaitable<void> run(usbipdcpp::error_code &ec);
 
         /**
          * @brief 线程安全，用来查询某一序列是否被unlink了。
@@ -35,8 +34,6 @@ namespace usbipdcpp {
          * @param seqnum 被unlink的包的seqnum
          */
         void remove_seqnum_unlink(std::uint32_t seqnum);
-
-        void immediately_stop();
 
         /**
          * @brief 推荐使用这个函数。该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
@@ -63,6 +60,22 @@ namespace usbipdcpp {
         ~Session();
 
     private:
+        /**
+         * @brief 新建Session时由Server调用
+         * @param ec 返回运行过程中的错误
+         */
+        asio::awaitable<void> run(usbipdcpp::error_code &ec);
+
+        /**
+         * @brief 置停止标志位，并且关闭socket。只能由Server调用
+         */
+        void immediately_stop();
+
+        /**
+         * @brief 不停地传输urb
+         * @param transferring_ec 传输urb途中的ec
+         * @return
+         */
         asio::awaitable<void> transfer_loop(usbipdcpp::error_code &transferring_ec);
 
         //防止urb还没处理好,session对象就析构了

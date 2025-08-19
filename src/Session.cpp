@@ -13,6 +13,72 @@ usbipdcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
     server(server), socket(std::move(socket)), no_urb_processing_notify_channel(server.asio_io_context) {
 }
 
+std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
+    std::shared_lock lock(unlink_map_mutex);
+    if (unlink_map.contains(seqnum)) {
+        return {true, unlink_map[seqnum]};
+    }
+    return {false, 0};
+}
+
+void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
+    std::lock_guard lock(unlink_map_mutex);
+    unlink_map.erase(seqnum);
+}
+
+
+void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
+                                                                         std::uint32_t seqnum) {
+    submit_ret_unlink(std::move(unlink));
+    remove_seqnum_unlink(seqnum);
+}
+
+void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
+    SPDLOG_TRACE("收到提交的unlink包");
+    //从其他线程提交任务到io_context的run线程
+    asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
+        auto to_be_sent = unlink.to_bytes();
+        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetUnlink 包 {}，序列号：{}，共{}字节", get_every_byte(to_be_sent),
+                     unlink.header.seqnum,
+                     to_be_sent.size());
+        asio::error_code write_ec;
+        co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                   asio::redirect_error(asio::use_awaitable, write_ec));
+        if (write_ec) {
+            SPDLOG_ERROR("尝试发送 UsbIpRetUnlink 包时出错：{}", write_ec.message());
+        }
+        else {
+            SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
+        }
+        end_processing_urb();
+    }, if_has_value_than_rethrow);
+}
+
+void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
+    SPDLOG_TRACE("收到提交的submit包");
+    //从其他线程提交任务到io_context的run线程
+    asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
+        auto to_be_sent = submit.to_bytes();
+        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetSubmit 包{}，序列号: {}，共{}字节", get_every_byte(to_be_sent),
+                     submit.header.seqnum,
+                     to_be_sent.size());
+        asio::error_code write_ec;
+        co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                   asio::redirect_error(asio::use_awaitable, write_ec));
+        if (write_ec) {
+            SPDLOG_ERROR("尝试发送 UsbIpRetSubmit 包时出错：{}", write_ec.message());
+        }
+        else {
+            SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
+        }
+        end_processing_urb();
+    }, if_has_value_than_rethrow);
+}
+
+usbipdcpp::Session::~Session() {
+    SPDLOG_TRACE("Session析构");
+}
+
 asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
     usbipdcpp::error_code ec2;
     SPDLOG_TRACE("尝试读取OP");
@@ -114,19 +180,6 @@ close_socket:
     socket.close(ignore_ec);
 }
 
-std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
-    std::shared_lock lock(unlink_map_mutex);
-    if (unlink_map.contains(seqnum)) {
-        return {true, unlink_map[seqnum]};
-    }
-    return {false, 0};
-}
-
-void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
-    std::lock_guard lock(unlink_map_mutex);
-    unlink_map.erase(seqnum);
-}
-
 void usbipdcpp::Session::immediately_stop() {
     should_immediately_stop = true;
 
@@ -140,59 +193,10 @@ void usbipdcpp::Session::immediately_stop() {
     // }
 }
 
-void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
-                                                                         std::uint32_t seqnum) {
-    submit_ret_unlink(std::move(unlink));
-    remove_seqnum_unlink(seqnum);
-}
-
-void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    SPDLOG_TRACE("收到提交的unlink包");
-    //从其他线程提交任务到io_context的run线程
-    asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
-        auto to_be_sent = unlink.to_bytes();
-        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetUnlink 包 {}，序列号：{}，共{}字节", get_every_byte(to_be_sent),
-                     unlink.header.seqnum,
-                     to_be_sent.size());
-        asio::error_code write_ec;
-        co_await asio::async_write(socket, asio::buffer(to_be_sent),
-                                   asio::redirect_error(asio::use_awaitable, write_ec));
-        if (write_ec) {
-            SPDLOG_ERROR("尝试发送 UsbIpRetUnlink 包时出错：{}", write_ec.message());
-        }
-        else {
-            SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
-        }
-        end_processing_urb();
-    }, if_has_value_than_rethrow);
-}
-
-void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    SPDLOG_TRACE("收到提交的submit包");
-    //从其他线程提交任务到io_context的run线程
-    asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
-        auto to_be_sent = submit.to_bytes();
-        SPDLOG_TRACE("尝试向服务器发送 UsbIpRetSubmit 包{}，序列号: {}，共{}字节", get_every_byte(to_be_sent),
-                     submit.header.seqnum,
-                     to_be_sent.size());
-        asio::error_code write_ec;
-        co_await asio::async_write(socket, asio::buffer(to_be_sent),
-                                   asio::redirect_error(asio::use_awaitable, write_ec));
-        if (write_ec) {
-            SPDLOG_ERROR("尝试发送 UsbIpRetSubmit 包时出错：{}", write_ec.message());
-        }
-        else {
-            SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
-        }
-        end_processing_urb();
-    }, if_has_value_than_rethrow);
-}
-
-usbipdcpp::Session::~Session() {
-    SPDLOG_TRACE("Session析构");
-}
-
 asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
+    current_import_device->on_new_connection(transferring_ec);
+    if (transferring_ec)
+        co_return;
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
         auto command = co_await UsbIpCommand::get_cmd_from_socket(socket, ec);
@@ -287,7 +291,7 @@ asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &t
         }
     }
     //先取消设备传输再等待urb全部处理好
-    current_import_device->cancer_all_transfer();
+    current_import_device->on_disconnection(transferring_ec);
     server.try_moving_device_to_available(*current_import_device_id);
     current_import_device_id.reset();
     current_import_device.reset();

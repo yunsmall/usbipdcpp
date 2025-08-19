@@ -19,6 +19,28 @@ void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::Us
                                     iso_packet_descriptors, ec);
 }
 
+void VirtualDeviceHandler::on_new_connection(error_code &ec) {
+    for (auto &intf: handle_device.interfaces) {
+        if (intf.handler) {
+            intf.handler->on_new_connection(ec);
+            if (ec) {
+                break;
+            }
+        }
+    }
+}
+
+void VirtualDeviceHandler::on_disconnection(error_code &ec) {
+    for (auto &intf: handle_device.interfaces) {
+        if (intf.handler) {
+            intf.handler->on_disconnection(ec);
+            if (ec) {
+                break;
+            }
+        }
+    }
+}
+
 void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
     auto speed = static_cast<UsbSpeed>(handle_device.speed);
     switch (speed) {

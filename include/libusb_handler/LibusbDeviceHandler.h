@@ -19,7 +19,8 @@ namespace usbipdcpp {
         explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
 
         ~LibusbDeviceHandler() override;
-        void cancer_all_transfer() override;
+        void on_new_connection(error_code &ec) override;
+        void on_disconnection(error_code& ec) override;
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
 
     protected:

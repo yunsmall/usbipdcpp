@@ -97,10 +97,20 @@ void usbipdcpp::UsbDevice::handle_urb(Session &session,
     }
 }
 
-void usbipdcpp::UsbDevice::cancer_all_transfer() {
-    SPDLOG_TRACE("设备处理cancer_all_transfer，将其转发到对应handler中");
+void UsbDevice::on_new_connection(error_code &ec) {
+    SPDLOG_TRACE("设备处理 on_new_connection，将其转发到对应handler中");
     if (handler) {
-        handler->cancer_all_transfer();
+        handler->on_new_connection(ec);
+    }
+    else {
+        SPDLOG_ERROR("设备没注册handler");
+    }
+}
+
+void usbipdcpp::UsbDevice::on_disconnection(error_code &ec) {
+    SPDLOG_TRACE("设备处理 on_disconnection，将其转发到对应handler中");
+    if (handler) {
+        handler->on_disconnection(ec);
     }
     else {
         SPDLOG_ERROR("设备没注册handler");
