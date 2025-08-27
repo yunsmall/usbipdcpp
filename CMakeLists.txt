@@ -40,14 +40,17 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
+#            TRANSFER_DELAY_RECORD
     )
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
+            TRANSFER_DELAY_RECORD
     )
 else ()
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+            TRANSFER_DELAY_RECORD
     )
 endif ()
 

@@ -4,6 +4,7 @@
 #include <map>
 #include <shared_mutex>
 #include <tuple>
+#include <chrono>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -71,12 +72,20 @@ namespace usbipdcpp {
          */
         void immediately_stop();
 
+        using transfer_channel_type = asio::experimental::channel<void(asio::error_code, UsbIpResponse::RetVariant)>;
+
+        static constexpr std::size_t transfer_channel_size = 100;
+        std::unique_ptr<transfer_channel_type> transfer_channel = nullptr;
+        // using transfer_channel = asio::experimental::channel<void(asio::error_code)>;
         /**
          * @brief 不停地传输urb
          * @param transferring_ec 传输urb途中的ec
          * @return
          */
         asio::awaitable<void> transfer_loop(usbipdcpp::error_code &transferring_ec);
+
+        asio::awaitable<void> receiver(usbipdcpp::error_code &receiver_ec);
+        asio::awaitable<void> sender(usbipdcpp::error_code &ec);
 
         //防止urb还没处理好,session对象就析构了
         void start_processing_urb();
@@ -103,7 +112,6 @@ namespace usbipdcpp {
 
         Server &server;
         asio::ip::tcp::socket socket;
-
 
         std::uint32_t urb_processing_counter = 0;
         asio::experimental::channel<void(asio::error_code)> no_urb_processing_notify_channel;

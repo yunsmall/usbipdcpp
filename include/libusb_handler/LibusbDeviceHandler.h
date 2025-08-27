@@ -59,6 +59,8 @@ namespace usbipdcpp {
 
         static uint8_t get_libusb_transfer_flags(uint32_t in);
 
+        static void masking_bogus_flags(bool is_out, struct libusb_transfer *trx);
+
         static int trxstat2error(enum libusb_transfer_status trxstat);
         static enum libusb_transfer_status error2trxstat(int e);
 

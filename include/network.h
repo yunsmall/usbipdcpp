@@ -34,6 +34,41 @@ namespace usbipdcpp {
         return ntoh<T>(num);
     }
 
+
+    template<typename T>
+    concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
+    {
+        { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
+        { static_cast<const std::remove_cvref_t<T> &>(t1).to_socket(sock, ec) } -> std::same_as<asio::awaitable<void>>;
+        { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<asio::awaitable<void>>;
+    };
+
+    template<typename T>
+    concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
+    {
+        { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
+        { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
+        { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<asio::awaitable<void>>;
+    };
+
+    template<typename T>
+    concept is_serializable_can_be_array = requires(T &&t1)
+    {
+        requires Serializable<T>;
+        requires is_array_data_type<decltype(t1.to_bytes())>;
+    };
+
+    template<typename T>
+    struct is_serializable_vector_t : std::false_type {
+    };
+
+    template<Serializable T>
+    struct is_serializable_vector_t<std::vector<T>> : std::true_type {
+    };
+
+    template<typename T>
+    concept serializable_vector = is_serializable_vector_t<T>::value;
+
     /**
      * @brief 全部用 sizeof 计算长度
      * @tparam Args 类型
@@ -201,6 +236,25 @@ namespace usbipdcpp {
     }
 
     /**
+     * @brief 把可序列化对象的vector转换成序列化后的vector
+     * @return 转换后的vector
+     */
+    template<serializable_vector T>
+        requires is_serializable_can_be_array<typename T::value_type>
+    data_type serializable_array_range_to_network_data(const T &vec) {
+        constexpr std::size_t serializable_size = decltype(vec.begin()->to_bytes()){}.size();
+        std::size_t total_size = serializable_size + vec.size();
+        data_type ret(total_size, 0u);
+        std::size_t offset = 0;
+        for (std::size_t i = 0; i < vec.size(); ++i) {
+            is_array_data_type auto as_bytes = vec[i].to_bytes();
+            std::memcpy(ret.data() + offset, as_bytes.data(), as_bytes.size());
+            offset += as_bytes.size();
+        }
+        return ret;
+    }
+
+    /**
      * @brief 只能处理 unsigned_integral 类型和 array_data_type 类型。
      * 整数类型会按网络字节序储存，array 类型会直接内存复制。整数会调用 hton
      * @tparam Args 传入数据的类型
@@ -358,13 +412,5 @@ namespace usbipdcpp {
         (process(args), ...);
     }
 
-
-    template<typename T>
-    concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
-    {
-        { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-        { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
-        { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<asio::awaitable<void>>;
-    };
 
 }

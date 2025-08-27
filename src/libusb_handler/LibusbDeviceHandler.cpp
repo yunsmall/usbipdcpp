@@ -17,8 +17,8 @@ usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
 void usbipdcpp::LibusbDeviceHandler::on_new_connection(error_code &ec) {
 }
 
-void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code& ec) {
-    std::lock_guard lock(transferring_data_mutex);
+void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
+    std::shared_lock lock(transferring_data_mutex);
     for (auto &data: transferring_data) {
         auto err = libusb_cancel_transfer(data.second);
         if (err) {
@@ -30,7 +30,7 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code& ec) {
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
     int err = 0;
     {
-        std::lock_guard lock(transferring_data_mutex);
+        std::shared_lock lock(transferring_data_mutex);
         if (transferring_data.contains(seqnum)) {
             err = libusb_cancel_transfer(transferring_data.at(seqnum));
         }
@@ -73,11 +73,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
                                      timeout_milliseconds);
         //将usbio transder flag转换成libusb的flags
         transfer->flags = get_libusb_transfer_flags(transfer_flags);
-
-        //小修改传输flag
-        if (!setup_packet.is_out()) {
-            transfer->flags &= LIBUSB_TRANSFER_SHORT_NOT_OK;
-        }
+        masking_bogus_flags(setup_packet.is_out(), transfer);
 
         {
             std::lock_guard lock(transferring_data_mutex);
@@ -140,9 +136,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
                               callback_args,
                               timeout_milliseconds);
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
-    if (is_out) {
-        transfer->flags &= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
-    }
+    masking_bogus_flags(is_out, transfer);
 
     {
         std::lock_guard lock(transferring_data_mutex);
@@ -189,9 +183,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(Session &session,
                                    callback_args,
                                    timeout_milliseconds);
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
-    if (!is_out) {
-        transfer->flags &= LIBUSB_TRANSFER_SHORT_NOT_OK;
-    }
+    masking_bogus_flags(is_out, transfer);
 
     {
         std::lock_guard lock(transferring_data_mutex);
@@ -252,6 +244,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(Session &sessio
     }
 
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
+    masking_bogus_flags(is_out, transfer);
 
     {
         std::lock_guard lock(transferring_data_mutex);
@@ -388,6 +381,25 @@ uint8_t usbipdcpp::LibusbDeviceHandler::get_libusb_transfer_flags(uint32_t in) {
     return flags;
 }
 
+void usbipdcpp::LibusbDeviceHandler::masking_bogus_flags(bool is_out, struct libusb_transfer *trx) {
+    std::uint32_t allowed = 0;
+    /* enforce simple/standard policy */
+    switch (trx->type) {
+        case LIBUSB_TRANSFER_TYPE_BULK:
+            if (is_out)
+                allowed |= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
+        /* FALLTHROUGH */
+        case LIBUSB_TRANSFER_TYPE_CONTROL:
+            /*allowed |= URB_NO_FSBR; */ /* only affects UHCI */
+            /* FALLTHROUGH */
+        default: /* all non-iso endpoints */
+            if (!is_out)
+                allowed |= LIBUSB_TRANSFER_SHORT_NOT_OK;
+            break;
+    }
+    trx->flags &= allowed;
+}
+
 int usbipdcpp::LibusbDeviceHandler::trxstat2error(enum libusb_transfer_status trxstat) {
     //具体数值抄的linux的
     switch (trxstat) {
@@ -514,6 +526,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                         trx->buffer + trx->actual_length
                 };
                 assert(received_data.size()==trx->actual_length);
+                SPDLOG_DEBUG("非控制和等时传输received_data长度{}个字节", received_data.size());
             }
         }
 
@@ -524,7 +537,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                         trxstat2error(trx->status),
                         0,
                         trx->num_iso_packets,
-                        received_data,
+                        std::move(received_data),
                         iso_packet_descriptors
                         )
                 );
