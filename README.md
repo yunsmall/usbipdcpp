@@ -118,6 +118,13 @@ cmake -B build
 cmake --build build
 cmake --install build
 ```
+Use conan as the package manager:
+```bash
+conan install . --build=missing -s build_type=Release
+cmake --preset conan-release
+cmake --build build/Release
+cmake --install build/Release
+```
 
 ---
 
