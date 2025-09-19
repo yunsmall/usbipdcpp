@@ -12,8 +12,6 @@
 
 usbipdcpp::Session::Session(Server &server):
     server(server),
-    reading_pause_channel(session_io_context),
-    no_urb_processing_notify_channel(session_io_context),
     socket(session_io_context) {
 }
 
@@ -30,7 +28,6 @@ void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
     unlink_map.erase(seqnum);
 }
 
-
 void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
                                                                          std::uint32_t seqnum) {
     submit_ret_unlink(std::move(unlink));
@@ -39,88 +36,14 @@ void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpRe
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     SPDLOG_DEBUG("收到提交的unlink包 {}", unlink.header.seqnum);
-    // #ifdef TRANSFER_DELAY_RECORD
-    //     {
-    //         std::shared_lock lock(time_record_mutex);
-    //         spdlog::trace("{}unlink被提交经历了{}微秒", unlink.header.seqnum,
-    //                       std::chrono::duration_cast<std::chrono::microseconds>(
-    //                               std::chrono::steady_clock::now() - time_record[unlink.header.seqnum]).count());
-    //     }
-    // #endif
-
     error_code send_ec;
     transfer_channel->async_send(send_ec, UsbIpResponse::RetVariant{std::move(unlink)}, asio::detached);
-
-    //     //从其他线程提交任务到io_context的run线程
-    //     asio::co_spawn(server.asio_io_context, [this,unlink=std::move(unlink)]()-> asio::awaitable<void> {
-    //
-    // #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    //         {
-    //             auto to_be_sent = unlink.to_bytes();
-    //             SPDLOG_TRACE("尝试向服务器发送 UsbIpRetUnlink 包 {}，序列号：{}，共{}字节", get_every_byte(to_be_sent),
-    //                          unlink.header.seqnum,
-    //                          to_be_sent.size());
-    //         }
-    // #endif
-    //
-    //
-    //         asio::error_code write_ec;
-    //         co_await unlink.to_socket(socket, write_ec);
-    //         if (write_ec) {
-    //             SPDLOG_ERROR("尝试发送 UsbIpRetUnlink 包时出错：{}", write_ec.message());
-    //         }
-    //         else {
-    //             SPDLOG_TRACE("成功发送 UsbIpRetUnlink 包");
-    //         }
-    //
-    //         end_processing_urb();
-    //     }, if_has_value_than_rethrow);
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
     SPDLOG_DEBUG("收到提交的submit包{}", submit.header.seqnum);
-    // #ifdef TRANSFER_DELAY_RECORD
-    //     {
-    //         std::shared_lock lock(time_record_mutex);
-    //         spdlog::trace("{}submit被提交经历了{}微秒", submit.header.seqnum,
-    //                       std::chrono::duration_cast<std::chrono::microseconds>(
-    //                               std::chrono::steady_clock::now() - time_record[submit.header.seqnum]).count());
-    //     }
-    // #endif
-
     error_code send_ec;
     transfer_channel->async_send(send_ec, UsbIpResponse::RetVariant{std::move(submit)}, asio::detached);
-
-    //从其他线程提交任务到io_context的run线程
-    //     asio::co_spawn(server.asio_io_context, [this,submit=std::move(submit)]()-> asio::awaitable<void> {
-    //
-    // #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    //         {
-    //             auto to_be_sent = submit.to_bytes();
-    //             SPDLOG_TRACE("尝试向服务器发送 UsbIpRetSubmit 包{}，序列号: {}，共{}字节", get_every_byte(to_be_sent),
-    //                          submit.header.seqnum,
-    //                          to_be_sent.size());
-    //         }
-    // #endif
-    // #ifdef TRANSFER_DELAY_RECORD
-    //         {
-    //             std::lock_guard lock(time_record_mutex);
-    //             spdlog::trace("{}submit传输经历了{}微秒", submit.header.seqnum,
-    //                           std::chrono::duration_cast<std::chrono::microseconds>(
-    //                                   std::chrono::steady_clock::now() - time_record[submit.header.seqnum]).count());
-    //             time_record.erase(submit.header.seqnum);
-    //         }
-    // #endif
-    //         asio::error_code write_ec;
-    //         co_await submit.to_socket(socket, write_ec);
-    //         if (write_ec) {
-    //             SPDLOG_ERROR("尝试发送 UsbIpRetSubmit 包时出错：{}", write_ec.message());
-    //         }
-    //         else {
-    //             SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
-    //         }
-    //         end_processing_urb();
-    //     }, if_has_value_than_rethrow);
 }
 
 usbipdcpp::Session::~Session() {
@@ -316,13 +239,6 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
 
-        //如果不能读的时候，阻塞当前协程直到能获取到消息
-        if (!can_read) {
-            SPDLOG_DEBUG("receive被阻塞了");
-            co_await reading_pause_channel.async_receive(asio::use_awaitable);
-            SPDLOG_DEBUG("receive收到消息，恢复了");
-        }
-
         auto command = co_await UsbIpCommand::get_cmd_from_socket(socket, ec);
         if (ec) {
             SPDLOG_DEBUG("从socket中获取命令时出错：{}", ec.message());
@@ -434,13 +350,6 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
     current_import_device_id.reset();
     current_import_device.reset();
     SPDLOG_TRACE("将当前导入设备的busid设为空");
-
-    // if (!should_immediately_stop) {
-        // 没发生严重错误或者外部要求的stop才进行等待
-        // socket断连表明客户端执行了usbip detach，正常断开时会进行等待
-        // co_await wait_for_all_urb_processed();
-    // }
-
 }
 
 asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
@@ -477,46 +386,8 @@ asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             break;
         }
     }
-    //防止reciever阻塞
-    // no_urb_processing_notify_channel.try_send(asio::error_code{});
-
     if (ec == asio::experimental::error::channel_closed || ec == asio::experimental::error::channel_cancelled) {
         SPDLOG_DEBUG("sender ec:{}",ec.message());
         ec.clear();
     }
-}
-
-// void usbipdcpp::Session::pause_receive() {
-//     SPDLOG_DEBUG("暂停receive");
-//     can_read = false;
-// }
-//
-// void usbipdcpp::Session::resume_receive() {
-//     SPDLOG_DEBUG("恢复receive");
-//     can_read = true;
-//     reading_pause_channel.async_send(asio::error_code{}, asio::detached);
-// }
-
-// void usbipdcpp::Session::start_processing_urb() {
-//     SPDLOG_TRACE("开始处理urb时，urb_processing_counter:{}", urb_processing_counter);
-//     urb_processing_counter++;
-// }
-//
-// void usbipdcpp::Session::end_processing_urb() {
-//     if (--urb_processing_counter == 0) {
-//         no_urb_processing_notify_channel.try_send(asio::error_code{});
-//     }
-//     SPDLOG_TRACE("结束处理urb后,urb_processing_counter:{}", urb_processing_counter);
-// }
-
-asio::awaitable<void> usbipdcpp::Session::wait_for_all_urb_processed() {
-    if (urb_processing_counter != 0) {
-        SPDLOG_DEBUG("当前还有{}个URB正在传输，等待其传输完", urb_processing_counter);
-        co_await no_urb_processing_notify_channel.async_receive(asio::use_awaitable);
-        SPDLOG_TRACE("收到空消息，结束等待");
-    }
-    else {
-        SPDLOG_TRACE("无正在传输的urb，无需等待");
-    }
-    SPDLOG_DEBUG("结束等待");
 }

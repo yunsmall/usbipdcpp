@@ -170,6 +170,11 @@ X/Y轴相对移动量
 
 void LibevdevMouseInterfaceHandler::on_new_connection(error_code &ec) {
     should_immediately_stop=false;
+    last_state=State{};
+    current_state=State{};
+    int_req_queue.clear();
+    idle_speed=1;
+
     send_thread = std::thread([this]() {
         while (!should_immediately_stop) {
             //等待状态变化通知

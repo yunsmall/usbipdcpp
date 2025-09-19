@@ -27,11 +27,6 @@ namespace usbipdcpp {
     public:
         explicit Session(Server &server);
 
-        // //线程安全
-        // void pause_receive();
-        // //线程安全
-        // void resume_receive();
-
         /**
          * @brief 线程安全，用来查询某一序列是否被unlink了。
          * @param seqnum
@@ -98,13 +93,6 @@ namespace usbipdcpp {
         asio::awaitable<void> receiver(usbipdcpp::error_code &receiver_ec);
         asio::awaitable<void> sender(usbipdcpp::error_code &ec);
 
-        // //防止urb还没处理好,session对象就析构了
-        // void start_processing_urb();
-        // //防止urb还没处理好,session对象就析构了
-        // void end_processing_urb();
-        //防止urb还没处理好,session对象就析构了
-        asio::awaitable<void> wait_for_all_urb_processed();
-
         std::atomic_bool should_immediately_stop = false;
 
         //是否在传输ret_submit的阶段
@@ -126,15 +114,7 @@ namespace usbipdcpp {
         asio::ip::tcp::socket socket;
 
 
-        //会有一些特殊控制传输，未完成时不能继续发送urb，因此设置这个channel用来阻塞read
-        asio::experimental::channel<void(asio::error_code)> reading_pause_channel;
-        //和上面这个channel配套使用
-        std::atomic_bool can_read = true;
-
         //这个线程结束后自动析构this
         std::thread run_thread;
-
-        std::uint32_t urb_processing_counter = 0;
-        asio::experimental::channel<void(asio::error_code)> no_urb_processing_notify_channel;
     };
 }
