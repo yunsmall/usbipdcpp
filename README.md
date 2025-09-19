@@ -22,9 +22,15 @@ architecture using:
 
 Three dedicated threads ensure optimal performance:
 
-1. **Network I/O thread**: Runs `asio::io_context::run()`
+1. **Network I/O thread**: Runs `asio::io_context::run()` waiting for client connection
 2. **USB transfer thread**: Handles `libusb_handle_events()`
 3. **Main thread**: Control the behavior of usbip server, start the server
+
+Each connection starts a separate thread to prevent special synchronization operations on some devices from blocking all
+devices.
+
+Starting another thread at this point would feel like a chore. This is also possible given that a single server does not
+have a large number of usb devices.
 
 Data flows through the system without blocking:
 
@@ -104,21 +110,24 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 ## Building
 
 If compiled with gcc, the minimum gcc version is **gcc13**. The C++23 standard support under **gcc14** is broken,
-Either ·std::println· is not supported or `std::format` is not supported and is not at all comfortable to use.
-You have to give up programming experience for compatibility. 
-So I chose gcc13, which supports `std::format` but still doesn't support ·std::println·
+Either `std::println` is not supported or `std::format` is not supported and is not at all comfortable to use.
+You have to give up programming experience for compatibility.
+So I chose gcc13, which supports `std::format` but still doesn't support `std::println`
 
 There are three options which control the corresponding part whether to be compiled.
 See `CMakeLists.txt` for details
 
-Full compile commands:
+### Full compile commands:
 
+#### Use vcpkg as the package manager:
+Please install asio libusb libevdev spdlog in advance
 ```bash
-cmake -B build
+cmake -B build \
+-DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 cmake --install build
 ```
-Use conan as the package manager:
+#### Use conan as the package manager:
 ```bash
 conan install . --build=missing -s build_type=Release
 cmake --preset conan-release

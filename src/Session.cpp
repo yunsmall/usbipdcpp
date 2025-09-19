@@ -10,8 +10,11 @@
 #include "protocol.h"
 #include "utils.h"
 
-usbipdcpp::Session::Session(Server &server, asio::ip::tcp::socket &&socket):
-    server(server), socket(std::move(socket)), no_urb_processing_notify_channel(server.asio_io_context) {
+usbipdcpp::Session::Session(Server &server):
+    server(server),
+    reading_pause_channel(session_io_context),
+    no_urb_processing_notify_channel(session_io_context),
+    socket(session_io_context) {
 }
 
 std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
@@ -124,21 +127,55 @@ usbipdcpp::Session::~Session() {
     SPDLOG_TRACE("Session析构");
 }
 
-asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
-    usbipdcpp::error_code ec2;
+void usbipdcpp::Session::run() {
+    auto self = shared_from_this();
+    asio::co_spawn(session_io_context, [this]() {
+        return parse_op();
+    }, if_has_value_than_rethrow);
+
+    SPDLOG_TRACE("创建Session线程");
+    //这个线程结束后自动析构this
+    run_thread = std::thread([self=std::move(self)]() {
+        self->session_io_context.run();
+
+        //处理结束后自动往服务器中删除自身
+
+        {
+            std::lock_guard lock(self->server.session_list_mutex);
+            for (auto it = self->server.sessions.begin(); it != self->server.sessions.end();) {
+                if (auto s = it->lock()) {
+                    if (s == self) {
+                        it = self->server.sessions.erase(it);
+                        break;
+                    }
+                    else {
+                        ++it;
+                    }
+                }
+                else {
+                    // 清除已失效的 weak_ptr
+                    it = self->server.sessions.erase(it);
+                }
+            }
+        }
+        //把当前这个线程detach了，防止线程内部析构自己导致报错
+        self->run_thread.detach();
+    });
+}
+
+asio::awaitable<void> usbipdcpp::Session::parse_op() {
+    usbipdcpp::error_code ec;
     SPDLOG_TRACE("尝试读取OP");
-    auto op = co_await UsbIpCommand::get_op_from_socket(socket, ec2);
-    if (ec2) {
-        SPDLOG_DEBUG("从socket中获取op时出错：{}", ec2.message());
-        if (ec2.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
+    auto op = co_await UsbIpCommand::get_op_from_socket(socket, ec);
+    if (ec) {
+        SPDLOG_DEBUG("从socket中获取op时出错：{}", ec.message());
+        if (ec.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
             SPDLOG_DEBUG("连接关闭");
         }
-        else if (ec2.value() == static_cast<int>(ErrorType::SOCKET_ERR)) {
+        else if (ec.value() == static_cast<int>(ErrorType::SOCKET_ERR)) {
             SPDLOG_DEBUG("发生socket错误");
         }
-        else {
-            ec = ec2;
-        }
+
         goto close_socket;
     }
     co_await std::visit([&,this](auto &&cmd)-> asio::awaitable<void> {
@@ -201,6 +238,7 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
 
             if (cmd_transferring) {
                 usbipdcpp::error_code transferring_ec;
+                //进入通信状态
                 co_await transfer_loop(transferring_ec);
                 if (transferring_ec) {
                     SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
@@ -218,9 +256,13 @@ asio::awaitable<void> usbipdcpp::Session::run(usbipdcpp::error_code &ec) {
         }
     }, op);
 
+    if (this->transfer_channel) {
+        this->transfer_channel->close();
+    }
+
 close_socket:
     std::error_code ignore_ec;
-    SPDLOG_DEBUG("尝试关闭socket");
+    SPDLOG_INFO("尝试关闭socket");
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
     socket.close(ignore_ec);
 }
@@ -228,8 +270,16 @@ close_socket:
 void usbipdcpp::Session::immediately_stop() {
     should_immediately_stop = true;
 
-    socket.close();
-    SPDLOG_TRACE("session stop");
+    asio::post(session_io_context,
+               [this]() {
+                   //关闭后才会析构，直接使用this安全
+                   this->socket.close();
+                   if (this->transfer_channel) {
+                       this->transfer_channel->close();
+                   }
+               });
+
+    // SPDLOG_TRACE("session stop");
     // {
     //     std::shared_lock lock(current_import_device_data_mutex);
     //     // if (current_import_device) {
@@ -258,11 +308,21 @@ asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &t
     else if (receiver_ec) {
         transferring_ec = sender_ec;
     }
+    cmd_transferring = false;
 }
 
 asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
+    spdlog::info("should_immediately_stop:{}", should_immediately_stop.load());
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
+
+        //如果不能读的时候，阻塞当前协程直到能获取到消息
+        if (!can_read) {
+            SPDLOG_DEBUG("receive被阻塞了");
+            co_await reading_pause_channel.async_receive(asio::use_awaitable);
+            SPDLOG_DEBUG("receive收到消息，恢复了");
+        }
+
         auto command = co_await UsbIpCommand::get_cmd_from_socket(socket, ec);
         if (ec) {
             SPDLOG_DEBUG("从socket中获取命令时出错：{}", ec.message());
@@ -316,7 +376,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
 #endif
 
                         usbipdcpp::error_code ec_during_handling_urb;
-                        start_processing_urb();
+                        // start_processing_urb();
                         current_import_device->handle_urb(
                                 *this,
                                 cmd2,
@@ -368,18 +428,19 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
         }
     }
     //先取消设备传输再等待urb全部处理好
+    transfer_channel->close();
     current_import_device->on_disconnection(receiver_ec);
     server.try_moving_device_to_available(*current_import_device_id);
     current_import_device_id.reset();
     current_import_device.reset();
     SPDLOG_TRACE("将当前导入设备的busid设为空");
 
-    if (!should_immediately_stop) {
-        //没发生严重错误或者外部要求的stop才进行等待
-        //socket断连表明客户端执行了usbip detach，正常断开时会进行等待
-        co_await wait_for_all_urb_processed();
-    }
-    cmd_transferring = false;
+    // if (!should_immediately_stop) {
+        // 没发生严重错误或者外部要求的stop才进行等待
+        // socket断连表明客户端执行了usbip detach，正常断开时会进行等待
+        // co_await wait_for_all_urb_processed();
+    // }
+
 }
 
 asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
@@ -395,11 +456,11 @@ asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             using T = std::remove_cvref_t<decltype(cmd)>;
             if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
                 co_await cmd.to_socket(socket, sending_ec);
-                end_processing_urb();
+                // end_processing_urb();
             }
             else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
                 co_await cmd.to_socket(socket, sending_ec);
-                end_processing_urb();
+                // end_processing_urb();
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
@@ -416,21 +477,37 @@ asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             break;
         }
     }
-    //退出后设置应该马上退出
-    should_immediately_stop = true;
-}
+    //防止reciever阻塞
+    // no_urb_processing_notify_channel.try_send(asio::error_code{});
 
-void usbipdcpp::Session::start_processing_urb() {
-    SPDLOG_TRACE("开始处理urb时，urb_processing_counter:{}", urb_processing_counter);
-    urb_processing_counter++;
-}
-
-void usbipdcpp::Session::end_processing_urb() {
-    if (--urb_processing_counter == 0) {
-        no_urb_processing_notify_channel.try_send(asio::error_code{});
+    if (ec == asio::experimental::error::channel_closed || ec == asio::experimental::error::channel_cancelled) {
+        SPDLOG_DEBUG("sender ec:{}",ec.message());
+        ec.clear();
     }
-    SPDLOG_TRACE("结束处理urb后,urb_processing_counter:{}", urb_processing_counter);
 }
+
+// void usbipdcpp::Session::pause_receive() {
+//     SPDLOG_DEBUG("暂停receive");
+//     can_read = false;
+// }
+//
+// void usbipdcpp::Session::resume_receive() {
+//     SPDLOG_DEBUG("恢复receive");
+//     can_read = true;
+//     reading_pause_channel.async_send(asio::error_code{}, asio::detached);
+// }
+
+// void usbipdcpp::Session::start_processing_urb() {
+//     SPDLOG_TRACE("开始处理urb时，urb_processing_counter:{}", urb_processing_counter);
+//     urb_processing_counter++;
+// }
+//
+// void usbipdcpp::Session::end_processing_urb() {
+//     if (--urb_processing_counter == 0) {
+//         no_urb_processing_notify_channel.try_send(asio::error_code{});
+//     }
+//     SPDLOG_TRACE("结束处理urb后,urb_processing_counter:{}", urb_processing_counter);
+// }
 
 asio::awaitable<void> usbipdcpp::Session::wait_for_all_urb_processed() {
     if (urb_processing_counter != 0) {
@@ -441,4 +518,5 @@ asio::awaitable<void> usbipdcpp::Session::wait_for_all_urb_processed() {
     else {
         SPDLOG_TRACE("无正在传输的urb，无需等待");
     }
+    SPDLOG_DEBUG("结束等待");
 }

@@ -70,6 +70,11 @@ int main() {
                 }
                 break;
             }
+            case 'f': {
+                spdlog::info("Refresh available device");
+                server.refresh_available_devices();
+                break;
+            }
             case 'q': {
                 spdlog::info("Trying to close server");
                 server.stop();
@@ -87,6 +92,7 @@ h : Print this help information.
 l : List all usb devices in the host.
 b busid : Try to bind a device.
 u busid : Try to unbind a device.
+f : refresh availe=able devices.
 q : Close the server.)" << std::endl;
                 break;
             }

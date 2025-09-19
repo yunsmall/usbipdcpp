@@ -13,12 +13,12 @@ option(USBIPDCPP_BUILD_EXAMPLE_LIBUSB "Build example libusb applications" ${IS_T
 option(USBIPDCPP_BUILD_EXAMPLE_LIBUSB_SERVER "Build example libusb server applications" ${IS_TOP_LEVEL})
 
 if ((UNIX AND NOT APPLE) OR ANDROID)
-    set(CAN_THIS_SYSTEM_SUPPORT_EBDEV TRUE)
+    set(CAN_THIS_SYSTEM_SUPPORT_EVDEV TRUE)
 else ()
-    set(CAN_THIS_SYSTEM_SUPPORT_EBDEV FALSE)
+    set(CAN_THIS_SYSTEM_SUPPORT_EVDEV FALSE)
 endif ()
 
-if (IS_TOP_LEVEL AND CAN_THIS_SYSTEM_SUPPORT_EBDEV)
+if (IS_TOP_LEVEL AND CAN_THIS_SYSTEM_SUPPORT_EVDEV)
     option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" ON)
 else ()
     option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" OFF)
@@ -75,7 +75,7 @@ endif ()
 
 if (USBIPDCPP_BUILD_EXAMPLES)
     if (USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE)
-        if (CAN_THIS_SYSTEM_SUPPORT_EBDEV)
+        if (CAN_THIS_SYSTEM_SUPPORT_EVDEV)
             find_package(PkgConfig REQUIRED)
             pkg_check_modules(libevdev REQUIRED IMPORTED_TARGET libevdev)
 

@@ -18,15 +18,21 @@
 USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步架构：
 
 - 使用 C++20 协程处理网络通信
+- 使用 asio 异步通信
 - 使用 libusb 异步接口处理 USB 通信
 
 ### 线程模型
 
 系统包含三个核心线程：
 
-1. **网络 I/O 线程**: 运行 `asio::io_context::run()`
+1. **网络 I/O 线程**: 运行 `asio::io_context::run()`等待客户端连接
 2. **USB 传输线程**: 处理 `libusb_handle_events()`
 3. **主线程**: 控制服务器的行为，以及用于启动服务器
+
+每个连接会启动一个单独线程，防止某些设备的一些特殊同步操作阻塞所有设备。
+
+如果此时又启动一个线程会感觉多此一举。
+鉴于本身单个服务器的usb设备不会特别多，这种设计也是可行的。
 
 数据传输流程：
 
@@ -108,14 +114,18 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 有多个选项用于控制相应模块是否编译。
 具体值见`CMakeLists.txt`
 
-完整编译命令：
+### 完整编译命令：
 
+#### 使用vcpkg包管理器
+请提前装好asio libusb libevdev spdlog等库
 ```bash
-cmake -B build
+cmake -B build \
+-DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 cmake --install build
 ```
-使用conan作为包管理器：
+
+#### 使用conan作为包管理器：
 ```bash
 conan install . --build=missing -s build_type=Release
 cmake --preset conan-release

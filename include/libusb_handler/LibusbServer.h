@@ -14,6 +14,7 @@ namespace usbipdcpp {
 
         void bind_host_device(libusb_device *dev);
         void unbind_host_device(libusb_device *device);
+        void refresh_available_devices();
         void start(asio::ip::tcp::endpoint &ep) override;
         void stop() override;
         // void add_device(std::shared_ptr<UsbDevice> &&device) override;

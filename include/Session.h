@@ -5,6 +5,7 @@
 #include <shared_mutex>
 #include <tuple>
 #include <chrono>
+#include <thread>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -16,12 +17,20 @@
 namespace usbipdcpp {
     class Server;
 
-    class Session {
+    /**
+     * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
+     * 请确保Session存活的时候Server未被析构，不然是未定义行为
+     */
+    class Session : public std::enable_shared_from_this<Session> {
         friend class Server;
 
     public:
-        Session(Server &server, asio::ip::tcp::socket &&socket);
+        explicit Session(Server &server);
 
+        // //线程安全
+        // void pause_receive();
+        // //线程安全
+        // void resume_receive();
 
         /**
          * @brief 线程安全，用来查询某一序列是否被unlink了。
@@ -63,12 +72,14 @@ namespace usbipdcpp {
     private:
         /**
          * @brief 新建Session时由Server调用
-         * @param ec 返回运行过程中的错误
          */
-        asio::awaitable<void> run(usbipdcpp::error_code &ec);
+        void run();
+
+        asio::awaitable<void> parse_op();
 
         /**
-         * @brief 置停止标志位，并且关闭socket。只能由Server调用
+         * @brief 置停止标志位，并且关闭socket。只能由Server调用。
+         * 内部不会关闭线程，只会通知线程关闭
          */
         void immediately_stop();
 
@@ -87,14 +98,14 @@ namespace usbipdcpp {
         asio::awaitable<void> receiver(usbipdcpp::error_code &receiver_ec);
         asio::awaitable<void> sender(usbipdcpp::error_code &ec);
 
-        //防止urb还没处理好,session对象就析构了
-        void start_processing_urb();
-        //防止urb还没处理好,session对象就析构了
-        void end_processing_urb();
+        // //防止urb还没处理好,session对象就析构了
+        // void start_processing_urb();
+        // //防止urb还没处理好,session对象就析构了
+        // void end_processing_urb();
         //防止urb还没处理好,session对象就析构了
         asio::awaitable<void> wait_for_all_urb_processed();
 
-        std::atomic_bool should_immediately_stop;
+        std::atomic_bool should_immediately_stop = false;
 
         //是否在传输ret_submit的阶段
         std::atomic_bool cmd_transferring = false;
@@ -111,7 +122,17 @@ namespace usbipdcpp {
         std::shared_mutex unlink_map_mutex;
 
         Server &server;
+        asio::io_context session_io_context{};
         asio::ip::tcp::socket socket;
+
+
+        //会有一些特殊控制传输，未完成时不能继续发送urb，因此设置这个channel用来阻塞read
+        asio::experimental::channel<void(asio::error_code)> reading_pause_channel;
+        //和上面这个channel配套使用
+        std::atomic_bool can_read = true;
+
+        //这个线程结束后自动析构this
+        std::thread run_thread;
 
         std::uint32_t urb_processing_counter = 0;
         asio::experimental::channel<void(asio::error_code)> no_urb_processing_notify_channel;

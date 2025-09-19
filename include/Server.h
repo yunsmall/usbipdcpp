@@ -67,7 +67,7 @@ namespace usbipdcpp {
 
         std::atomic<bool> should_stop = false;
 
-        std::list<std::shared_ptr<Session>> sessions;
+        std::list<std::weak_ptr<Session>> sessions;
         std::shared_mutex session_list_mutex;
 
 

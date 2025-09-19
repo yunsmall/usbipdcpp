@@ -290,6 +290,33 @@ void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
     libusb_unref_device(device);
 }
 
+void usbipdcpp::LibusbServer::refresh_available_devices() {
+    libusb_device **devs;
+    int dev_nums = libusb_get_device_list(nullptr, &devs);
+
+    {
+        std::lock_guard lock(devices_mutex);
+        for (auto i = available_devices.begin(); i != available_devices.end(); ++i) {
+            auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler);
+            if (libusb_device_handler) {
+                auto device = libusb_get_device(libusb_device_handler->native_handle);
+                bool found = false;
+                for (size_t device_i = 0; device_i < dev_nums; device_i++) {
+                    if (device == devs[device_i]) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    i = available_devices.erase(i);
+                }
+            }
+        }
+    }
+
+    libusb_free_device_list(devs, 1);
+}
+
 void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     Server::start(ep);
     libusb_event_thread = std::thread([this]() {

@@ -20,7 +20,7 @@ namespace usbipdcpp {
 
         ~LibusbDeviceHandler() override;
         void on_new_connection(error_code &ec) override;
-        void on_disconnection(error_code& ec) override;
+        void on_disconnection(error_code &ec) override;
         void handle_unlink_seqnum(std::uint32_t seqnum) override;
 
     protected:
@@ -50,13 +50,6 @@ namespace usbipdcpp {
         bool tweak_set_configuration_cmd(const SetupPacket &setup_packet);
         bool tweak_reset_device_cmd(const SetupPacket &setup_packet);
 
-        /**
-         * @brief 返回是否做了特殊操作
-         * @param setup_packet
-         * @return
-         */
-        bool tweak_special_requests(const SetupPacket &setup_packet);
-
         static uint8_t get_libusb_transfer_flags(uint32_t in);
 
         static void masking_bogus_flags(bool is_out, struct libusb_transfer *trx);
@@ -73,10 +66,12 @@ namespace usbipdcpp {
 
         static void transfer_callback(libusb_transfer *trx);
 
+        std::atomic_bool client_disconnection = false;
+
         std::map<std::uint32_t, libusb_transfer *> transferring_data;
         std::shared_mutex transferring_data_mutex;
 
-        libusb_device_handle *native_handle;
+        libusb_device_handle *const native_handle;
 
         //不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
         //发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交

@@ -10,11 +10,11 @@
 
 namespace usbipdcpp {
     inline std::string get_device_busid(libusb_device *device) {
-        // return std::format("{}-{}-{}", libusb_get_bus_number(device),
-        //                    libusb_get_device_address(device),
-        //                    libusb_get_port_number(device));
-        return std::format("{}-{}", libusb_get_bus_number(device),
+        return std::format("{}-{}-{}", libusb_get_bus_number(device),
+                           libusb_get_device_address(device),
                            libusb_get_port_number(device));
+        // return std::format("{}-{}", libusb_get_bus_number(device),
+        //                    libusb_get_port_number(device));
     }
 
     UsbSpeed libusb_speed_to_usb_speed(int speed);

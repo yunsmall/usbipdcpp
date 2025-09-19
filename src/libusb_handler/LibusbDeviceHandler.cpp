@@ -18,6 +18,7 @@ void usbipdcpp::LibusbDeviceHandler::on_new_connection(error_code &ec) {
 }
 
 void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
+    client_disconnection = true;
     std::shared_lock lock(transferring_data_mutex);
     for (auto &data: transferring_data) {
         auto err = libusb_cancel_transfer(data.second);
@@ -47,10 +48,40 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
                                                         std::uint32_t transfer_buffer_length,
                                                         const SetupPacket &setup_packet, const data_type &req,
                                                         [[maybe_unused]] std::error_code &ec) {
-    //auto tweaked = -1;
-    auto tweaked = tweak_special_requests(setup_packet);
-    //尝试执行特殊操作再对usb进行控制
-    if (!tweaked) {
+
+    if (setup_packet.is_clear_halt_cmd()) {
+        // session.pause_receive();
+        // std::thread t([&]() {
+            tweak_clear_halt_cmd(setup_packet);
+        //     session.resume_receive();
+        // });
+        // t.detach();
+    }
+    else if (setup_packet.is_set_interface_cmd()) {
+        // session.pause_receive();
+        // std::thread t([&]() {
+            tweak_set_interface_cmd(setup_packet);
+        //     session.resume_receive();
+        // });
+        // t.detach();
+    }
+    else if (setup_packet.is_set_configuration_cmd()) {
+        // session.pause_receive();
+        // std::thread t([&]() {
+            tweak_set_configuration_cmd(setup_packet);
+        //     session.resume_receive();
+        // });
+        // t.detach();
+    }
+    else if (setup_packet.is_reset_device_cmd()) {
+        // session.pause_receive();
+        // std::thread t([&]() {
+            tweak_reset_device_cmd(setup_packet);
+        //     session.resume_receive();
+        // });
+        // t.detach();
+    }
+    else {
         SPDLOG_DEBUG("控制传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
 
         auto transfer = libusb_alloc_transfer(0);
@@ -95,20 +126,6 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(Session &session,
         }
         return;
     }
-    else {
-        SPDLOG_DEBUG("拦截了控制包：{}", seqnum);
-        //SPDLOG_INFO("拦截了包: {}", setup_packet.to_string());
-        //返回空包
-        session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-                seqnum,
-                static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                0,
-                0,
-                {},
-                {}
-                ));
-        return;
-    }
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
@@ -119,10 +136,11 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(Session &session, std:
                                                           [[maybe_unused]] std::error_code &ec) {
     bool is_out = !ep.is_in();
 
-    SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
+    SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", is_out?"Out":"In", ep.address);
     auto transfer = libusb_alloc_transfer(0);
     auto *buffer = new unsigned char[transfer_buffer_length]{0};
     if (is_out) {
+        // SPDLOG_DEBUG("transfer_buffer_length:{}, out_data.size():{}", transfer_buffer_length, out_data.size());
         memcpy(buffer, out_data.data(), out_data.size());
     }
     auto *callback_args = new libusb_callback_args{
@@ -321,8 +339,9 @@ bool usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd(const SetupPack
 
     //不可以set_configuration，会device_busy
     //就当执行过了
-    int err = LIBUSB_SUCCESS;
-    return err == LIBUSB_SUCCESS;
+    // int err = LIBUSB_SUCCESS;
+    // return err == LIBUSB_SUCCESS;
+    return false;
 }
 
 bool usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &setup_packet) {
@@ -346,28 +365,7 @@ bool usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &s
      * With the implementation of pre_reset and post_reset the driver no
      * longer unbinds. This allows the use of synchronous reset.
      */
-    return false;
-}
-
-bool usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &setup_packet) {
-    bool tweaked = false;
-    if (setup_packet.is_clear_halt_cmd()) {
-        tweaked = tweak_clear_halt_cmd(setup_packet);
-    }
-    else if (setup_packet.is_set_interface_cmd()) {
-        tweaked = tweak_set_interface_cmd(setup_packet);
-    }
-    else if (setup_packet.is_set_configuration_cmd()) {
-        tweaked = tweak_set_configuration_cmd(setup_packet);
-    }
-    else if (setup_packet.is_reset_device_cmd()) {
-        tweaked = tweak_reset_device_cmd(setup_packet);
-    }
-
-    if (tweaked == false) {
-        SPDLOG_DEBUG("不需要调整包");
-    }
-    return tweaked;
+    return true;
 }
 
 uint8_t usbipdcpp::LibusbDeviceHandler::get_libusb_transfer_flags(uint32_t in) {
@@ -479,10 +477,12 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
         default:
             dev_warn(libusb_get_device(trx->dev_handle),
                      "urb completion with unknown status {}",
-                     (int)trx->status);
+                     static_cast<int>(trx->status));
             break;
     }
     SPDLOG_DEBUG("libusb传输了{}个字节", trx->actual_length);
+    if (callback_arg.handler.client_disconnection)
+        return;
 
     std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{};
     auto unlink_found = callback_arg.session.get_unlink_seqnum(callback_arg.seqnum);
@@ -526,9 +526,10 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                         trx->buffer + trx->actual_length
                 };
                 assert(received_data.size()==trx->actual_length);
-                SPDLOG_DEBUG("非控制和等时传输received_data长度{}个字节", received_data.size());
+                // SPDLOG_DEBUG("非控制和等时传输received_data长度{}个字节", received_data.size());
             }
         }
+        SPDLOG_DEBUG("libusb传输actual_length为{}个字节", trx->actual_length);
 
 
         callback_arg.session.submit_ret_submit(

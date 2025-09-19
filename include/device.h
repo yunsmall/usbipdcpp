@@ -92,7 +92,7 @@ namespace usbipdcpp {
          */
         void on_new_connection(error_code &ec);
         /**
-         * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后禁止再提交消息和使用Session对象
          */
         void on_disconnection(error_code &ec);
         /**

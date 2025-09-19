@@ -44,18 +44,35 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 void usbipdcpp::Server::stop() {
     {
         std::shared_lock lock(session_list_mutex);
-        for (const auto &session: sessions) {
-            session->immediately_stop();
+        for (auto &session: sessions) {
+            if (auto shared_session = session.lock()) {
+                shared_session->immediately_stop();
+            }
         }
     }
-    spdlog::info("Successfully shut down transmissions for all devices");
+    //虽然采取等待的策略好丑，但是代码好写啊
+    while (true) {
+        size_t alive_session_count = 0;
+        {
+            std::shared_lock lock(session_list_mutex);
+            if (sessions.empty()) {
+                break;
+            }
+            alive_session_count = sessions.size();
+        }
+        auto wait_duration = std::chrono::seconds(1);
+        spdlog::info("There are still {} sessions that have not been closed, wait for {} seconds.",
+                     alive_session_count, wait_duration.count());
+        std::this_thread::sleep_for(wait_duration);
+    }
+    spdlog::info("All sessions were successfully closed");
+
+    // spdlog::info("Successfully shut down transmissions for all devices");
 
     asio_io_context.stop();
     SPDLOG_TRACE("Successfully stop io_context");
     should_stop = true;
     network_io_thread.join();
-
-    spdlog::info("All sessions were successfully closed");
 }
 
 void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
@@ -82,14 +99,6 @@ void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
 // }
 
 usbipdcpp::Server::~Server() {
-    //It is necessary to destroy the entire session in sessions first,
-    //otherwise, because if the socket object in the session is destroyed later,
-    //it will destroy io_context first and access io_context, thus accessing
-    //illegal memory
-    {
-        std::lock_guard lock(session_list_mutex);
-        sessions.clear();
-    }
 
     {
         std::lock_guard lock(devices_mutex);
@@ -104,41 +113,27 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
     while (true) {
         spdlog::info("Waiting for a new connection...");
 
+        //先创建一个Session，同时内部创建一个自己的socket
+        auto session = std::make_shared<Session>(*this);
+
         asio::error_code ec;
-        auto socket = co_await acceptor.async_accept(asio::redirect_error(asio::use_awaitable, ec));
+        //服务器io_context接收到socket后将其转移到session内部专有的io_context
+        co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
+
+        {
+            std::lock_guard lock(session_list_mutex);
+            sessions.emplace_back(session);
+        }
 
         if (!ec) {
-            auto remote_endpoint = socket.remote_endpoint();
+            auto remote_endpoint = session->socket.remote_endpoint();
             auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
                                                     remote_endpoint.port());
             spdlog::info("A new connection from {}", remote_endpoint_name);
-            auto session = std::make_shared<Session>(*this, std::move(socket));
-            SPDLOG_TRACE("尝试添加会话处理协程");
-            asio::co_spawn(asio_io_context, [=,this]()-> asio::awaitable<void> {
-                // 成功建立连接
-                std::error_code ec2;
-                SPDLOG_TRACE("处理会话");
-                co_await session->run(ec2);
-                if (ec2) {
-                    SPDLOG_ERROR("An error occurs in session from {}: {}", remote_endpoint_name,
-                                 ec2.message());
-                }
-                spdlog::info("Connection from {} was closed", remote_endpoint_name);
 
-                {
-                    std::lock_guard lock(this->session_list_mutex);
-                    if (std::ranges::contains(this->sessions, session)) {
-                        this->sessions.remove(session);
-                    }
-                }
-                co_return;
-            }, if_has_value_than_rethrow);
-            SPDLOG_TRACE("成功添加会话处理协程");
-
-            {
-                std::lock_guard lock(session_list_mutex);
-                sessions.emplace_back(std::move(session));
-            }
+            //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
+            //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备
+            session->run();
         }
         else if (ec == asio::error::operation_aborted) {
             SPDLOG_ERROR("Operation aborted：{}", ec.message());
