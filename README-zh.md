@@ -115,6 +115,13 @@ cmake -B build
 cmake --build build
 cmake --install build
 ```
+使用conan作为包管理器：
+```bash
+conan install . --build=missing -s build_type=Release
+cmake --preset conan-release
+cmake --build build/Release
+cmake --install build/Release
+```
 
 ---
 
