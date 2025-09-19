@@ -1,0 +1,11 @@
+[requires]
+asio/1.36.0
+spdlog/1.15.3
+libusb/1.0.26
+libevdev/1.13.1
+[generators]
+CMakeDeps
+CMakeToolchain
+PkgConfigDeps
+[layout]
+cmake_layout
