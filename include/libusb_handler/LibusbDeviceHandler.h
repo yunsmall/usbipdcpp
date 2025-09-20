@@ -50,6 +50,13 @@ namespace usbipdcpp {
         bool tweak_set_configuration_cmd(const SetupPacket &setup_packet);
         bool tweak_reset_device_cmd(const SetupPacket &setup_packet);
 
+        /**
+         * @brief 返回是否做了特殊操作
+         * @param setup_packet
+         * @return
+         */
+        bool tweak_special_requests(const SetupPacket &setup_packet);
+
         static uint8_t get_libusb_transfer_flags(uint32_t in);
 
         static void masking_bogus_flags(bool is_out, struct libusb_transfer *trx);

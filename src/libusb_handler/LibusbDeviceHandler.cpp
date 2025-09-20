@@ -54,39 +54,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         const SetupPacket &setup_packet, const data_type &req,
         [[maybe_unused]] std::error_code &ec) {
 
-    if (setup_packet.is_clear_halt_cmd()) {
-        // session.pause_receive();
-        // std::thread t([&]() {
-        tweak_clear_halt_cmd(setup_packet);
-        //     session.resume_receive();
-        // });
-        // t.detach();
-    }
-    else if (setup_packet.is_set_interface_cmd()) {
-        // session.pause_receive();
-        // std::thread t([&]() {
-        tweak_set_interface_cmd(setup_packet);
-        //     session.resume_receive();
-        // });
-        // t.detach();
-    }
-    else if (setup_packet.is_set_configuration_cmd()) {
-        // session.pause_receive();
-        // std::thread t([&]() {
-        tweak_set_configuration_cmd(setup_packet);
-        //     session.resume_receive();
-        // });
-        // t.detach();
-    }
-    else if (setup_packet.is_reset_device_cmd()) {
-        // session.pause_receive();
-        // std::thread t([&]() {
-        tweak_reset_device_cmd(setup_packet);
-        //     session.resume_receive();
-        // });
-        // t.detach();
-    }
-    else {
+    auto tweaked = tweak_special_requests(setup_packet);
+    if (!tweaked) {
         SPDLOG_DEBUG("控制传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
 
         auto transfer = libusb_alloc_transfer(0);
@@ -367,6 +336,26 @@ bool usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &s
      * longer unbinds. This allows the use of synchronous reset.
      */
     return true;
+}
+
+bool usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &setup_packet) {
+    bool tweaked = false;
+    if (setup_packet.is_clear_halt_cmd()) {
+        tweaked = tweak_clear_halt_cmd(setup_packet);
+    }
+    else if (setup_packet.is_set_interface_cmd()) {
+        tweaked = tweak_set_interface_cmd(setup_packet);
+    }
+    else if (setup_packet.is_set_configuration_cmd()) {
+        tweaked = tweak_set_configuration_cmd(setup_packet);
+    }
+    else if (setup_packet.is_reset_device_cmd()) {
+        tweaked = tweak_reset_device_cmd(setup_packet);
+    }
+    if (tweaked == false) {
+        SPDLOG_DEBUG("不需要调整包");
+    }
+    return tweaked;
 }
 
 uint8_t usbipdcpp::LibusbDeviceHandler::get_libusb_transfer_flags(uint32_t in) {
