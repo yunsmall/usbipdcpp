@@ -5,11 +5,11 @@
 
 using namespace usbipdcpp;
 
-void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_control_urb(Session &session,
-    std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-    const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
+void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_control_urb(
+        std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+        const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
     SPDLOG_ERROR("Unimplement non standard control transfer request to simple device");
-    session.submit_ret_submit(
+    session->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
             );
 }

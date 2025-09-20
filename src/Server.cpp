@@ -1,6 +1,7 @@
 #include "Server.h"
 
 #include <thread>
+#include <iostream>
 
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
@@ -80,6 +81,42 @@ void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
     available_devices.emplace_back(device);
 }
 
+
+bool usbipdcpp::Server::has_bound_device(const std::string &busid) {
+    std::shared_lock lock(devices_mutex);
+    //只要存了这个设备就是有设备，不管是在可用设备还是正在使用的设备
+    for (auto &device: available_devices) {
+        if (device->busid == busid) {
+            return true;
+        }
+    }
+    return using_devices.contains(busid);
+}
+
+size_t usbipdcpp::Server::get_session_count() {
+    std::shared_lock lock(session_list_mutex);
+    return sessions.size();
+}
+
+void usbipdcpp::Server::print_bound_devices() {
+    std::shared_lock lock(devices_mutex);
+
+    std::size_t device_index = 1;
+    std::cout << "available devices:" << std::endl;
+    for (auto &device: available_devices) {
+        std::cout << std::format("\tNo.{} device {}\n", device_index, device->busid);
+        ++device_index;
+    }
+    std::cout << '\n';
+    device_index = 1;
+    std::cout << "using devices:" << std::endl;
+    for (auto &device: using_devices) {
+        std::cout << std::format("\tNo.{} device {}\n", device_index, device.first);
+        ++device_index;
+    }
+    std::cout << std::endl;
+}
+
 // bool usbipdcpp::Server::remove_device(const std::string &busid) {
 //     std::lock_guard lock(devices_mutex);
 //     for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
@@ -120,12 +157,11 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
         //服务器io_context接收到socket后将其转移到session内部专有的io_context
         co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
 
-        {
-            std::lock_guard lock(session_list_mutex);
-            sessions.emplace_back(session);
-        }
-
         if (!ec) {
+            {
+                std::lock_guard lock(session_list_mutex);
+                sessions.emplace_back(session);
+            }
             auto remote_endpoint = session->socket.remote_endpoint();
             auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
                                                     remote_endpoint.port());

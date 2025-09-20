@@ -259,10 +259,9 @@ void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev) {
 void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
     auto target_busid = get_device_busid(device);
     {
-        std::shared_lock lock(devices_mutex);
+        std::lock_guard lock(devices_mutex);
         for (auto i = available_devices.begin(); i != available_devices.end(); ++i) {
             if ((*i)->busid == target_busid) {
-
                 auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler);
                 if (libusb_device_handler) {
                     struct libusb_config_descriptor *active_config_desc;
@@ -288,6 +287,30 @@ void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
         }
     }
     libusb_unref_device(device);
+}
+
+void usbipdcpp::LibusbServer::try_remove_dead_device(const std::string &busid) {
+    std::lock_guard lock(devices_mutex);
+    for (auto i = available_devices.begin(); i != available_devices.end(); ++i) {
+        if ((*i)->busid == busid) {
+            if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler)) {
+                libusb_close(libusb_device_handler->native_handle);
+                available_devices.erase(i);
+                spdlog::info("删除可用设备中的{}", busid);
+                return;
+            }
+        }
+    }
+    if (auto device = using_devices.find(busid); device != using_devices.end()) {
+        if (auto libusb_device_handler = std::dynamic_pointer_cast<
+            LibusbDeviceHandler>((*device).second->handler)) {
+            libusb_close(libusb_device_handler->native_handle);
+            using_devices.erase(device);
+            spdlog::info("删除正在使用设备中的{}", busid);
+            return;
+        }
+    }
+    SPDLOG_WARN("无法找到busid为{}的设备", busid);
 }
 
 void usbipdcpp::LibusbServer::refresh_available_devices() {

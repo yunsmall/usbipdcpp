@@ -212,7 +212,7 @@ void usbipdcpp::Session::immediately_stop() {
 }
 
 asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
-    current_import_device->on_new_connection(transferring_ec);
+    current_import_device->on_new_connection(*this, transferring_ec);
     if (transferring_ec)
         co_return;
 
@@ -224,12 +224,14 @@ asio::awaitable<void> usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &t
 
     co_await (receiver(receiver_ec) && sender(sender_ec));
 
-    //能够返回ec就行了，哪的ec不重要
     if (sender_ec) {
+        SPDLOG_ERROR("An error occur during sending: {}", sender_ec.message());
         transferring_ec = sender_ec;
     }
+    //一般来说receiver_ec的ec重要一点，因此会覆盖掉
     else if (receiver_ec) {
-        transferring_ec = sender_ec;
+        SPDLOG_ERROR("An error occur during receiving: {}", receiver_ec.message());
+        transferring_ec = receiver_ec;
     }
     cmd_transferring = false;
 }
@@ -294,12 +296,12 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
                         usbipdcpp::error_code ec_during_handling_urb;
                         // start_processing_urb();
                         current_import_device->handle_urb(
-                                *this,
                                 cmd2,
                                 current_seqnum,
                                 ep,
-                                intf, cmd2.transfer_buffer_length, cmd2.setup, cmd2.data,
-                                cmd2.iso_packet_descriptor, ec_during_handling_urb
+                                intf,
+                                cmd2.transfer_buffer_length, cmd2.setup, cmd2.data, cmd2.iso_packet_descriptor,
+                                ec_during_handling_urb
                                 );
 
                         if (ec_during_handling_urb) {
@@ -343,9 +345,16 @@ asio::awaitable<void> usbipdcpp::Session::receiver(usbipdcpp::error_code &receiv
             }, command);
         }
     }
-    //先取消设备传输再等待urb全部处理好
-    transfer_channel->close();
+    //通知设备断连，告诉设备禁止再发消息
     current_import_device->on_disconnection(receiver_ec);
+    //然后再关闭发送的channel，防止先关闭了但设备因还未被通知到关闭而报错
+    transfer_channel->close();
+
+    /* 这里先标记为可用是可行的
+     * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
+     * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
+     * 因此先标记为可用再清除这两个变量的状态
+    */
     server.try_moving_device_to_available(*current_import_device_id);
     current_import_device_id.reset();
     current_import_device.reset();
@@ -387,7 +396,7 @@ asio::awaitable<void> usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         }
     }
     if (ec == asio::experimental::error::channel_closed || ec == asio::experimental::error::channel_cancelled) {
-        SPDLOG_DEBUG("sender ec:{}",ec.message());
+        SPDLOG_DEBUG("sender ec:{}", ec.message());
         ec.clear();
     }
 }

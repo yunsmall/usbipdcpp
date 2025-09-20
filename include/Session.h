@@ -26,6 +26,8 @@ namespace usbipdcpp {
 
     public:
         explicit Session(Server &server);
+        Session(const Session &) = delete;
+        Session(Session &&) = delete;
 
         /**
          * @brief 线程安全，用来查询某一序列是否被unlink了。

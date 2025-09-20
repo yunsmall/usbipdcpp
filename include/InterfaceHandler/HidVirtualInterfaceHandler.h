@@ -18,13 +18,13 @@ namespace usbipdcpp {
             VirtualInterfaceHandler(handle_interface, string_pool) {
         }
 
-        void handle_non_standard_request_type_control_urb(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+        void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
                                                           const SetupPacket &setup_packet,
                                                           const data_type &out_data, std::error_code &ec) override;
 
-        virtual void handle_non_hid_request_type_control_urb(Session &session, std::uint32_t seqnum,
+        virtual void handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
                                                              const UsbEndpoint &ep,
                                                              std::uint32_t transfer_flags,
                                                              std::uint32_t transfer_buffer_length,

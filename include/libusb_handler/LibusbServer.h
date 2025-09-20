@@ -14,6 +14,12 @@ namespace usbipdcpp {
 
         void bind_host_device(libusb_device *dev);
         void unbind_host_device(libusb_device *device);
+
+        /**
+         * @brief 禁止传入仍然可用的busid，只会删除libusb的设备，其他设备不处理
+         * @param busid
+         */
+        void try_remove_dead_device(const std::string& busid);
         void refresh_available_devices();
         void start(asio::ip::tcp::endpoint &ep) override;
         void stop() override;

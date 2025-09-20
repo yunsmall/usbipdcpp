@@ -6,7 +6,7 @@
 
 using namespace usbipdcpp;
 
-void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
+void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                                         const UsbEndpoint &ep, std::optional<UsbInterface> &interface,
                                         std::uint32_t transfer_flags,
                                         std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
@@ -14,15 +14,16 @@ void VirtualDeviceHandler::dispatch_urb(Session &session, const UsbIpCommand::Us
                                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                         usbipdcpp::error_code &ec) {
     // if (se)
-    DeviceHandlerBase::dispatch_urb(session, cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length,
-                                    setup_packet, out_data,
-                                    iso_packet_descriptors, ec);
+    DeviceHandlerBase::dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet,
+                                    out_data, iso_packet_descriptors,
+                                    ec);
 }
 
-void VirtualDeviceHandler::on_new_connection(error_code &ec) {
+void VirtualDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
+    session = &current_session;
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
-            intf.handler->on_new_connection(ec);
+            intf.handler->on_new_connection(current_session, ec);
             if (ec) {
                 break;
             }
@@ -31,6 +32,7 @@ void VirtualDeviceHandler::on_new_connection(error_code &ec) {
 }
 
 void VirtualDeviceHandler::on_disconnection(error_code &ec) {
+    session = nullptr;
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
             intf.handler->on_disconnection(ec);
@@ -72,15 +74,15 @@ void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
     }
 }
 
-void VirtualDeviceHandler::handle_control_urb(Session &session,
-                                              std::uint32_t seqnum,
-                                              const UsbEndpoint &ep,
-                                              std::uint32_t transfer_flags,
-                                              std::uint32_t transfer_buffer_length,
-                                              const SetupPacket &setup_packet,
-                                              const std::vector<std::uint8_t> &out_data,
-                                              std::error_code &ec) {
-    auto unlink_ret = session.get_unlink_seqnum(seqnum);
+void VirtualDeviceHandler::handle_control_urb(
+        std::uint32_t seqnum,
+        const UsbEndpoint &ep,
+        std::uint32_t transfer_flags,
+        std::uint32_t transfer_buffer_length,
+        const SetupPacket &setup_packet,
+        const std::vector<std::uint8_t> &out_data,
+        std::error_code &ec) {
+    auto unlink_ret = session->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
         auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
         //标准的请求全在这里处理了
@@ -127,7 +129,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                 status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                             }
                         }
-                        session.submit_ret_submit(
+                        session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                         seqnum,
                                         status
@@ -162,7 +164,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                 SPDLOG_WARN("Device Unhandled StandardRequest {}", static_cast<int>(std_request));
                             }
                         }
-                        session.submit_ret_submit(
+                        session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                         seqnum, status, result)
                                 );
@@ -199,7 +201,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                                 static_cast<int>(std_request));
                                 }
                             }
-                            session.submit_ret_submit(
+                            session->submit_ret_submit(
                                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                             seqnum,
                                             status
@@ -236,7 +238,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                                 static_cast<int>(std_request));
                                 }
                             }
-                            session.submit_ret_submit(
+                            session->submit_ret_submit(
                                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                             seqnum, status, result)
                                     );
@@ -246,7 +248,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     else {
                         SPDLOG_ERROR("接口未注册handler，无法处理发去接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
-                        session.submit_ret_submit(
+                        session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
@@ -283,7 +285,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                                         static_cast<int>(std_request));
                                         }
                                     }
-                                    session.submit_ret_submit(
+                                    session->submit_ret_submit(
                                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                                     seqnum,
                                                     status
@@ -311,7 +313,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                                                         static_cast<int>(std_request));
                                         }
                                     }
-                                    session.submit_ret_submit(
+                                    session->submit_ret_submit(
                                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                                     seqnum,
                                                     status,
@@ -322,7 +324,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                             else {
                                 SPDLOG_ERROR("端点{:04x}所在的接口没注册对应handler", setup_packet.value);
                                 ec = make_error_code(ErrorType::INVALID_ARG);
-                                session.submit_ret_submit(
+                                session->submit_ret_submit(
                                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                                 return;
                             }
@@ -330,7 +332,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                         else {
                             SPDLOG_ERROR("端点{:04x}没有对应的接口", setup_packet.value);
                             ec = make_error_code(ErrorType::INVALID_ARG);
-                            session.submit_ret_submit(
+                            session->submit_ret_submit(
                                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                             return;
                         }
@@ -340,13 +342,13 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                 case RequestRecipient::Other: {
                     SPDLOG_TRACE("发给其他");
                     SPDLOG_WARN("未实现去其他地方的包");
-                    session.submit_ret_submit(
+                    session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                     break;
                 }
                 default: {
                     SPDLOG_WARN("未知去往目标");
-                    session.submit_ret_submit(
+                    session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                 }
             }
@@ -355,7 +357,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
             switch (recipient) {
                 case RequestRecipient::Device: {
                     SPDLOG_TRACE("发给设备的非标准控制传输包");
-                    handle_non_standard_request_type_control_urb(session, seqnum, ep, transfer_flags,
+                    handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
                                                                  transfer_buffer_length,
                                                                  setup_packet,
                                                                  out_data, ec);
@@ -366,7 +368,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     auto intf_idx = setup_packet.index;
                     auto handler = handle_device.interfaces[intf_idx].handler;
                     if (handler) {
-                        handler->handle_non_standard_request_type_control_urb(session, seqnum, ep, transfer_flags,
+                        handler->handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
                                                                               transfer_buffer_length,
                                                                               setup_packet,
                                                                               out_data, ec);
@@ -374,7 +376,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     else {
                         SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
-                        session.submit_ret_submit(
+                        session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
@@ -386,7 +388,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     auto handler = handle_device.interfaces[intf_idx].handler;
                     if (handler) {
                         handler->handle_non_standard_request_type_control_urb_to_endpoint(
-                                session, seqnum, ep, transfer_flags,
+                                seqnum, ep, transfer_flags,
                                 transfer_buffer_length,
                                 setup_packet,
                                 out_data, ec);
@@ -394,7 +396,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                     else {
                         SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
                         ec = make_error_code(ErrorType::INVALID_ARG);
-                        session.submit_ret_submit(
+                        session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                         return;
                     }
@@ -402,13 +404,13 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
                 }
                 case RequestRecipient::Other: {
                     SPDLOG_WARN("未实现去其他地方的包");
-                    session.submit_ret_submit(
+                    session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                     break;
                 }
                 default: {
                     SPDLOG_WARN("未知去往目标");
-                    session.submit_ret_submit(
+                    session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
                 }
             }
@@ -416,7 +418,7 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
         }
     }
     else {
-        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
+        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
                         ),
@@ -425,19 +427,18 @@ void VirtualDeviceHandler::handle_control_urb(Session &session,
     }
 }
 
-void VirtualDeviceHandler::handle_bulk_transfer(Session &session,
-                                                std::uint32_t seqnum,
-                                                const UsbEndpoint &ep,
-                                                UsbInterface &interface,
-                                                std::uint32_t transfer_flags,
-                                                std::uint32_t transfer_buffer_length,
-                                                const data_type &out_data,
-                                                std::error_code &ec) {
-    auto unlink_ret = session.get_unlink_seqnum(seqnum);
+void VirtualDeviceHandler::handle_bulk_transfer(
+        std::uint32_t seqnum,
+        const UsbEndpoint &ep,
+        UsbInterface &interface,
+        std::uint32_t transfer_flags,
+        std::uint32_t transfer_buffer_length,
+        const data_type &out_data,
+        std::error_code &ec) {
+    auto unlink_ret = session->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
         if (interface.handler) {
             interface.handler->handle_bulk_transfer(
-                    session,
                     seqnum,
                     ep,
                     transfer_flags,
@@ -448,12 +449,12 @@ void VirtualDeviceHandler::handle_bulk_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session.submit_ret_submit(
+            session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {
-        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
+        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
                         ),
@@ -462,20 +463,19 @@ void VirtualDeviceHandler::handle_bulk_transfer(Session &session,
     }
 }
 
-void VirtualDeviceHandler::handle_interrupt_transfer(Session &session,
-                                                     std::uint32_t seqnum,
-                                                     const UsbEndpoint &ep,
-                                                     UsbInterface &interface,
-                                                     std::uint32_t transfer_flags,
-                                                     std::uint32_t transfer_buffer_length,
-                                                     const data_type &out_data,
-                                                     std::error_code &ec) {
+void VirtualDeviceHandler::handle_interrupt_transfer(
+        std::uint32_t seqnum,
+        const UsbEndpoint &ep,
+        UsbInterface &interface,
+        std::uint32_t transfer_flags,
+        std::uint32_t transfer_buffer_length,
+        const data_type &out_data,
+        std::error_code &ec) {
 
-    auto unlink_ret = session.get_unlink_seqnum(seqnum);
+    auto unlink_ret = session->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
         if (interface.handler) {
             interface.handler->handle_interrupt_transfer(
-                    session,
                     seqnum,
                     ep,
                     transfer_flags,
@@ -486,12 +486,12 @@ void VirtualDeviceHandler::handle_interrupt_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session.submit_ret_submit(
+            session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {
-        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
+        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
                         ),
@@ -500,21 +500,20 @@ void VirtualDeviceHandler::handle_interrupt_transfer(Session &session,
     }
 }
 
-void VirtualDeviceHandler::handle_isochronous_transfer(Session &session,
-                                                       std::uint32_t seqnum,
-                                                       const UsbEndpoint &ep,
-                                                       UsbInterface &interface,
-                                                       std::uint32_t transfer_flags,
-                                                       std::uint32_t transfer_buffer_length,
-                                                       const data_type &req,
-                                                       const std::vector<UsbIpIsoPacketDescriptor> &
-                                                       iso_packet_descriptors,
-                                                       std::error_code &ec) {
-    auto unlink_ret = session.get_unlink_seqnum(seqnum);
+void VirtualDeviceHandler::handle_isochronous_transfer(
+        std::uint32_t seqnum,
+        const UsbEndpoint &ep,
+        UsbInterface &interface,
+        std::uint32_t transfer_flags,
+        std::uint32_t transfer_buffer_length,
+        const data_type &req,
+        const std::vector<UsbIpIsoPacketDescriptor> &
+        iso_packet_descriptors,
+        std::error_code &ec) {
+    auto unlink_ret = session->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
         if (interface.handler) {
             interface.handler->handle_isochronous_transfer(
-                    session,
                     seqnum,
                     ep,
                     transfer_flags,
@@ -526,12 +525,12 @@ void VirtualDeviceHandler::handle_isochronous_transfer(Session &session,
         }
         else {
             SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session.submit_ret_submit(
+            session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
         }
     }
     else {
-        session.submit_ret_unlink_and_then_remove_seqnum_unlink(
+        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
                         std::get<1>(unlink_ret)
                         ),

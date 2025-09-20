@@ -21,16 +21,16 @@ namespace usbipdcpp {
             handle_interface(handle_interface) {
         }
 
-        virtual void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+        virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                           std::uint32_t transfer_flags,
                                           std::uint32_t transfer_buffer_length, const data_type &out_data,
                                           std::error_code &ec) =0;
-        virtual void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+        virtual void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                std::uint32_t transfer_flags,
                                                std::uint32_t transfer_buffer_length, const data_type &out_data,
                                                std::error_code &ec) =0;
 
-        virtual void handle_isochronous_transfer(Session &session, std::uint32_t seqnum,
+        virtual void handle_isochronous_transfer(std::uint32_t seqnum,
                                                  const UsbEndpoint &ep,
                                                  std::uint32_t transfer_flags,
                                                  std::uint32_t transfer_buffer_length, const data_type &out_data,
@@ -39,9 +39,10 @@ namespace usbipdcpp {
 
         /**
          * @brief 新的客户端连接时会调这个函数
+         * @param session
          * @param ec 发生的ec
          */
-        virtual void on_new_connection(error_code &ec) =0;
+        virtual void on_new_connection(Session& session, error_code &ec) =0;
 
         /**
          * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息

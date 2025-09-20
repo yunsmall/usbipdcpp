@@ -78,29 +78,29 @@ find_ep(std::uint8_t ep) {
     return std::nullopt;
 }
 
-void usbipdcpp::UsbDevice::handle_urb(Session &session,
-                                      const UsbIpCommand::UsbIpCmdSubmit &cmd,
-                                      std::uint32_t seqnum,
-                                      const UsbEndpoint &ep,
-                                      std::optional<UsbInterface> &interface,
-                                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                                      const std::vector<std::uint8_t> &out_data,
-                                      const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                                      std::error_code &ec) {
+void usbipdcpp::UsbDevice::handle_urb(
+        const UsbIpCommand::UsbIpCmdSubmit &cmd,
+        std::uint32_t seqnum,
+        const UsbEndpoint &ep,
+        std::optional<UsbInterface> &interface,
+        std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+        const std::vector<std::uint8_t> &out_data,
+        const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+        std::error_code &ec) {
     SPDLOG_TRACE("设备处理URB，将其转发到对应handler中");
     if (handler) {
-        handler->dispatch_urb(session, cmd, seqnum, ep, interface, transfer_buffer_length,
-                              transfer_buffer_length, setup_packet, out_data, iso_packet_descriptors, ec);
+        handler->dispatch_urb(cmd, seqnum, ep, interface, transfer_buffer_length, transfer_buffer_length,
+                              setup_packet, out_data, iso_packet_descriptors, ec);
     }
     else {
         SPDLOG_ERROR("设备没注册handler");
     }
 }
 
-void UsbDevice::on_new_connection(error_code &ec) {
+void UsbDevice::on_new_connection(Session &session, error_code &ec) {
     SPDLOG_TRACE("设备处理 on_new_connection，将其转发到对应handler中");
     if (handler) {
-        handler->on_new_connection(ec);
+        handler->on_new_connection(session, ec);
     }
     else {
         SPDLOG_ERROR("设备没注册handler");

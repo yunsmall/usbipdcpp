@@ -3,9 +3,9 @@
 #include "constant.h"
 #include "Session.h"
 
-void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_control_urb(Session &session,
-    std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-    const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
+void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_control_urb(
+        std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+        const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     switch (type) {
         case RequestType::Class: {
@@ -41,7 +41,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
 
                 }
-                session.submit_ret_submit(
+                session->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                 seqnum, status, result));
             }
@@ -65,14 +65,14 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                         status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                     }
                 }
-                session.submit_ret_submit(
+                session->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                 seqnum, status, {}));
             }
             break;
         }
         default: {
-            handle_non_hid_request_type_control_urb(session, seqnum, ep, transfer_flags, transfer_buffer_length,
+            handle_non_hid_request_type_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length,
                                                     setup_packet, out_data, ec);
         }
     }
@@ -110,13 +110,13 @@ usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::get_class_specific_d
 }
 
 usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
-                                                                           std::uint16_t length,
-                                                                           std::uint32_t *p_status) {
+                                                                             std::uint16_t length,
+                                                                             std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
 }
 
 void usbipdcpp::HidVirtualInterfaceHandler::request_set_idle(std::uint8_t speed,
-                                                            std::uint32_t *p_status) {
+                                                             std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }

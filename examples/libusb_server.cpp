@@ -39,9 +39,17 @@ int main() {
     while (true) {
         std::cin >> cmd;
         switch (cmd) {
+            case 's': {
+                spdlog::info("There are {} sessions in this server", server.get_session_count());
+                break;
+            }
             case 'l': {
                 spdlog::info("List all usb devices in the host");
                 server.list_host_devices();
+                break;
+            }
+            case 'd': {
+                server.print_bound_devices();
                 break;
             }
             case 'b': {
@@ -64,6 +72,13 @@ int main() {
                 auto device = LibusbServer::find_by_busid(target_busid);
                 if (device) {
                     server.unbind_host_device(device);
+                }
+                //主机上找不到，这个设备，如果还处于绑定状态但找不到则需要清除这个设备
+                else if (server.has_bound_device(target_busid)) {
+                    spdlog::warn("Can't find target busid {} in server, but it has been bound."
+                                 "Has it been removed?", target_busid);
+                    spdlog::warn("Try remove dead device:{}", target_busid);
+                    server.try_remove_dead_device(target_busid);
                 }
                 else {
                     spdlog::warn("Can't find a device with busid {}", target_busid);
@@ -89,10 +104,12 @@ int main() {
             case 'h': {
                 std::cout << R"(
 h : Print this help information.
+s : show how many sessions the server has.
 l : List all usb devices in the host.
+d : Show all bound devices.
 b busid : Try to bind a device.
 u busid : Try to unbind a device.
-f : refresh availe=able devices.
+f : refresh available devices.
 q : Close the server.)" << std::endl;
                 break;
             }

@@ -18,7 +18,7 @@ namespace usbipdcpp {
             string_serial_value = string_pool.new_string(L"Usbipdcpp Serial");
         }
 
-        void dispatch_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
+        void dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                           const UsbEndpoint &ep, std::optional<UsbInterface> &interface, std::uint32_t transfer_flags,
                           std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
                           const data_type &out_data,
@@ -26,9 +26,10 @@ namespace usbipdcpp {
                           usbipdcpp::error_code &ec) override;
         /**
          * @brief 新的客户端连接时会调这个函数
+         * @param current_session
          * @param ec 发生的ec
          */
-        void on_new_connection(error_code &ec) override;
+        void on_new_connection(Session& current_session, error_code &ec) override;
         /**
          * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
          */
@@ -37,34 +38,34 @@ namespace usbipdcpp {
     protected:
         void change_device_ep0_max_size_by_speed();
 
-        void handle_control_urb(Session &session,
-                                std::uint32_t seqnum, const UsbEndpoint &ep,
-                                std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                const SetupPacket &setup_packet, const data_type &out_data,
-                                std::error_code &ec) override;
-        void handle_bulk_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+        void handle_control_urb(
+                std::uint32_t seqnum, const UsbEndpoint &ep,
+                std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                const SetupPacket &setup_packet, const data_type &out_data,
+                std::error_code &ec) override;
+        void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                   UsbInterface &interface, std::uint32_t transfer_flags,
                                   std::uint32_t transfer_buffer_length, const data_type &out_data,
                                   std::error_code &ec) override;
-        void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+        void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                        UsbInterface &interface, std::uint32_t transfer_flags,
                                        std::uint32_t transfer_buffer_length, const data_type &out_data,
                                        std::error_code &ec) override;
 
-        void handle_isochronous_transfer(Session &session, std::uint32_t seqnum,
+        void handle_isochronous_transfer(std::uint32_t seqnum,
                                          const UsbEndpoint &ep, UsbInterface &interface,
                                          std::uint32_t transfer_flags,
                                          std::uint32_t transfer_buffer_length, const data_type &out_data,
                                          const std::vector<UsbIpIsoPacketDescriptor> &
                                          iso_packet_descriptors, std::error_code &ec) override;
 
-        virtual void handle_non_standard_request_type_control_urb(Session &session,
-                                                                  std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                                  std::uint32_t transfer_flags,
-                                                                  std::uint32_t transfer_buffer_length,
-                                                                  const SetupPacket &setup_packet,
-                                                                  const data_type &out_data,
-                                                                  std::error_code &ec) =0;
+        virtual void handle_non_standard_request_type_control_urb(
+                std::uint32_t seqnum, const UsbEndpoint &ep,
+                std::uint32_t transfer_flags,
+                std::uint32_t transfer_buffer_length,
+                const SetupPacket &setup_packet,
+                const data_type &out_data,
+                std::error_code &ec) =0;
 
         virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
 

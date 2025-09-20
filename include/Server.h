@@ -21,6 +21,8 @@ namespace usbipdcpp {
 
         Server() = default;
         explicit Server(std::vector<UsbDevice> &&devices);
+        Server(const Server &) = delete;
+        Server(Server &&) = delete;
         /**
          * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
          * 在start前后调用add_device都可以。
@@ -38,6 +40,12 @@ namespace usbipdcpp {
          * @param device 待添加的设备
          */
         virtual void add_device(std::shared_ptr<UsbDevice> &&device);
+
+        virtual bool has_bound_device(const std::string &busid);
+
+        size_t get_session_count();
+
+        void print_bound_devices();
 
         virtual ~Server();
 

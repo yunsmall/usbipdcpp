@@ -81,18 +81,20 @@ namespace usbipdcpp {
 
         std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);
 
-        void handle_urb(Session &session, const UsbIpCommand::UsbIpCmdSubmit &cmd,
+        void handle_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                         std::uint32_t seqnum, const UsbEndpoint &ep,
                         std::optional<UsbInterface> &interface, std::uint32_t transfer_buffer_length,
                         const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
                         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
         /**
-         * @brief 新的客户端连接时会调这个函数
+         * @brief 新的客户端连接时会调这个函数，可以阻塞
+         * @param session
          * @param ec 发生的ec
          */
-        void on_new_connection(error_code &ec);
+        void on_new_connection(Session& session, error_code &ec);
         /**
          * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后禁止再提交消息和使用Session对象
+         * 可以阻塞，处理所有需要处理的事务
          */
         void on_disconnection(error_code &ec);
         /**

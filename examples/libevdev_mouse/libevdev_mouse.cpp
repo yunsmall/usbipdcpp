@@ -21,9 +21,9 @@ class LibevdevMouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:
     LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
-    void on_new_connection(error_code &ec) override;
+    void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
-    void handle_interrupt_transfer(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                    const data_type &out_data,
                                    std::error_code &ec) override;
@@ -51,7 +51,7 @@ public:
     data_type get_report_descriptor() override;
 
 
-    void handle_non_hid_request_type_control_urb(Session &session, std::uint32_t seqnum, const UsbEndpoint &ep,
+    void handle_non_hid_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                  std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                                  const SetupPacket &setup_packet,
                                                  const data_type &out_data, std::error_code &ec) override;
@@ -160,7 +160,7 @@ X/Y轴相对移动量
     std::condition_variable state_cv;
     std::mutex state_mutex;
 
-    std::deque<std::pair<Session *, std::uint32_t>> int_req_queue;
+    std::deque<std::uint32_t> int_req_queue;
     std::shared_mutex int_req_queue_mutex;
 
     std::thread send_thread;
@@ -168,12 +168,13 @@ X/Y轴相对移动量
     std::atomic<std::int16_t> idle_speed = 1;
 };
 
-void LibevdevMouseInterfaceHandler::on_new_connection(error_code &ec) {
-    should_immediately_stop=false;
-    last_state=State{};
-    current_state=State{};
+void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+    session = &current_session;
+    should_immediately_stop = false;
+    last_state = State{};
+    current_state = State{};
     int_req_queue.clear();
-    idle_speed=1;
+    idle_speed = 1;
 
     send_thread = std::thread([this]() {
         while (!should_immediately_stop) {
@@ -187,14 +188,12 @@ void LibevdevMouseInterfaceHandler::on_new_connection(error_code &ec) {
             //清空所有发来的中断传输
             while (true) {
                 std::uint32_t seqnum{};
-                Session *session = nullptr;
                 bool has_seqnum = false;
                 {
                     std::lock_guard lock(int_req_queue_mutex);
                     auto at_begin = int_req_queue.begin();
                     if (at_begin != int_req_queue.end()) {
-                        seqnum = at_begin->second;
-                        session = at_begin->first;
+                        seqnum = *at_begin;
                         int_req_queue.pop_front();
                         has_seqnum = true;
                     }
@@ -243,6 +242,7 @@ void LibevdevMouseInterfaceHandler::on_new_connection(error_code &ec) {
 }
 
 void LibevdevMouseInterfaceHandler::on_disconnection(error_code &ec) {
+    session = nullptr;
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
@@ -258,7 +258,7 @@ LibevdevMouseInterfaceHandler::LibevdevMouseInterfaceHandler(UsbInterface &handl
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(Session &session, std::uint32_t seqnum,
+void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum,
                                                               const UsbEndpoint &ep,
                                                               std::uint32_t transfer_flags,
                                                               std::uint32_t transfer_buffer_length,
@@ -267,14 +267,14 @@ void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(Session &session, 
     if (ep.is_in()) {
         //往队列里添加东西
         std::lock_guard lock(int_req_queue_mutex);
-        int_req_queue.emplace_back(&session, seqnum);
+        int_req_queue.emplace_back(seqnum);
     }
     else {
         {
             std::lock_guard lock(int_req_queue_mutex);
             int_req_queue.clear();
         }
-        session.submit_ret_submit(
+        session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
                 );
     }
@@ -334,14 +334,14 @@ data_type LibevdevMouseInterfaceHandler::get_report_descriptor() {
 
 }
 
-void LibevdevMouseInterfaceHandler::handle_non_hid_request_type_control_urb(Session &session, std::uint32_t seqnum,
+void LibevdevMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
                                                                             const UsbEndpoint &ep,
                                                                             std::uint32_t transfer_flags,
                                                                             std::uint32_t transfer_buffer_length,
                                                                             const SetupPacket &setup_packet,
                                                                             const data_type &out_data,
                                                                             std::error_code &ec) {
-    session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 
 data_type LibevdevMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,
