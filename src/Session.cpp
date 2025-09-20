@@ -81,6 +81,7 @@ void usbipdcpp::Session::run() {
                 }
             }
         }
+        self->server.on_session_exit();
         //把当前这个线程detach了，防止线程内部析构自己导致报错
         self->run_thread.detach();
     });

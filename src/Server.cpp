@@ -146,6 +146,10 @@ usbipdcpp::Server::~Server() {
 }
 
 
+void usbipdcpp::Server::on_session_exit() {
+}
+
+
 asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
     while (true) {
         spdlog::info("Waiting for a new connection...");

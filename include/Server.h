@@ -50,6 +50,11 @@ namespace usbipdcpp {
         virtual ~Server();
 
     protected:
+        /**
+         * @brief 默认为空实现，可以选择在session关闭时移除所有失效设备等
+         */
+        virtual void on_session_exit();
+
         asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
         bool is_device_using(const std::string &busid);
