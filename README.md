@@ -104,6 +104,11 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
+5. termux_libusb_server
+
+   A usbip server which can be used at termux in non-root Android device, execute it by
+   `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
+   For the usage of termux-usb, you can refer to the relevant documentation on the official Termux website.
 
 ---
 
@@ -120,14 +125,18 @@ See `CMakeLists.txt` for details
 ### Full compile commands:
 
 #### Use vcpkg as the package manager:
+
 Please install asio libusb libevdev spdlog in advance
+
 ```bash
 cmake -B build \
 -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 cmake --install build
 ```
+
 #### Use conan as the package manager:
+
 ```bash
 conan install . --build=missing -s build_type=Release
 cmake --preset conan-release

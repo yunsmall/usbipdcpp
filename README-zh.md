@@ -102,7 +102,11 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 
    转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
    通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
+5. termux_libusb_server
 
+   可在非root安卓设备的termux中使用的libusb server，通过
+   `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
+   termux-usb的使用可查看termux官方的相关文档
 ---
 
 ## 编译安装

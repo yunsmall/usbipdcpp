@@ -9,7 +9,6 @@ else ()
     set(IS_TOP_LEVEL OFF)
 endif ()
 option(USBIPDCPP_BUILD_EXAMPLES "Build example applications" ${IS_TOP_LEVEL})
-option(USBIPDCPP_BUILD_EXAMPLE_LIBUSB "Build example libusb applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_LIBUSB_SERVER "Build example libusb server applications" ${IS_TOP_LEVEL})
 
 if ((UNIX AND NOT APPLE) OR ANDROID)
@@ -22,6 +21,20 @@ if (IS_TOP_LEVEL AND CAN_THIS_SYSTEM_SUPPORT_EVDEV)
     option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" ON)
 else ()
     option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" OFF)
+endif ()
+
+if (IS_TOP_LEVEL AND ANDROID)
+    option(
+            USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER
+            "Build example libusb applications that can be run in termux by termux-usb"
+            ON
+    )
+else ()
+    option(
+            USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER
+            "Build example libusb applications that can be run in termux by termux-usb"
+            OFF
+    )
 endif ()
 
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications" ${IS_TOP_LEVEL})
@@ -40,7 +53,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
-#            TRANSFER_DELAY_RECORD
+            #            TRANSFER_DELAY_RECORD
     )
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     add_compile_definitions(
@@ -104,6 +117,11 @@ if (USBIPDCPP_BUILD_EXAMPLES)
     if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_LIBUSB_SERVER)
         add_executable(libusb_server examples/libusb_server.cpp)
         target_link_libraries(libusb_server ${PROJECT_NAME}_libusb)
+    endif ()
+
+    if(USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER)
+        add_executable(termux_libusb_server examples/termux_libusb_server.cpp)
+        target_link_libraries(termux_libusb_server ${PROJECT_NAME}_libusb)
     endif ()
 endif ()
 

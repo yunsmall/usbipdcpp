@@ -162,6 +162,11 @@ void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
             SPDLOG_ERROR("libusb_get_device returns nullptr");
             throw std::runtime_error("libusb_get_device returns nullptr");
         }
+        libusb_device *new_dev = libusb_ref_device(dev);
+        if (new_dev == nullptr) {
+            SPDLOG_ERROR("libusb_ref_device returns nullptr");
+            throw std::runtime_error("libusb_ref_device returns nullptr");
+        }
     }
 
     libusb_device_descriptor device_descriptor{};
