@@ -12,14 +12,25 @@ namespace usbipdcpp {
         explicit LibusbServer(std::function<bool(libusb_device *)> filter);
         LibusbServer();
 
-        void bind_host_device(libusb_device *dev);
+        /**
+         * @brief If dev has value, then this function will own the value.
+         * @param dev target device
+         * @param use_handle use already exit dev handle to bind a host device, most time it's for Android
+         * @param exist_handle an existing handle
+         */
+        void bind_host_device(libusb_device *dev, bool use_handle = false,
+                              libusb_device_handle *exist_handle = nullptr);
+        /**
+         * @brief this function will also own the device argument.
+         * @param device target device
+         */
         void unbind_host_device(libusb_device *device);
 
         /**
          * @brief 禁止传入仍然可用的busid，只会删除libusb的设备，其他设备不处理
          * @param busid
          */
-        void try_remove_dead_device(const std::string& busid);
+        void try_remove_dead_device(const std::string &busid);
         void refresh_available_devices();
         void start(asio::ip::tcp::endpoint &ep) override;
         void stop() override;

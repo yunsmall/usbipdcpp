@@ -140,13 +140,28 @@ void usbipdcpp::LibusbServer::release_interface(libusb_device_handle *dev_handle
 void usbipdcpp::LibusbServer::release_interfaces(libusb_device *dev, std::error_code &ec) {
 }
 
-void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev) {
+void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_handle,
+                                               libusb_device_handle *exist_handle) {
     libusb_device_handle *dev_handle;
-    int err = libusb_open(dev, &dev_handle);
-    if (err) {
-        spdlog::warn("无法打开一个设备，忽略这个设备：{}", libusb_strerror(err));
-        libusb_unref_device(dev);
-        return;
+    int err;
+    if (!use_handle) {
+        assert(dev != nullptr && "If use_handle != true then dev can't be nullptr");
+        err = libusb_open(dev, &dev_handle);
+        if (err) {
+            spdlog::warn("无法打开一个设备，忽略这个设备：{}", libusb_strerror(err));
+            libusb_unref_device(dev);
+            return;
+        }
+    }
+    else {
+        assert(dev == nullptr && "If use_handle == true then dev must be nullptr");
+        assert(exist_handle != nullptr && "exist_handle can't be nullptr");
+        dev_handle = exist_handle;
+        dev = libusb_get_device(dev_handle);
+        if (dev == nullptr) {
+            SPDLOG_ERROR("libusb_get_device returns nullptr");
+            throw std::runtime_error("libusb_get_device returns nullptr");
+        }
     }
 
     libusb_device_descriptor device_descriptor{};

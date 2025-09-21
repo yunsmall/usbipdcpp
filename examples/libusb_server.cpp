@@ -56,7 +56,7 @@ int main() {
                 spdlog::info("Binding device");
                 std::string target_busid;
                 std::cin >> target_busid;
-                auto device = server.find_by_busid(target_busid);
+                auto device = LibusbServer::find_by_busid(target_busid);
                 if (device) {
                     server.bind_host_device(device);
                 }
