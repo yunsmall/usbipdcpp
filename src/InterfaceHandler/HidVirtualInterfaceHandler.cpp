@@ -41,7 +41,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
 
                 }
-                session->submit_ret_submit(
+                session.load()->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                 seqnum, status, result));
             }
@@ -65,7 +65,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                         status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                     }
                 }
-                session->submit_ret_submit(
+                session.load()->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                                 seqnum, status, {}));
             }

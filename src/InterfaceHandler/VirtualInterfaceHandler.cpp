@@ -9,7 +9,7 @@ void VirtualInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const U
                                                    const data_type &out_data,
                                                    std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}默认实现的块传输实现", ep.address);
-    session->submit_ret_submit(
+    session.load()->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
                     seqnum
                     )
@@ -21,7 +21,7 @@ void VirtualInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, co
                                                         std::uint32_t transfer_buffer_length, const data_type &out_data,
                                                         std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}默认实现的中断传输实现", ep.address);
-    session->submit_ret_submit(
+    session.load()->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
                     seqnum
                     )
@@ -36,7 +36,7 @@ void VirtualInterfaceHandler::handle_isochronous_transfer(std::uint32_t seqnum, 
                                                           iso_packet_descriptors,
                                                           std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}默认实现的等时传输实现", ep.address);
-    session->submit_ret_submit(
+    session.load()->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
                     seqnum
                     )
@@ -51,7 +51,7 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb(std::
                                                                            const data_type &out_data,
                                                                            std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}的默认非标准控制传输实现", ep.address);
-    session->submit_ret_submit(
+    session.load()->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
                     seqnum,
                     {}
@@ -63,7 +63,7 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         const SetupPacket &setup, const data_type &out_data, std::error_code &ec) {
     SPDLOG_WARN("接受者为端口地址{:04x}的默认非标准控制传输实现", ep.address);
-    session->submit_ret_submit(
+    session.load()->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
                     seqnum,
                     {}

@@ -98,7 +98,7 @@ namespace usbipdcpp {
         }
 
     protected:
-        Session *session = nullptr;
+        std::atomic<Session *> session = nullptr;
 
         std::uint8_t string_interface;
 

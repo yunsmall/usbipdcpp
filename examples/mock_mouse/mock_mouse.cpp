@@ -58,7 +58,7 @@ void MockMouseInterfaceHandler::on_new_connection(Session &current_session, erro
                     }
 
                     if (!should_immediately_stop) {
-                        session->submit_ret_submit(
+                        session.load()->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, ret)
                                 );
                     }
@@ -99,7 +99,7 @@ void MockMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
             std::lock_guard lock(int_req_queue_mutex);
             int_req_queue.clear();
         }
-        session->submit_ret_submit(
+        session.load()->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
                 );
     }
@@ -163,7 +163,7 @@ void MockMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uin
                                                                         const SetupPacket &setup_packet,
                                                                         const data_type &out_data,
                                                                         std::error_code &ec) {
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+    session.load()->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 
 data_type MockMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
