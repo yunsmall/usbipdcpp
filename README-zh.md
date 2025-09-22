@@ -107,7 +107,8 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
 
-   使用usbip默认端口3240，启动后输入任何内容可退出运行。
+   由于termux-usb只支持传入一个fd，因此可使用不同端口启动多个服务器以支持多个设备。
+   使用`USBIPDCPP_LISTEN_PORT`环境变量来指定监听端口
 
    termux-usb的使用可查看termux官方的相关文档
 ---

@@ -109,7 +109,8 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
 
-   It uses the default port of usbip which is 3240. Enter any thing to exit.
+   Since termux-usb only supports passing in one fd, multiple servers can be started on different ports to support multiple devices.
+   Use the `USBIPDCPP_LISTEN_PORT` environment variable to specify the listening port.
 
    For the usage of termux-usb, you can refer to the relevant documentation on the official Termux website.
 
