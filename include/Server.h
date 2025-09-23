@@ -50,10 +50,7 @@ namespace usbipdcpp {
         virtual ~Server();
 
     protected:
-        /**
-         * @brief 默认为空实现，可以选择在session关闭时移除所有失效设备等
-         */
-        virtual void on_session_exit();
+        void register_call_back(std::function<void()>&& callback);
 
         asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
@@ -78,15 +75,19 @@ namespace usbipdcpp {
         //锁available_devices和using_devices两个变量
         std::shared_mutex devices_mutex;
 
-        std::atomic<bool> should_stop = false;
+        std::atomic_bool should_stop = false;
 
         std::list<std::weak_ptr<Session>> sessions;
         std::shared_mutex session_list_mutex;
-
 
         //网络通信请异步使用这个io_context
         asio::io_context asio_io_context;
         //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
         std::thread network_io_thread;
+    private:
+        void on_session_exit();
+
+        std::list<std::function<void()>> session_exit_callbacks;
+        std::shared_mutex exit_callbacks_mutex;
     };
 }

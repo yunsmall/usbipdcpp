@@ -9,7 +9,6 @@
 namespace usbipdcpp {
     class LibusbServer : public Server {
     public:
-        explicit LibusbServer(std::function<bool(libusb_device *)> filter);
         LibusbServer();
 
         /**
@@ -51,11 +50,6 @@ namespace usbipdcpp {
         static libusb_device *find_by_busid(const std::string &busid);
 
     protected:
-        void claim_interface(libusb_device_handle *dev_handle, std::error_code &ec);
-        void claim_interfaces(libusb_device *dev, std::error_code &ec);
-
-        void release_interface(libusb_device_handle *dev_handle, std::error_code &ec);
-        void release_interfaces(libusb_device *dev, std::error_code &ec);
 
         std::atomic<bool> should_exit_libusb_event_thread = false;
 

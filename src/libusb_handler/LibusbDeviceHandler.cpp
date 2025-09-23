@@ -21,6 +21,8 @@ void usbipdcpp::LibusbDeviceHandler::on_new_connection(Session &current_session,
 
 void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
     client_disconnection = true;
+    if (device_removed)
+        return;
     std::shared_lock lock(transferring_data_mutex);
     for (auto &data: transferring_data) {
         auto err = libusb_cancel_transfer(data.second);
@@ -35,6 +37,8 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
     int err = 0;
+    if (device_removed)
+        return;
     {
         std::shared_lock lock(transferring_data_mutex);
         if (transferring_data.contains(seqnum)) {
@@ -53,6 +57,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet, const data_type &req,
         [[maybe_unused]] std::error_code &ec) {
+    if (device_removed) {
+        ec = make_error_code(ErrorType::NO_DEVICE);
+        return;
+    }
 
     auto tweaked = tweak_special_requests(setup_packet);
     if (!tweaked) {
@@ -94,6 +102,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
             session.load()->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
             if (err == LIBUSB_ERROR_NO_DEVICE) {
+                device_removed = true;
                 ec = make_error_code(ErrorType::NO_DEVICE);
             }
         }
@@ -107,6 +116,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
                                                           std::uint32_t transfer_buffer_length,
                                                           const data_type &out_data,
                                                           [[maybe_unused]] std::error_code &ec) {
+    if (device_removed) {
+        ec = make_error_code(ErrorType::NO_DEVICE);
+        return;
+    }
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", is_out?"Out":"In", ep.address);
@@ -140,6 +153,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
         delete[] buffer;
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE) {
+            device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
         session.load()->submit_ret_submit(
@@ -154,6 +168,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
                                                                std::uint32_t transfer_buffer_length,
                                                                const data_type &out_data,
                                                                [[maybe_unused]] std::error_code &ec) {
+    if (device_removed) {
+        ec = make_error_code(ErrorType::NO_DEVICE);
+        return;
+    }
     bool is_out = !ep.is_in();
 
     SPDLOG_DEBUG("中断传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -186,6 +204,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
         delete[] buffer;
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE) {
+            device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
         session.load()->submit_ret_submit(
@@ -204,6 +223,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
         const std::vector<UsbIpIsoPacketDescriptor> &
         iso_packet_descriptors,
         [[maybe_unused]] std::error_code &ec) {
+    if (device_removed) {
+        ec = make_error_code(ErrorType::NO_DEVICE);
+        return;
+    }
 
     bool is_out = !ep.is_in();
     SPDLOG_DEBUG("同步传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
@@ -246,6 +269,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
         delete[] buffer;
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE) {
+            device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
         session.load()->submit_ret_submit(
@@ -465,6 +489,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
             break;
         case LIBUSB_TRANSFER_NO_DEVICE:
             dev_info(libusb_get_device(trx->dev_handle), "device removed?");
+            callback_arg.handler.device_removed = true;
             break;
         default:
             dev_warn(libusb_get_device(trx->dev_handle),

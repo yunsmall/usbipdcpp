@@ -7,6 +7,8 @@ A C++ library for creating usbip servers
 
 Contributions welcome! 🚀
 
+> 💡 **Hint**: If this project is useful to you, please consider giving it a ⭐. This can help more people discover it.
+
 ---
 
 ## Architecture Overview

@@ -74,6 +74,7 @@ namespace usbipdcpp {
 
         //这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
         std::atomic_bool client_disconnection = false;
+        std::atomic_bool device_removed = false;
 
         std::map<std::uint32_t, libusb_transfer *> transferring_data;
         std::shared_mutex transferring_data_mutex;

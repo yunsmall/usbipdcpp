@@ -6,11 +6,22 @@
 #include "libusb_handler/LibusbDeviceHandler.h"
 #include "libusb_handler/tools.h"
 
-usbipdcpp::LibusbServer::LibusbServer(std::function<bool(libusb_device *)> filter) {
-}
-
-usbipdcpp::LibusbServer::LibusbServer():
-    LibusbServer([](auto dev) { return true; }) {
+usbipdcpp::LibusbServer::LibusbServer() {
+    register_call_back([this]() {
+        std::lock_guard lock(devices_mutex);
+        for (auto it = available_devices.begin(); it != available_devices.end();) {
+            bool removed = false;
+            if (auto libusb_handle = std::dynamic_pointer_cast<LibusbDeviceHandler>((*it)->handler)) {
+                if (libusb_handle->device_removed) {
+                    it = available_devices.erase(it);
+                    removed = true;
+                }
+            }
+            if (!removed) {
+                ++it;
+            }
+        }
+    });
 }
 
 std::pair<std::string, std::string> usbipdcpp::LibusbServer::get_device_names(libusb_device *device) {
@@ -124,20 +135,6 @@ libusb_device *usbipdcpp::LibusbServer::find_by_busid(const std::string &busid) 
     }
     libusb_free_device_list(devs, 1);
     return nullptr;
-}
-
-void usbipdcpp::LibusbServer::claim_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
-
-
-}
-
-void usbipdcpp::LibusbServer::claim_interfaces(libusb_device *dev, std::error_code &ec) {
-}
-
-void usbipdcpp::LibusbServer::release_interface(libusb_device_handle *dev_handle, std::error_code &ec) {
-}
-
-void usbipdcpp::LibusbServer::release_interfaces(libusb_device *dev, std::error_code &ec) {
 }
 
 void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_handle,
@@ -339,8 +336,9 @@ void usbipdcpp::LibusbServer::refresh_available_devices() {
 
     {
         std::lock_guard lock(devices_mutex);
-        for (auto i = available_devices.begin(); i != available_devices.end(); ++i) {
+        for (auto i = available_devices.begin(); i != available_devices.end();) {
             auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler);
+            bool removed = false;
             if (libusb_device_handler) {
                 auto device = libusb_get_device(libusb_device_handler->native_handle);
                 bool found = false;
@@ -352,8 +350,12 @@ void usbipdcpp::LibusbServer::refresh_available_devices() {
                 }
                 if (!found) {
                     i = available_devices.erase(i);
+                    removed = true;
                 }
             }
+
+            if (!removed)
+                ++i;
         }
     }
 

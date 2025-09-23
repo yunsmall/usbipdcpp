@@ -117,6 +117,11 @@ void usbipdcpp::Server::print_bound_devices() {
     std::cout << std::endl;
 }
 
+void usbipdcpp::Server::register_call_back(std::function<void()> &&callback) {
+    std::lock_guard lock(session_list_mutex);
+    session_exit_callbacks.emplace_back(std::move(callback));
+}
+
 // bool usbipdcpp::Server::remove_device(const std::string &busid) {
 //     std::lock_guard lock(devices_mutex);
 //     for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
@@ -147,6 +152,10 @@ usbipdcpp::Server::~Server() {
 
 
 void usbipdcpp::Server::on_session_exit() {
+    std::lock_guard lock(session_list_mutex);
+    for (auto &callback: session_exit_callbacks) {
+        callback();
+    }
 }
 
 
@@ -199,7 +208,7 @@ void usbipdcpp::Server::try_moving_device_to_available(const std::string &busid)
     auto ret = using_devices.find(busid);
     if (ret != using_devices.end()) {
         SPDLOG_INFO("成功将{}转移到可用设备中", busid);
-        auto &dev = ret->second;
+        auto& dev = ret->second;
         available_devices.emplace_back(std::move(dev));
         using_devices.erase(busid);
     }
