@@ -17,10 +17,10 @@ int main() {
         return 1;
     }
 
-    LibusbServer server;
+    LibusbServer libusb_server;
 
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54322);
-    server.start(endpoint);
+    libusb_server.start(endpoint);
 
     // SPDLOG_DEBUG("直接绑定3-5-1");
     // server.bind_host_device(server.find_by_busid("3-5-1"));
@@ -40,16 +40,16 @@ int main() {
         std::cin >> cmd;
         switch (cmd) {
             case 's': {
-                spdlog::info("There are {} sessions in this server", server.get_session_count());
+                spdlog::info("There are {} sessions in this server", libusb_server.get_server().get_session_count());
                 break;
             }
             case 'l': {
                 spdlog::info("List all usb devices in the host");
-                server.list_host_devices();
+                libusb_server.list_host_devices();
                 break;
             }
             case 'd': {
-                server.print_bound_devices();
+                libusb_server.get_server().print_bound_devices();
                 break;
             }
             case 'b': {
@@ -58,7 +58,7 @@ int main() {
                 std::cin >> target_busid;
                 auto device = LibusbServer::find_by_busid(target_busid);
                 if (device) {
-                    server.bind_host_device(device);
+                    libusb_server.bind_host_device(device);
                 }
                 else {
                     spdlog::warn("Can't find a device with busid {}", target_busid);
@@ -71,14 +71,14 @@ int main() {
                 std::cin >> target_busid;
                 auto device = LibusbServer::find_by_busid(target_busid);
                 if (device) {
-                    server.unbind_host_device(device);
+                    libusb_server.unbind_host_device(device);
                 }
                 //主机上找不到，这个设备，如果还处于绑定状态但找不到则需要清除这个设备
-                else if (server.has_bound_device(target_busid)) {
+                else if (libusb_server.get_server().has_bound_device(target_busid)) {
                     spdlog::warn("Can't find target busid {} in server, but it has been bound."
                                  "Has it been removed?", target_busid);
                     spdlog::warn("Try remove dead device:{}", target_busid);
-                    server.try_remove_dead_device(target_busid);
+                    libusb_server.try_remove_dead_device(target_busid);
                 }
                 else {
                     spdlog::warn("Can't find a device with busid {}", target_busid);
@@ -87,12 +87,12 @@ int main() {
             }
             case 'f': {
                 spdlog::info("Refresh available device");
-                server.refresh_available_devices();
+                libusb_server.refresh_available_devices();
                 break;
             }
             case 'q': {
                 spdlog::info("Trying to close server");
-                server.stop();
+                libusb_server.stop();
                 spdlog::info("Closed server successfully");
                 goto loop_end;
                 break;

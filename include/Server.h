@@ -15,7 +15,7 @@
 namespace usbipdcpp {
     class Session;
 
-    class Server {
+    class Server final {
     public:
         friend class Session;
 
@@ -28,30 +28,42 @@ namespace usbipdcpp {
          * 在start前后调用add_device都可以。
          * @param ep 监听地址
          */
-        virtual void start(asio::ip::tcp::endpoint &ep);
+        void start(asio::ip::tcp::endpoint &ep);
         /**
          * @brief 内部先关闭每一个session的socket，再关闭io_context。
          * 效果相当于每个客户端都调用了detach
          */
-        virtual void stop();
+        void stop();
 
         /**
          * @brief 添加一个device，线程安全。不管server是否启动都可以调用
          * @param device 待添加的设备
          */
-        virtual void add_device(std::shared_ptr<UsbDevice> &&device);
+        void add_device(std::shared_ptr<UsbDevice> &&device);
 
-        virtual bool has_bound_device(const std::string &busid);
+        bool has_bound_device(const std::string &busid);
 
         size_t get_session_count();
 
         void print_bound_devices();
 
-        virtual ~Server();
+        [[nodiscard]] std::vector<std::shared_ptr<UsbDevice>> &get_available_devices() {
+            return available_devices;
+        }
+
+        [[nodiscard]] std::map<std::string, std::shared_ptr<UsbDevice>> &get_using_devices() {
+            return using_devices;
+        }
+
+        [[nodiscard]] std::shared_mutex &get_devices_mutex() {
+            return devices_mutex;
+        }
+
+        void register_call_back(std::function<void()> &&callback);
+
+        ~Server();
 
     protected:
-        void register_call_back(std::function<void()>&& callback);
-
         asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
         bool is_device_using(const std::string &busid);
@@ -68,13 +80,6 @@ namespace usbipdcpp {
 
         void print_devices();
 
-        //可供导入的设备
-        std::vector<std::shared_ptr<UsbDevice>> available_devices;
-        //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
-        std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
-        //锁available_devices和using_devices两个变量
-        std::shared_mutex devices_mutex;
-
         std::atomic_bool should_stop = false;
 
         std::list<std::weak_ptr<Session>> sessions;
@@ -84,10 +89,18 @@ namespace usbipdcpp {
         asio::io_context asio_io_context;
         //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
         std::thread network_io_thread;
+
     private:
         void on_session_exit();
 
         std::list<std::function<void()>> session_exit_callbacks;
         std::shared_mutex exit_callbacks_mutex;
+
+        //可供导入的设备
+        std::vector<std::shared_ptr<UsbDevice>> available_devices;
+        //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
+        std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
+        //锁available_devices和using_devices两个变量
+        std::shared_mutex devices_mutex;
     };
 }

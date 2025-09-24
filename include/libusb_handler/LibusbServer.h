@@ -7,7 +7,7 @@
 #include "Server.h"
 
 namespace usbipdcpp {
-    class LibusbServer : public Server {
+    class LibusbServer {
     public:
         LibusbServer();
 
@@ -31,14 +31,18 @@ namespace usbipdcpp {
          */
         void try_remove_dead_device(const std::string &busid);
         void refresh_available_devices();
-        void start(asio::ip::tcp::endpoint &ep) override;
-        void stop() override;
+        void start(asio::ip::tcp::endpoint &ep);
+        void stop();
         // void add_device(std::shared_ptr<UsbDevice> &&device) override;
         // bool remove_device(const std::string &busid) override;
-        ~LibusbServer() override;
+        ~LibusbServer();
 
         void print_device(libusb_device *dev);
         void list_host_devices();
+
+        Server &get_server() {
+            return server;
+        }
 
         static std::pair<std::string, std::string> get_device_names(libusb_device *device);
 
@@ -50,6 +54,7 @@ namespace usbipdcpp {
         static libusb_device *find_by_busid(const std::string &busid);
 
     protected:
+        Server server;
 
         std::atomic<bool> should_exit_libusb_event_thread = false;
 
