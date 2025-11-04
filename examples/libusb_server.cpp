@@ -3,7 +3,7 @@
 #include <libusb-1.0/libusb.h>
 #include <spdlog/spdlog.h>
 
-#include "libusb_handler/LibusbServer.h"
+#include "LibusbHandler/LibusbServer.h"
 
 using namespace usbipdcpp;
 

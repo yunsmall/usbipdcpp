@@ -1,10 +1,10 @@
-#include "libusb_handler/LibusbServer.h"
+#include "LibusbHandler/LibusbServer.h"
 
 #include <iostream>
 
 
-#include "libusb_handler/LibusbDeviceHandler.h"
-#include "libusb_handler/tools.h"
+#include "LibusbHandler/LibusbDeviceHandler.h"
+#include "LibusbHandler/tools.h"
 
 usbipdcpp::LibusbServer::LibusbServer() {
     server.register_call_back([this]() {
@@ -83,14 +83,14 @@ void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
             }
         }
     }
-    std::cout << fmt::format("Device name: {}-{} ({})", device_name.first, device_name.second,
+    std::cout << std::format("Device name: {}-{} ({})", device_name.first, device_name.second,
                              is_used ? "exported" : (is_available ? "available" : "unbinded")) << std::endl;
-    std::cout << fmt::format("busid: {}", busid) << std::endl;
-    std::cout << fmt::format("  VID: 0x{:2x}", desc.idVendor) << std::endl;
-    std::cout << fmt::format("  PID: 0x{:2x}", desc.idProduct) << std::endl;
+    std::cout << std::format("busid: {}", busid) << std::endl;
+    std::cout << std::format("  VID: 0x{:2x}", desc.idVendor) << std::endl;
+    std::cout << std::format("  PID: 0x{:2x}", desc.idProduct) << std::endl;
     auto version = Version(desc.bcdUSB);
-    std::cout << fmt::format("  USB version: {}.{}.{}", version.major, version.minor, version.patch) << std::endl;
-    std::cout << fmt::format("  Class: 0x{:2x}", static_cast<int>(desc.bDeviceClass)) << std::endl;
+    std::cout << std::format("  USB version: {}.{}.{}", version.major, version.minor, version.patch) << std::endl;
+    std::cout << std::format("  Class: 0x{:2x}", static_cast<int>(desc.bDeviceClass)) << std::endl;
     std::cout << "  Speed: ";
     // 解析设备速度
     switch (libusb_get_device_speed(dev)) {
@@ -339,7 +339,12 @@ void usbipdcpp::LibusbServer::try_remove_dead_device(const std::string &busid) {
 
 void usbipdcpp::LibusbServer::refresh_available_devices() {
     libusb_device **devs;
-    int dev_nums = libusb_get_device_list(nullptr, &devs);
+    auto get_ret = libusb_get_device_list(nullptr, &devs);
+    if (get_ret < 0) {
+        SPDLOG_WARN("libusb_get_device_list error: {}", libusb_strerror(get_ret));
+        return;
+    }
+    size_t dev_nums = get_ret;
 
     {
         std::lock_guard lock(server.get_devices_mutex());

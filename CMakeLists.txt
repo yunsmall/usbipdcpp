@@ -70,7 +70,7 @@ endif ()
 file(GLOB BASE_SRC_FILES src/*.cpp)
 file(GLOB DEVICE_HANDLER_SRC_FILES src/DeviceHandler/*.cpp)
 file(GLOB INTERFACE_HANDLER_SRC_FILES src/InterfaceHandler/*.cpp)
-file(GLOB LIBUSB_SRC_FILES src/libusb_handler/*.cpp)
+file(GLOB LIBUSB_SRC_FILES src/LibusbHandler/*.cpp)
 
 add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES} ${INTERFACE_HANDLER_SRC_FILES})
 target_link_libraries(${PROJECT_NAME} PUBLIC asio::asio)

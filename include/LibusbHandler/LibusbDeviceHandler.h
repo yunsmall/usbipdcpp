@@ -9,7 +9,7 @@
 #include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "libusb_handler/tools.h"
+#include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
     class LibusbDeviceHandler : public DeviceHandlerBase {
