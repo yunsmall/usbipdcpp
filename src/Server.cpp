@@ -117,7 +117,7 @@ void usbipdcpp::Server::print_bound_devices() {
     std::cout << std::endl;
 }
 
-void usbipdcpp::Server::register_call_back(std::function<void()> &&callback) {
+void usbipdcpp::Server::register_session_exit_callback(std::function<void()> &&callback) {
     std::lock_guard lock(session_list_mutex);
     session_exit_callbacks.emplace_back(std::move(callback));
 }

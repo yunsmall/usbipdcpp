@@ -59,7 +59,7 @@ namespace usbipdcpp {
             return devices_mutex;
         }
 
-        void register_call_back(std::function<void()> &&callback);
+        void register_session_exit_callback(std::function<void()> &&callback);
 
         ~Server();
 

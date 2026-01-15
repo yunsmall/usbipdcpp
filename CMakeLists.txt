@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.22)
 project(usbipdcpp VERSION 0.0.1)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -18,29 +18,31 @@ else ()
 endif ()
 
 if (IS_TOP_LEVEL AND CAN_THIS_SYSTEM_SUPPORT_EVDEV)
-    option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" ON)
+    set(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE_DEFAULT ON)
 else ()
-    option(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE "Build example libevdev mouse applications" OFF)
+    set(USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE_DEFAULT OFF)
 endif ()
+option(
+        USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE
+        "Build example libevdev mouse applications"
+        ${USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE_DEFAULT}
+)
 
 if (IS_TOP_LEVEL AND ANDROID)
-    option(
-            USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER
-            "Build example libusb applications that can be run in termux by termux-usb"
-            ON
-    )
+    set(USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER_DEFAULT ON)
 else ()
-    option(
-            USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER
-            "Build example libusb applications that can be run in termux by termux-usb"
-            OFF
-    )
+    set(USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER_DEFAULT OFF)
 endif ()
+option(
+        USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER
+        "Build example libusb applications that can be run in termux by termux-usb"
+        ${USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER_DEFAULT}
+)
 
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_EMPTY_SERVER "Build example empty server applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
-option(USBIPDCPP_BUILD_TESTS "Build tests" ON)
+option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 
 find_package(asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -119,7 +121,7 @@ if (USBIPDCPP_BUILD_EXAMPLES)
         target_link_libraries(libusb_server ${PROJECT_NAME}_libusb)
     endif ()
 
-    if(USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER)
+    if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER)
         add_executable(termux_libusb_server examples/termux_libusb_server.cpp)
         target_link_libraries(termux_libusb_server ${PROJECT_NAME}_libusb)
     endif ()

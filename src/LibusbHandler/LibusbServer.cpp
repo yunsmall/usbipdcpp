@@ -7,7 +7,7 @@
 #include "LibusbHandler/tools.h"
 
 usbipdcpp::LibusbServer::LibusbServer() {
-    server.register_call_back([this]() {
+    server.register_session_exit_callback([this]() {
         std::lock_guard lock(server.get_devices_mutex());
         auto &server_available_devices = server.get_available_devices();
         for (auto it = server_available_devices.begin(); it != server_available_devices.end();) {

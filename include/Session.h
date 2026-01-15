@@ -1,7 +1,7 @@
 #pragma once
 
 #include <atomic>
-#include <map>
+#include <unordered_map>
 #include <shared_mutex>
 #include <tuple>
 #include <chrono>
@@ -108,7 +108,7 @@ namespace usbipdcpp {
         std::shared_mutex current_import_device_data_mutex;
 
         //从原本的ret_submit的seqnum映射到ret_unlink的seqnum
-        std::map<std::uint32_t, std::uint32_t> unlink_map;
+        std::unordered_map<std::uint32_t, std::uint32_t> unlink_map;
         std::shared_mutex unlink_map_mutex;
 
         Server &server;
