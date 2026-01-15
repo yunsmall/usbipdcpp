@@ -98,7 +98,8 @@ namespace usbipdcpp {
             decltype(command), decltype(seqnum), decltype(devid), decltype(direction), decltype(ep)
         >()>
         to_bytes() const;
-        [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+        [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+        void from_socket(asio::ip::tcp::socket &sock);
 
         bool operator==(const UsbIpHeaderBasic &other) const = default;
 
@@ -132,7 +133,8 @@ namespace usbipdcpp {
         [[nodiscard]] array_data_type<calculate_total_size_with_array<
             decltype(offset), decltype(length), decltype(actual_length), decltype(status)
         >()> to_bytes() const;
-        [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+        [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+        void from_socket(asio::ip::tcp::socket &sock);
 
         bool operator==(const UsbIpIsoPacketDescriptor &other) const = default;
     };
@@ -146,7 +148,8 @@ namespace usbipdcpp {
             [[nodiscard]] array_data_type<calculate_total_size_with_array<
                 decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status)
             >()> to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void from_socket(asio::ip::tcp::socket &sock);
             bool operator==(const OpReqDevlist &) const = default;
         };
 
@@ -159,8 +162,10 @@ namespace usbipdcpp {
             [[nodiscard]] array_data_type<calculate_total_size_with_array<
                 decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status), decltype(busid)
             >()> to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const OpReqImport &other) const = default;
         };
@@ -180,9 +185,12 @@ namespace usbipdcpp {
             std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
 
             [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
             //这个函数只读取部分数值，后面的数据部分不读取
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            //这个函数只读取部分数值，后面的数据部分不读取
+            void from_socket(asio::ip::tcp::socket &sock);
 
 
             bool operator==(const UsbIpCmdSubmit &other) const;
@@ -199,8 +207,10 @@ namespace usbipdcpp {
                     decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(unlink_seqnum)
                 >() + 24
             > to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpCmdUnlink &other) const = default;
         };
@@ -238,8 +248,10 @@ namespace usbipdcpp {
             std::vector<UsbDevice> devices;
 
             [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const OpRepDevlist &other) const = default;
 
@@ -253,8 +265,10 @@ namespace usbipdcpp {
             std::shared_ptr<UsbDevice> device;
 
             [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const OpRepImport &other) const {
                 return status == other.status &&
@@ -284,8 +298,10 @@ namespace usbipdcpp {
             std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
 
             [[nodiscard]] data_type to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpRetSubmit &other) const = default;
 
@@ -321,8 +337,10 @@ namespace usbipdcpp {
                     decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(status)
                 >() + 24
             > to_bytes() const;
-            [[nodiscard]] asio::awaitable<void> to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            [[nodiscard]] asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+            [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+            void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpRetUnlink &other) const = default;
 

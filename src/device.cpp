@@ -53,8 +53,12 @@ array_data_type<UsbDevice::bytes_without_interfaces_num> usbipdcpp::UsbDevice::t
     return to_bytes_without_interfaces();
 }
 
-asio::awaitable<void> usbipdcpp::UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
+asio::awaitable<void> usbipdcpp::UsbDevice::from_socket_co(asio::ip::tcp::socket &sock) {
     co_return;
+}
+
+void UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
+    return;
 }
 
 std::optional<std::pair<usbipdcpp::UsbEndpoint, std::optional<usbipdcpp::UsbInterface>>> usbipdcpp::UsbDevice::

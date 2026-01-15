@@ -77,7 +77,8 @@ namespace usbipdcpp {
 
         //devlist请求的时候要发送接口信息，import请求时不发送接口信息
         [[nodiscard]] array_data_type<bytes_without_interfaces_num> to_bytes() const;
-        asio::awaitable<void> from_socket(asio::ip::tcp::socket &sock);
+        asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
+        void from_socket(asio::ip::tcp::socket &sock);
 
         std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);
 
