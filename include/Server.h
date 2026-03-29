@@ -8,6 +8,7 @@
 #include <thread>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/awaitable.hpp>
 
 #include "device.h"
 
@@ -47,14 +48,26 @@ namespace usbipdcpp {
 
         void print_bound_devices();
 
+        /**
+         * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
+         * @return
+         */
         [[nodiscard]] std::vector<std::shared_ptr<UsbDevice>> &get_available_devices() {
             return available_devices;
         }
 
+        /**
+         * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
+         * @return
+         */
         [[nodiscard]] std::map<std::string, std::shared_ptr<UsbDevice>> &get_using_devices() {
             return using_devices;
         }
 
+        /**
+         * @brief 操作设备数据请调用这个函数获取锁后使用
+         * @return
+         */
         [[nodiscard]] std::shared_mutex &get_devices_mutex() {
             return devices_mutex;
         }
@@ -84,6 +97,7 @@ namespace usbipdcpp {
 
         std::list<std::weak_ptr<Session>> sessions;
         std::shared_mutex session_list_mutex;
+        std::condition_variable_any all_sessions_closed_cv;
 
         //网络通信请异步使用这个io_context
         asio::io_context asio_io_context;

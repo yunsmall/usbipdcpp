@@ -1,8 +1,8 @@
-#include "mock_mouse.h"
+#include "mock_keyboard.h"
 
 using namespace usbipdcpp;
 
-void MockMouseInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void MockKeyboardInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
     should_immediately_stop = false;
     last_state = State{};
@@ -35,26 +35,13 @@ void MockMouseInterfaceHandler::on_new_connection(Session &current_session, erro
 
                 //如果有值，则发送
                 if (has_seqnum) {
-                    data_type ret(4, 0);
+                    data_type ret(8, 0);
                     {
-                        if (current_state.left_pressed) {
-                            ret[0] |= 0b00000001;
+                        ret[0] = current_state.modifier;
+                        // ret[1] = 0; // 保留字节，已经是0
+                        for (size_t i = 0; i < 6; ++i) {
+                            ret[2 + i] = current_state.keys[i];
                         }
-                        if (current_state.right_pressed) {
-                            ret[0] |= 0b00000010;
-                        }
-                        if (current_state.middle_pressed) {
-                            ret[0] |= 0b00000100;
-                        }
-                        if (current_state.side_pressed) {
-                            ret[0] |= 0b00001000;
-                        }
-                        if (current_state.extra_pressed) {
-                            ret[0] |= 0b00010000;
-                        }
-                        ret[1] = current_state.move_horizontal;
-                        ret[2] = current_state.move_vertical;
-                        ret[3] = current_state.wheel_vertical;
                     }
 
                     if (!should_immediately_stop) {
@@ -73,18 +60,18 @@ void MockMouseInterfaceHandler::on_new_connection(Session &current_session, erro
     });
 }
 
-void MockMouseInterfaceHandler::on_disconnection(error_code &ec) {
+void MockKeyboardInterfaceHandler::on_disconnection(error_code &ec) {
     HidVirtualInterfaceHandler::on_disconnection(ec);
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
 }
 
-MockMouseInterfaceHandler::MockMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool):
+MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool):
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-void MockMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
+void MockKeyboardInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
                                                           const data_type &out_data,
@@ -106,57 +93,57 @@ void MockMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
 
 }
 
-void MockMouseInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+void MockKeyboardInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_clear_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MockMouseInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+void MockKeyboardInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                                                std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_clear_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-std::uint8_t MockMouseInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
+std::uint8_t MockKeyboardInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
     return 0;
 }
 
-void MockMouseInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+void MockKeyboardInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
     if (alternate_setting != 0) {
         SPDLOG_WARN("unhandled request_set_interface");
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
 }
 
-std::uint16_t MockMouseInterfaceHandler::request_get_status(std::uint32_t *p_status) {
+std::uint16_t MockKeyboardInterfaceHandler::request_get_status(std::uint32_t *p_status) {
     return 0;
 }
 
-std::uint16_t MockMouseInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
+std::uint16_t MockKeyboardInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
     return 0;
 }
 
-void MockMouseInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+void MockKeyboardInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_set_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MockMouseInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+void MockKeyboardInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                                              std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_set_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-std::uint16_t MockMouseInterfaceHandler::get_report_descriptor_size() {
+std::uint16_t MockKeyboardInterfaceHandler::get_report_descriptor_size() {
     return report_descriptor.size();
 }
 
-data_type MockMouseInterfaceHandler::get_report_descriptor() {
+data_type MockKeyboardInterfaceHandler::get_report_descriptor() {
     return report_descriptor;
 
 }
 
-void MockMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
+void MockKeyboardInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
                                                                         const UsbEndpoint &ep,
                                                                         std::uint32_t transfer_flags,
                                                                         std::uint32_t transfer_buffer_length,
@@ -166,53 +153,15 @@ void MockMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uin
     session.load()->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 
-data_type MockMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                         std::uint32_t *p_status) {
     auto report_type = static_cast<HIDReportType>(type);
     if (report_type == HIDReportType::Input) {
         std::unique_lock lock(state_mutex);
-        data_type result;
-        switch (report_id) {
-            case 0: {
-                vector_append_to_net(result, (std::uint8_t) current_state.left_pressed);
-                break;
-            }
-            case 1: {
-                vector_append_to_net(result, (std::uint8_t) current_state.right_pressed);
-                break;
-            }
-            case 2: {
-                vector_append_to_net(result, (std::uint8_t) current_state.middle_pressed);
-                break;
-            }
-            case 3: {
-                vector_append_to_net(result, (std::uint8_t) current_state.side_pressed);
-                break;
-            }
-            case 4: {
-                vector_append_to_net(result, (std::uint8_t) current_state.extra_pressed);
-                break;
-            }
-            case 5: {
-                vector_append_to_net(result, (std::uint8_t) current_state.wheel_vertical);
-                break;
-            }
-            case 6: {
-                vector_append_to_net(result, (std::uint8_t) current_state.wheel_vertical);
-                break;
-            }
-            case 7: {
-                vector_append_to_net(result, (std::uint8_t) current_state.move_horizontal);
-                break;
-            }
-            case 8: {
-                vector_append_to_net(result, (std::uint8_t) current_state.move_vertical);
-                break;
-            }
-            default: {
-                SPDLOG_WARN("unhandled request_get_report");
-                *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-            }
+        data_type result(8, 0);
+        result[0] = current_state.modifier;
+        for (size_t i = 0; i < 6; ++i) {
+            result[2 + i] = current_state.keys[i];
         }
         return result;
     }
@@ -221,19 +170,19 @@ data_type MockMouseInterfaceHandler::request_get_report(std::uint8_t type, std::
     return {};
 }
 
-void MockMouseInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+void MockKeyboardInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                    const data_type &data, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_set_report");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-data_type MockMouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+data_type MockKeyboardInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                                       std::uint32_t *p_status) {
     data_type result;
     vector_append_to_net(result, (std::uint16_t) idle_speed);
     return result;
 }
 
-void MockMouseInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
+void MockKeyboardInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
     idle_speed = speed;
 }

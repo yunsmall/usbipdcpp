@@ -43,10 +43,12 @@ namespace usbipdcpp {
          * @brief 新的客户端连接时会调这个函数
          * @param current_session
          * @param ec 发生的ec
+         * @note 子类重写时必须调用父类实现，父类会设置session指针
          */
         void on_new_connection(Session &current_session, error_code &ec) override;
         /**
          * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
+         * @note 子类重写时应该调用父类实现，父类会清理session指针
          */
         void on_disconnection(error_code &ec) override;
 

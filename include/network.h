@@ -35,14 +35,27 @@ namespace usbipdcpp {
     }
 
 
+#ifdef USBIPDCPP_USE_COROUTINE
     template<typename T>
     concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
     {
         { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-        //协程部分
         { static_cast<const std::remove_cvref_t<T> &>(t1).to_socket_co(sock, ec) } -> std::same_as<asio::awaitable<void>>;
         { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
-        //非协程
+    };
+
+    template<typename T>
+    concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
+    {
+        { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
+        { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
+        { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
+    };
+#else
+    template<typename T>
+    concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
+    {
+        { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
         { static_cast<const std::remove_cvref_t<T> &>(t1).to_socket(sock, ec) } -> std::same_as<void>;
         { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<void>;
     };
@@ -52,11 +65,9 @@ namespace usbipdcpp {
     {
         { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
         { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
-        //协程部分
-        { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
-        //非协程
         { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<void>;
     };
+#endif
 
     template<typename T>
     concept is_serializable_can_be_array = requires(T &&t1)

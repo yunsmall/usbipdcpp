@@ -51,20 +51,9 @@ void usbipdcpp::Server::stop() {
             }
         }
     }
-    //虽然采取等待的策略好丑，但是代码好写啊
-    while (true) {
-        size_t alive_session_count = 0;
-        {
-            std::shared_lock lock(session_list_mutex);
-            if (sessions.empty()) {
-                break;
-            }
-            alive_session_count = sessions.size();
-        }
-        auto wait_duration = std::chrono::seconds(1);
-        spdlog::info("There are still {} sessions that have not been closed, wait for {} seconds.",
-                     alive_session_count, wait_duration.count());
-        std::this_thread::sleep_for(wait_duration);
+    {
+        std::unique_lock lock(session_list_mutex);
+        all_sessions_closed_cv.wait(lock, [this] { return sessions.empty(); });
     }
     spdlog::info("All sessions were successfully closed");
 
@@ -182,7 +171,11 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
 
             //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备
+#ifdef USBIPDCPP_USE_COROUTINE
+            session->run_co();
+#else
             session->run();
+#endif
         }
         else if (ec == asio::error::operation_aborted) {
             SPDLOG_ERROR("Operation aborted：{}", ec.message());

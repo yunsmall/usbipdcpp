@@ -476,7 +476,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetUnlink usbipdcpp::UsbIpResponse::UsbIpRetUnlin
         std::uint32_t seqnum) {
     return {
             .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_UNLINK, seqnum),
-            .status = static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET)
+            .status = static_cast<std::uint32_t>(UrbStatusType::StatusOK)
     };
 }
 
@@ -732,7 +732,7 @@ void UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
     asio::read(sock, asio::buffer(padding));
 }
 
-asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> usbipdcpp::UsbIpCommand::get_op_from_socket(
+asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> usbipdcpp::UsbIpCommand::get_op_from_socket_co(
         asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     try {
         auto version = co_await read_u16_co(sock);
@@ -773,7 +773,48 @@ asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> usbipdcpp::UsbIpCommand::
     co_return UsbIpCommand::OpCmdVariant{};
 }
 
-asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::get_cmd_from_socket(
+usbipdcpp::UsbIpCommand::OpCmdVariant usbipdcpp::UsbIpCommand::get_op_from_socket(
+        asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    try {
+        auto version = read_u16(sock);
+        if (version != 0 && version != USBIP_VERSION) {
+            ec = make_error_code(ErrorType::UNKNOWN_VERSION);
+            return OpCmdVariant{};
+        }
+        auto op = read_u16(sock);
+        SPDLOG_DEBUG("收到op: 0x{:04x}", op);
+
+        switch (op) {
+            case OP_REQ_DEVLIST: {
+                auto req = OpReqDevlist{};
+                req.from_socket(sock);
+                return req;
+                break;
+            }
+            case OP_REQ_IMPORT: {
+                auto req = OpReqImport{};
+                req.from_socket(sock);
+                return req;
+                break;
+            }
+            default: {
+                ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                return UsbIpCommand::OpCmdVariant{};
+            }
+        }
+    } catch (const asio::system_error &e) {
+        SPDLOG_DEBUG("asio错误：{}", e.what());
+        if (e.code() == asio::error::eof) {
+            ec = make_error_code(ErrorType::SOCKET_EOF);
+        }
+        else {
+            ec = make_error_code(ErrorType::SOCKET_ERR);
+        }
+    }
+    return UsbIpCommand::OpCmdVariant{};
+}
+
+asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::get_cmd_from_socket_co(
         asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     try {
         auto command = co_await read_u32_co(sock);
@@ -807,6 +848,44 @@ asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> usbipdcpp::UsbIpCommand::ge
         }
     }
     co_return UsbIpCommand::CmdVariant{};
+}
+
+usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket(
+        asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+
+    try {
+        auto command = read_u32(sock);
+        SPDLOG_DEBUG("收到command: 0x{:04x}", command);
+
+        switch (command) {
+            case USBIP_CMD_SUBMIT: {
+                auto cmd = UsbIpCmdSubmit{};
+                cmd.from_socket(sock);
+                return cmd;
+                break;
+            }
+            case USBIP_CMD_UNLINK: {
+                auto cmd = UsbIpCmdUnlink{};
+                cmd.from_socket(sock);
+                return cmd;
+                break;
+            }
+            default: {
+                ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                return UsbIpCommand::CmdVariant{};
+            }
+        }
+    } catch (const asio::system_error &e) {
+        SPDLOG_DEBUG("asio错误：{}", e.what());
+        if (e.code() == asio::error::eof) {
+            ec = make_error_code(ErrorType::SOCKET_EOF);
+        }
+        else {
+            ec = make_error_code(ErrorType::SOCKET_ERR);
+        }
+    }
+    return UsbIpCommand::CmdVariant{};
+
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::to_bytes(const AllCmdVariant &cmd) {

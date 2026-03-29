@@ -20,6 +20,38 @@ architecture using:
 - **asio** for asynchronous I/O
 - **libusb**'s async API for USB communications (physical devices)
 
+### Dependencies
+
+| Dependency | Required | Description |
+|------------|----------|-------------|
+| asio | ✅ | Asynchronous I/O library |
+| spdlog | ✅ | Logging library |
+| libusb-1.0 | Optional | For physical USB device forwarding |
+| libevdev | Optional (Linux) | For evdev-based input device forwarding |
+| GTest | Optional | For building tests |
+
+### Platform Support
+
+| Platform | Virtual Devices | Physical Devices (libusb) | Notes |
+|----------|-----------------|---------------------------|-------|
+| Windows | ✅ | ⚠️ Requires WinUSB driver | Ideal for virtual HID devices |
+| Linux | ✅ | ✅ | Full support |
+| macOS | ✅ | ✅ | Full support |
+| Android (Termux) | ✅ | ✅ via termux-usb | Non-root access supported |
+| ESP32 | ✅ | ✅ | Use ESP-IDF with asio component |
+
+### Core Classes
+
+| Class | Description |
+|-------|-------------|
+| `Server` | Main server class that manages device list and accepts connections |
+| `Session` | Represents a client connection, handles USBIP protocol |
+| `UsbDevice` | USB device descriptor and configuration |
+| `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
+| `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
+| `SimpleVirtualDeviceHandler` | Simple device handler with no-op standard request implementations |
+| `StringPool` | Manages USB string descriptors (limited to 255 strings) |
+
 ### Threading Model
 
 Three dedicated threads ensure optimal performance:
@@ -70,6 +102,8 @@ To implement custom USB devices:
 
 For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op implementations for standard requests.
 
+> ⚠️ **Important**: When overriding `VirtualInterfaceHandler::on_new_connection()` and `on_disconnection()`, you **must** call the parent class implementation. The parent class sets/clears the `session` pointer which is required for submitting responses.
+
 ---
 
 ## ⚠️ Important Windows Notice
@@ -98,15 +132,22 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 
    A mouse demonstration which switches left button statu each second, to introduce how to implement a virtual
    HID device.
-3. empty_server
+3. mock_keyboard
+
+   A keyboard demonstration which simulates pressing and releasing the 'A' key every second.
+   Shows how to implement a virtual HID keyboard with standard keyboard report descriptor.
+4. multi_devices
+
+   A demonstration with 10 virtual HID devices. Shows how to create multiple devices using a factory pattern.
+5. empty_server
 
    A usbip server that has only one device which has no functions and will not response to any input data.
-4. libusb_server
+6. libusb_server
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
-5. termux_libusb_server
+7. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
@@ -125,8 +166,16 @@ Either `std::println` is not supported or `std::format` is not supported and is 
 You have to give up programming experience for compatibility.
 So I chose gcc13, which supports `std::format` but still doesn't support `std::println`
 
-There are three options which control the corresponding part whether to be compiled.
-See `CMakeLists.txt` for details
+There are multiple CMake options to control which parts are compiled:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `USBIPDCPP_USE_COROUTINE` | ON | Use C++20 coroutine-based implementation. |
+| `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
+| `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
+| `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |
+
+See `CMakeLists.txt` for more options and details.
 
 ### Full compile commands:
 

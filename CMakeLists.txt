@@ -40,15 +40,26 @@ option(
 )
 
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_EMPTY_SERVER "Build example empty server applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
+
+option(USBIPDCPP_USE_COROUTINE "Use coroutine-based implementation" ON)
 
 find_package(asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
 if (MSVC)
     add_compile_options("/Zc:preprocessor")
+endif ()
+
+if(USBIPDCPP_USE_COROUTINE)
+    message(STATUS "USBIPDCPP: Using coroutine-based implementation")
+    add_compile_definitions(USBIPDCPP_USE_COROUTINE)
+else()
+    message(STATUS "USBIPDCPP: Using non-coroutine implementation")
 endif ()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -59,8 +70,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
     )
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     add_compile_definitions(
-            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-            TRANSFER_DELAY_RECORD
+#            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
+#            TRANSFER_DELAY_RECORD
+            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
+            NDEBUG
     )
 else ()
     add_compile_definitions(
@@ -111,9 +124,23 @@ if (USBIPDCPP_BUILD_EXAMPLES)
         target_include_directories(mock_mouse PRIVATE examples/mock_mouse)
     endif ()
 
+    if (USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD)
+        file(GLOB_RECURSE MOCK_KEYBOARD_SRC examples/mock_keyboard/*.cpp)
+        add_executable(mock_keyboard ${MOCK_KEYBOARD_SRC})
+        target_link_libraries(mock_keyboard ${PROJECT_NAME})
+        target_include_directories(mock_keyboard PRIVATE examples/mock_keyboard)
+    endif ()
+
     if (USBIPDCPP_BUILD_EXAMPLE_EMPTY_SERVER)
         add_executable(empty_server examples/empty_server.cpp)
         target_link_libraries(empty_server ${PROJECT_NAME})
+    endif ()
+
+    if (USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES)
+        file(GLOB_RECURSE MULTI_DEVICES_SRC examples/multi_devices/*.cpp)
+        add_executable(multi_devices ${MULTI_DEVICES_SRC})
+        target_link_libraries(multi_devices ${PROJECT_NAME})
+        target_include_directories(multi_devices PRIVATE examples/multi_devices)
     endif ()
 
     if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_LIBUSB_SERVER)
@@ -145,6 +172,30 @@ if (USBIPDCPP_BUILD_TESTS)
     target_link_libraries(test_network PRIVATE ${PROJECT_NAME})
     target_link_libraries(test_network PRIVATE GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_network)
+
+    add_executable(test_stringpool tests/test_stringpool.cpp)
+    target_include_directories(test_stringpool PRIVATE tests)
+    target_link_libraries(test_stringpool PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_stringpool PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_stringpool)
+
+    add_executable(test_usb_device tests/test_usb_device.cpp)
+    target_include_directories(test_usb_device PRIVATE tests)
+    target_link_libraries(test_usb_device PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_usb_device PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_usb_device)
+
+    add_executable(test_setup_packet tests/test_setup_packet.cpp)
+    target_include_directories(test_setup_packet PRIVATE tests)
+    target_link_libraries(test_setup_packet PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_setup_packet PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_setup_packet)
+
+    add_executable(test_usbip_response tests/test_usbip_response.cpp)
+    target_include_directories(test_usbip_response PRIVATE tests)
+    target_link_libraries(test_usbip_response PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_usbip_response PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_usbip_response)
 endif ()
 
 if (IS_TOP_LEVEL)

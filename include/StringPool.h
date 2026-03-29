@@ -2,7 +2,7 @@
 
 #include <optional>
 #include <shared_mutex>
-#include <map>
+#include <unordered_map>
 
 #include <spdlog/spdlog.h>
 
@@ -35,7 +35,7 @@ namespace usbipdcpp {
         }
 
     private:
-        std::map<std::uint8_t, std::wstring> string_pool;
+        std::unordered_map<std::uint8_t, std::wstring> string_pool;
         std::shared_mutex string_pool_mutex;
     };
 }

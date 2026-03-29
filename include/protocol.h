@@ -227,15 +227,35 @@ namespace usbipdcpp {
          * @param ec
          * @return 获取到的命令
          */
-        asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> get_op_from_socket(
+        asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> get_op_from_socket_co(
                 asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
+
         /**
          * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
          * @param sock
          * @param ec
          * @return 获取到的命令
          */
-        asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> get_cmd_from_socket(
+        usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(
+                asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
+
+
+        /**
+         * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
+         * @param sock
+         * @param ec
+         * @return 获取到的命令
+         */
+        asio::awaitable<usbipdcpp::UsbIpCommand::CmdVariant> get_cmd_from_socket_co(
+                asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
+
+        /**
+         * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
+         * @param sock
+         * @param ec
+         * @return 获取到的命令
+         */
+        usbipdcpp::UsbIpCommand::CmdVariant get_cmd_from_socket(
                 asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
 
         std::vector<std::uint8_t> to_bytes(const AllCmdVariant &cmd);

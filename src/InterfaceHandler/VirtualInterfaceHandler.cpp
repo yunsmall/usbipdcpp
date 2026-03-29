@@ -73,12 +73,10 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
 
 void VirtualInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
     session = &current_session;
-    SPDLOG_WARN("Unimplement on_new_connection for VirtualInterfaceHandler");
 }
 
 void VirtualInterfaceHandler::on_disconnection(error_code &ec) {
     session = nullptr;
-    SPDLOG_WARN("Unimplement on_disconnection for VirtualInterfaceHandler");
 }
 
 data_type VirtualInterfaceHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
