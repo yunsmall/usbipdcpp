@@ -13,7 +13,8 @@
 #include "type.h"
 #include "Session.h"
 
-usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices) {
+usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config)
+    : network_config(std::move(network_config)) {
     available_devices.reserve(devices.size());
     for (auto &device: devices) {
         available_devices.emplace_back(std::make_shared<UsbDevice>(std::move(device)));
@@ -160,6 +161,31 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
         co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
 
         if (!ec) {
+            // 设置 socket 选项
+            std::error_code socket_opt_ec;
+            if (network_config.socket_recv_buffer_size > 0) {
+                session->socket.set_option(
+                    asio::socket_base::receive_buffer_size(network_config.socket_recv_buffer_size),
+                    socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set receive buffer size: {}", socket_opt_ec.message());
+                }
+            }
+            if (network_config.socket_send_buffer_size > 0) {
+                session->socket.set_option(
+                    asio::socket_base::send_buffer_size(network_config.socket_send_buffer_size),
+                    socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set send buffer size: {}", socket_opt_ec.message());
+                }
+            }
+            if (network_config.tcp_no_delay) {
+                session->socket.set_option(asio::ip::tcp::no_delay(true), socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set TCP no_delay: {}", socket_opt_ec.message());
+                }
+            }
+
             {
                 std::lock_guard lock(session_list_mutex);
                 sessions.emplace_back(session);

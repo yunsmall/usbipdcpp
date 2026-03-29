@@ -6,6 +6,8 @@
 #include <memory>
 #include <list>
 #include <thread>
+#include <condition_variable>
+#include <cstddef>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -16,12 +18,24 @@
 namespace usbipdcpp {
     class Session;
 
+    /**
+     * @brief 服务器网络配置
+     */
+    struct ServerNetworkConfig {
+        /// socket 接收缓冲区大小（字节），0 表示使用系统默认值
+        std::size_t socket_recv_buffer_size = 128 * 1024;
+        /// socket 发送缓冲区大小（字节），0 表示使用系统默认值
+        std::size_t socket_send_buffer_size = 128 * 1024;
+        /// 是否禁用 Nagle 算法（减少小包延迟）
+        bool tcp_no_delay = true;
+    };
+
     class Server final {
     public:
         friend class Session;
 
         Server() = default;
-        explicit Server(std::vector<UsbDevice> &&devices);
+        explicit Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config = {});
         Server(const Server &) = delete;
         Server(Server &&) = delete;
         /**
@@ -94,6 +108,8 @@ namespace usbipdcpp {
         void print_devices();
 
         std::atomic_bool should_stop = false;
+
+        ServerNetworkConfig network_config;
 
         std::list<std::weak_ptr<Session>> sessions;
         std::shared_mutex session_list_mutex;
