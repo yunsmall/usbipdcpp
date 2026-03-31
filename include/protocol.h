@@ -1,3 +1,5 @@
+//具体定义可查看 https://www.kernel.org/doc/html/latest/usb/usbip_protocol.html
+
 #pragma once
 
 #include <cstdint>
@@ -175,21 +177,24 @@ namespace usbipdcpp {
         struct UsbIpCmdSubmit {
             UsbIpHeaderBasic header;
             std::uint32_t transfer_flags;
+            //表明了传输数据的最大值
             std::uint32_t transfer_buffer_length;
             std::uint32_t start_frame;
+            //等时传输包数量
             std::uint32_t number_of_packets;
             std::uint32_t interval;
             SetupPacket setup;
-            // std::array<std::uint8_t, 8> setup;
-            std::vector<std::uint8_t> data;
-            std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
+            //IN方向transfer_buffer_length==data.size()，OUT方向IN方向transfer_buffer_length=0
+            std::vector<std::uint8_t> data{};
+            std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor{};
 
             [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+
             [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
-            //这个函数只读取部分数值，后面的数据部分不读取
+            //这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次
             [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
             void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-            //这个函数只读取部分数值，后面的数据部分不读取
+            //这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次
             void from_socket(asio::ip::tcp::socket &sock);
 
 
@@ -208,8 +213,10 @@ namespace usbipdcpp {
                 >() + 24
             > to_bytes() const;
             [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
+            //一个对象只能调用一次
             [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
             void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+            //一个对象只能调用一次
             void from_socket(asio::ip::tcp::socket &sock);
 
             bool operator==(const UsbIpCmdUnlink &other) const = default;
@@ -316,6 +323,12 @@ namespace usbipdcpp {
             std::uint32_t error_count;
             data_type transfer_buffer;
             std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
+
+            // 发送配置，用于控制发送时的行为
+            struct SendConfig {
+                std::uint32_t data_offset = 0;      // 数据偏移量 (控制传输为8，其他为0)
+                bool operator==(const SendConfig &other) const = default;
+            } send_config;
 
             [[nodiscard]] data_type to_bytes() const;
             [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;

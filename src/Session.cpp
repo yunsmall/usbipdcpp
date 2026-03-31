@@ -12,7 +12,7 @@
 #include "Server.h"
 #include "device.h"
 #include "protocol.h"
-#include "utils.h"
+#include "../include/utils/utils.h"
 
 usbipdcpp::Session::Session(Server &server):
     server(server),
@@ -199,6 +199,7 @@ asio::awaitable<void> usbipdcpp::Session::parse_op_co() {
 
             if (cmd_transferring) {
                 usbipdcpp::error_code transferring_ec;
+                spdlog::info("开始正式通信");
                 //进入通信状态
                 co_await transfer_loop_co(transferring_ec);
                 if (transferring_ec) {
@@ -405,6 +406,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
         else {
             if (should_immediately_stop)
                 break;
+            SPDLOG_DEBUG("-------------------开始处理cmd---------------------");
             co_await std::visit([&,this](auto &&cmd)-> asio::awaitable<void> {
                 using T = std::remove_cvref_t<decltype(cmd)>;
                 if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdSubmit, T>) {
@@ -450,7 +452,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                                 current_seqnum,
                                 ep,
                                 intf,
-                                cmd2.transfer_buffer_length, cmd2.setup, cmd2.data, cmd2.iso_packet_descriptor,
+                                cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data), std::move(cmd2.iso_packet_descriptor),
                                 ec_during_handling_urb
                                 );
 
@@ -495,7 +497,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
             }, command);
         }
     }
-    //通知设备断连，告诉设备禁止再发消息
+    //通知设备断连，告诉设备禁止再发消息，这里阻塞没关系，毕竟已经不接受
     current_import_device->on_disconnection(receiver_ec);
     //然后再关闭发送的channel，防止先关闭了但设备因还未被通知到关闭而报错
     transfer_channel->close();
@@ -544,6 +546,7 @@ asio::awaitable<void> usbipdcpp::Session::sender_co(usbipdcpp::error_code &ec) {
             // ec = sending_ec;
             break;
         }
+        SPDLOG_DEBUG("-------------------结束处理cmd---------------------");
     }
     if (ec == asio::experimental::error::channel_closed || ec == asio::experimental::error::channel_cancelled) {
         SPDLOG_DEBUG("sender ec:{}", ec.message());
@@ -657,7 +660,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                                 current_seqnum,
                                 ep,
                                 intf,
-                                cmd2.transfer_buffer_length, cmd2.setup, cmd2.data, cmd2.iso_packet_descriptor,
+                                cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data), std::move(cmd2.iso_packet_descriptor),
                                 ec_during_handling_urb
                                 );
 

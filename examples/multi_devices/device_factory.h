@@ -4,7 +4,7 @@
 #include <string>
 
 #include "device.h"
-#include "StringPool.h"
+#include "utils/StringPool.h"
 
 /**
  * @brief 设备工厂类，用于创建虚拟USB设备

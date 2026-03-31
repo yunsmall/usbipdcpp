@@ -255,21 +255,20 @@ data_type usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
 
 asio::awaitable<void> UsbIpResponse::UsbIpRetSubmit::to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const {
     assert(header.command==USBIP_RET_SUBMIT);
-    assert(actual_length==transfer_buffer.size());
 
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
-    if (!transfer_buffer.empty()) {
+    if (!transfer_buffer.empty() && actual_length > 0) {
         if (iso_packet_descriptor.empty())[[likely]] {
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer);
+            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             co_await asio::async_write(sock, buffers, asio::redirect_error(asio::use_awaitable, ec));
         }
         else {
             std::array<asio::const_buffer, 3> buffers;
             buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer);
+            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             auto iso_dec_data = serializable_array_range_to_network_data(iso_packet_descriptor);
             buffers[2] = asio::buffer(iso_dec_data);
             co_await asio::async_write(sock, buffers, asio::redirect_error(asio::use_awaitable, ec));
@@ -286,21 +285,20 @@ asio::awaitable<void> usbipdcpp::UsbIpResponse::UsbIpRetSubmit::from_socket_co(a
 
 void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
     assert(header.command==USBIP_RET_SUBMIT);
-    assert(actual_length==transfer_buffer.size());
 
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
-    if (!transfer_buffer.empty()) {
+    if (!transfer_buffer.empty() && actual_length > 0) {
         if (iso_packet_descriptor.empty())[[likely]] {
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer);
+            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             asio::write(sock, buffers, ec);
         }
         else {
             std::array<asio::const_buffer, 3> buffers;
             buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer);
+            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             auto iso_dec_data = serializable_array_range_to_network_data(iso_packet_descriptor);
             buffers[2] = asio::buffer(iso_dec_data);
             asio::write(sock, buffers, ec);
@@ -579,23 +577,19 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket_co(as
                                                    number_of_packets,
                                                    interval);
     co_await setup.from_socket_co(sock);
+    data.resize(transfer_buffer_length);
 
     if (header.direction == UsbIpDirection::In) {
-        data.clear();
     }
     else {
-        data.resize(transfer_buffer_length);
         co_await asio::async_read(sock, asio::buffer(data), asio::use_awaitable);
     }
 
-    if (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) {
+    if (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF)[[unlikely]] {
         iso_packet_descriptor.resize(number_of_packets);
         for (auto &iso_packet: iso_packet_descriptor) {
             co_await iso_packet.from_socket_co(sock);
         }
-    }
-    else {
-        iso_packet_descriptor.clear();
     }
 }
 
@@ -631,12 +625,11 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
                                        number_of_packets,
                                        interval);
     setup.from_socket(sock);
+    data.resize(transfer_buffer_length);
 
     if (header.direction == UsbIpDirection::In) {
-        data.clear();
     }
     else {
-        data.resize(transfer_buffer_length);
         asio::read(sock, asio::buffer(data));
     }
 
@@ -645,9 +638,6 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         for (auto &iso_packet: iso_packet_descriptor) {
             iso_packet.from_socket(sock);
         }
-    }
-    else {
-        iso_packet_descriptor.clear();
     }
 }
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "type.h"
-#include "StringPool.h"
+#include "utils/StringPool.h"
 
 namespace usbipdcpp {
     struct UsbIpIsoPacketDescriptor;

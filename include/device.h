@@ -85,8 +85,8 @@ namespace usbipdcpp {
         void handle_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                         std::uint32_t seqnum, const UsbEndpoint &ep,
                         std::optional<UsbInterface> &interface, std::uint32_t transfer_buffer_length,
-                        const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
-                        const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec);
+                        const SetupPacket &setup_packet, std::vector<uint8_t>&& out_data,
+                        std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptors, std::error_code &ec);
         /**
          * @brief 新的客户端连接时会调这个函数，可以阻塞
          * @param session

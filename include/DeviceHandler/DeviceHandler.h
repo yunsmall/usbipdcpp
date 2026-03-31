@@ -20,7 +20,7 @@ namespace usbipdcpp {
 
     class AbstDeviceHandler {
     public:
-        explicit AbstDeviceHandler(UsbDevice &handle_device):
+        explicit AbstDeviceHandler(UsbDevice &handle_device) :
             handle_device(handle_device) {
         }
 
@@ -32,7 +32,7 @@ namespace usbipdcpp {
                 const UsbEndpoint &ep,
                 std::optional<UsbInterface> &interface,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                const data_type &out_data, const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                data_type &&out_data, std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors,
                 usbipdcpp::error_code
                 &ec
                 );
@@ -56,18 +56,20 @@ namespace usbipdcpp {
         virtual void handle_unlink_seqnum(std::uint32_t seqnum) =0;
 
     protected:
-        // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
-        // In传输out_data为空，transfer_buffer_length不是0
+        // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
+        // out时由主机传给设备数据，故transfer_data里面有实际的数据。
+        // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
         // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_control_urb(
                 std::uint32_t seqnum,
                 const UsbEndpoint &ep,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                const data_type &out_data, std::error_code &ec
+                data_type &&out_data, std::error_code &ec
                 ) =0;
-        // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
-        // In传输out_data为空，transfer_buffer_length不是0
+        // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
+        // out时由主机传给设备数据，故transfer_data里面有实际的数据。
+        // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
         // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_bulk_transfer(
@@ -75,10 +77,11 @@ namespace usbipdcpp {
                 const UsbEndpoint &ep,
                 UsbInterface &interface,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                const data_type &out_data, std::error_code &ec
+                data_type &&out_data, std::error_code &ec
                 ) =0;
-        // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
-        // In传输out_data为空，transfer_buffer_length不是0
+        // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
+        // out时由主机传给设备数据，故transfer_data里面有实际的数据。
+        // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
         // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_interrupt_transfer(
@@ -86,10 +89,11 @@ namespace usbipdcpp {
                 const UsbEndpoint &ep,
                 UsbInterface &interface,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                const data_type &out_data, std::error_code &ec
+                data_type &&out_data, std::error_code &ec
                 ) =0;
-        // 对于Out传输，transfer_buffer_length必须要等于out_data.size()
-        // In传输out_data为空，transfer_buffer_length不是0
+        // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
+        // out时由主机传给设备数据，故transfer_data里面有实际的数据。
+        // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
         // 因此函数内部请使用transfer_buffer_length获取buffer长度
         // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
         virtual void handle_isochronous_transfer(
@@ -97,7 +101,7 @@ namespace usbipdcpp {
                 const UsbEndpoint &ep,
                 UsbInterface &interface,
                 std::uint32_t transfer_flags,
-                std::uint32_t transfer_buffer_length, const data_type &out_data,
+                std::uint32_t transfer_buffer_length, data_type &&out_data,
                 const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec
                 ) =0;
 

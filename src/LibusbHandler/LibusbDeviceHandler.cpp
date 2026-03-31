@@ -23,6 +23,8 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
     client_disconnection = true;
     if (device_removed)[[unlikely]]
             return;
+
+    // 取消所有传输
     auto transfers = transfer_tracker_.get_all_transfers();
     for (auto &info: transfers) {
         auto err = libusb_cancel_transfer(info.transfer);
@@ -30,8 +32,17 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
             SPDLOG_ERROR("libusb_cancel_transfer failed on seqnum {}: {}", info.seqnum, libusb_strerror(err));
         }
     }
+
+    // 等待所有传输完成
+    {
+        std::unique_lock lock(transfer_complete_mutex_);
+        transfer_complete_cv_.wait(lock, [this]() {
+            return transfer_tracker_.concurrent_count() == 0;
+        });
+    }
+
     //为下次连接做准备，清空自身状态
-    transfer_tracker_.clear();
+    callback_args_pool_.clear();
     session = nullptr;
 }
 
@@ -53,8 +64,10 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         const UsbEndpoint &ep,
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
-        const SetupPacket &setup_packet, const data_type &req,
+        const SetupPacket &setup_packet, data_type &&transfer_data,
         [[maybe_unused]] std::error_code &ec) {
+    // SPDLOG_TRACE("transfer_buffer_length:{},req.size():{}", transfer_buffer_length, req.size());
+
     if (device_removed)[[unlikely]] {
         ec = make_error_code(ErrorType::NO_DEVICE);
         return;
@@ -75,30 +88,35 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
             return;
         }
 
-        auto *buffer = new unsigned char[LIBUSB_CONTROL_SETUP_SIZE + transfer_buffer_length]{0};
+
+        data_type transfer_buffer(LIBUSB_CONTROL_SETUP_SIZE + transfer_buffer_length, 0);
         if (setup_packet.is_out()) {
-            memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, req.data(), req.size());
+            memcpy(transfer_buffer.data() + LIBUSB_CONTROL_SETUP_SIZE, transfer_data.data(), transfer_data.size());
         }
-        libusb_fill_control_setup(buffer, setup_packet.request_type, setup_packet.request, setup_packet.value,
+        libusb_fill_control_setup(transfer_buffer.data(), setup_packet.request_type, setup_packet.request,
+                                  setup_packet.value,
                                   setup_packet.index, setup_packet.length);
 
-        auto *callback_args = new libusb_callback_args{
-                .handler = *this,
-                .seqnum = seqnum,
-                .is_out = setup_packet.is_out()
-        };
+        auto *callback_args = callback_args_pool_.alloc();
+        if (!callback_args) [[unlikely]] {
+            callback_args = new libusb_callback_args{};
+        }
+        callback_args->handler = this;
+        callback_args->seqnum = seqnum;
+        callback_args->is_out = setup_packet.is_out();
+        callback_args->transfer_buffer = std::move(transfer_buffer);
 
-        libusb_fill_control_transfer(transfer, native_handle, buffer, LibusbDeviceHandler::transfer_callback,
+        libusb_fill_control_transfer(transfer, native_handle, callback_args->transfer_buffer.data(),
+                                     LibusbDeviceHandler::transfer_callback,
                                      callback_args,
                                      timeout_milliseconds);
+        // libusb控制传输长度需要为setup包和数据包结合的长度
         transfer->length = LIBUSB_CONTROL_SETUP_SIZE + transfer_buffer_length;
         //将usbio transder flag转换成libusb的flags
         transfer->flags = get_libusb_transfer_flags(transfer_flags);
         masking_bogus_flags(setup_packet.is_out(), transfer);
 
-        {
-            transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
-        }
+        transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
         SPDLOG_TRACE("准备提交控制传输，seqnum: {}", seqnum);
         auto err = libusb_submit_transfer(transfer);
@@ -107,8 +125,11 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         if (err < 0)[[unlikely]] {
             SPDLOG_ERROR("控制传输给设备失败：{}", libusb_strerror(err));
             transfer_tracker_.remove(seqnum);
-            delete callback_args;
-            delete[] buffer;
+            callback_args->transfer_buffer.clear();
+            callback_args->transfer_buffer.shrink_to_fit();
+            if (!callback_args_pool_.free(callback_args)) {
+                delete callback_args;
+            }
             libusb_free_transfer(transfer);
             // ec = make_error_code(ErrorType::TRANSFER_ERROR);
             session.load()->submit_ret_submit(
@@ -130,7 +151,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
                                                           UsbInterface &interface,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
-                                                          const data_type &out_data,
+                                                          data_type &&transfer_data,
                                                           [[maybe_unused]] std::error_code &ec) {
     if (device_removed)[[unlikely]] {
         ec = make_error_code(ErrorType::NO_DEVICE);
@@ -140,33 +161,36 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
 
     SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", is_out?"Out":"In", ep.address);
     auto transfer = libusb_alloc_transfer(0);
-    auto *buffer = new unsigned char[transfer_buffer_length]{0};
-    if (is_out) {
-        // SPDLOG_DEBUG("transfer_buffer_length:{}, out_data.size():{}", transfer_buffer_length, out_data.size());
-        memcpy(buffer, out_data.data(), out_data.size());
+    data_type transfer_buffer(std::move(transfer_data));
+
+    auto *callback_args = callback_args_pool_.alloc();
+    if (!callback_args) [[unlikely]] {
+        callback_args = new libusb_callback_args{};
     }
-    auto *callback_args = new libusb_callback_args{
-            .handler = *this,
-            .seqnum = seqnum,
-            .is_out = is_out
-    };
-    libusb_fill_bulk_transfer(transfer, native_handle, ep.address, buffer, transfer_buffer_length,
+    callback_args->handler = this;
+    callback_args->seqnum = seqnum;
+    callback_args->is_out = is_out;
+    callback_args->transfer_buffer = std::move(transfer_buffer);
+
+    libusb_fill_bulk_transfer(transfer, native_handle, ep.address, callback_args->transfer_buffer.data(),
+                              transfer_buffer_length,
                               LibusbDeviceHandler::transfer_callback,
                               callback_args,
                               timeout_milliseconds);
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
     masking_bogus_flags(is_out, transfer);
 
-    {
-        transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
-    }
+    transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
     auto err = libusb_submit_transfer(transfer);
     if (err < 0)[[unlikely]] {
         SPDLOG_ERROR("块传输失败，{}", libusb_strerror(err));
         transfer_tracker_.remove(seqnum);
-        delete callback_args;
-        delete[] buffer;
+        callback_args->transfer_buffer.clear();
+        callback_args->transfer_buffer.shrink_to_fit();
+        if (!callback_args_pool_.free(callback_args)) {
+            delete callback_args;
+        }
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
             device_removed = true;
@@ -182,7 +206,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
                                                                UsbInterface &interface,
                                                                std::uint32_t transfer_flags,
                                                                std::uint32_t transfer_buffer_length,
-                                                               const data_type &out_data,
+                                                               data_type &&transfer_data,
                                                                [[maybe_unused]] std::error_code &ec) {
     if (device_removed)[[unlikely]] {
         ec = make_error_code(ErrorType::NO_DEVICE);
@@ -190,36 +214,42 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
     }
     bool is_out = !ep.is_in();
 
-    spdlog::debug("中断传输");
-
     SPDLOG_DEBUG("中断传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);
     auto transfer = libusb_alloc_transfer(0);
-    auto *buffer = new unsigned char[transfer_buffer_length];
+    data_type transfer_buffer(std::move(transfer_data));
     if (is_out) {
-        memcpy(buffer, out_data.data(), out_data.size());
+        // SPDLOG_DEBUG("transfer_buffer_length:{}, out_data.size():{}", transfer_buffer_length, out_data.size());
+        assert(transfer_buffer_length==transfer_data.size());
     }
-    auto *callback_args = new libusb_callback_args{
-            .handler = *this,
-            .seqnum = seqnum,
-            .is_out = is_out
-    };
-    libusb_fill_interrupt_transfer(transfer, native_handle, ep.address, buffer, transfer_buffer_length,
-                                   LibusbDeviceHandler::transfer_callback,
-                                   callback_args,
-                                   timeout_milliseconds);
+
+    auto *callback_args = callback_args_pool_.alloc();
+    if (!callback_args) [[unlikely]] {
+        callback_args = new libusb_callback_args{};
+    }
+    callback_args->handler = this;
+    callback_args->seqnum = seqnum;
+    callback_args->is_out = is_out;
+    callback_args->transfer_buffer = std::move(transfer_buffer);
+
+    libusb_fill_bulk_transfer(transfer, native_handle, ep.address, callback_args->transfer_buffer.data(),
+                              transfer_buffer_length,
+                              LibusbDeviceHandler::transfer_callback,
+                              callback_args,
+                              timeout_milliseconds);
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
     masking_bogus_flags(is_out, transfer);
 
-    {
-        transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
-    }
+    transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
     auto err = libusb_submit_transfer(transfer);
     if (err < 0)[[unlikely]] {
         SPDLOG_ERROR("中断传输失败，{}", libusb_strerror(err));
         transfer_tracker_.remove(seqnum);
-        delete callback_args;
-        delete[] buffer;
+        callback_args->transfer_buffer.clear();
+        callback_args->transfer_buffer.shrink_to_fit();
+        if (!callback_args_pool_.free(callback_args)) {
+            delete callback_args;
+        }
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
             device_removed = true;
@@ -237,7 +267,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
         UsbInterface &interface,
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
-        const data_type &req,
+        data_type &&transfer_data,
         const std::vector<UsbIpIsoPacketDescriptor> &
         iso_packet_descriptors,
         [[maybe_unused]] std::error_code &ec) {
@@ -253,18 +283,20 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
 
     auto num_iso_packets = static_cast<int>(iso_packet_descriptors.size());
     auto transfer = libusb_alloc_transfer(num_iso_packets);
-    auto *buffer = new unsigned char[transfer_buffer_length];
-    if (is_out) {
-        memcpy(buffer, req.data(), req.size());
+    data_type transfer_buffer(std::move(transfer_data));
+
+    auto *callback_args = callback_args_pool_.alloc();
+    if (!callback_args) [[unlikely]] {
+        callback_args = new libusb_callback_args{};
     }
-    auto *callback_args = new libusb_callback_args{
-            .handler = *this,
-            .seqnum = seqnum,
-            .is_out = is_out
-    };
+    callback_args->handler = this;
+    callback_args->seqnum = seqnum;
+    callback_args->is_out = is_out;
+    callback_args->transfer_buffer = std::move(transfer_buffer);
 
     libusb_fill_iso_transfer(
-            transfer, native_handle, ep.address, buffer, transfer_buffer_length, num_iso_packets,
+            transfer, native_handle, ep.address, callback_args->transfer_buffer.data(), transfer_buffer_length,
+            num_iso_packets,
             LibusbDeviceHandler::transfer_callback, callback_args, timeout_milliseconds);
 
     for (std::size_t i = 0; i < iso_packet_descriptors.size(); i++) {
@@ -278,16 +310,17 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
     transfer->flags = get_libusb_transfer_flags(transfer_flags);
     masking_bogus_flags(is_out, transfer);
 
-    {
-        transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
-    }
+    transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
     auto err = libusb_submit_transfer(transfer);
     if (err < 0)[[unlikely]] {
         SPDLOG_ERROR("同步传输失败，{}", libusb_strerror(err));
         transfer_tracker_.remove(seqnum);
-        delete callback_args;
-        delete[] buffer;
+        callback_args->transfer_buffer.clear();
+        callback_args->transfer_buffer.shrink_to_fit();
+        if (!callback_args_pool_.free(callback_args)) {
+            delete callback_args;
+        }
         libusb_free_transfer(transfer);
         if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
             device_removed = true;
@@ -309,7 +342,7 @@ int usbipdcpp::LibusbDeviceHandler::tweak_clear_halt_cmd(const SetupPacket &setu
     else {
         SPDLOG_DEBUG("libusb_clear_halt() done: endp {}", target_endp);
     }
-    return err;  // 返回 0 表示成功，正数表示错误
+    return err; // 返回 0 表示成功，正数表示错误
 }
 
 int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &setup_packet) {
@@ -331,7 +364,7 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &s
                 get_device_busid(libusb_get_device(native_handle)),
                 interface, alternate);
     }
-    return err;  // 返回 0 表示成功，正数表示错误
+    return err; // 返回 0 表示成功，正数表示错误
 }
 
 int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
@@ -367,12 +400,12 @@ int usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &se
         SPDLOG_ERROR("{}: libusb_reset_device error: {}",
                      get_device_busid(libusb_get_device(native_handle)),
                      libusb_strerror(err));
-        return err;  // 返回错误码
+        return err; // 返回错误码
     }
 
     SPDLOG_DEBUG("{}: libusb_reset_device done",
                  get_device_busid(libusb_get_device(native_handle)));
-    return 0;  // 返回 0 表示成功
+    return 0; // 返回 0 表示成功
 }
 
 int usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &setup_packet) {
@@ -393,7 +426,7 @@ int usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &se
         return tweak_reset_device_cmd(setup_packet);
     }
     SPDLOG_DEBUG("不需要调整包");
-    return -1;  // 不需要 tweak
+    return -1; // 不需要 tweak
 }
 
 uint8_t usbipdcpp::LibusbDeviceHandler::get_libusb_transfer_flags(uint32_t in) {
@@ -469,14 +502,26 @@ enum libusb_transfer_status usbipdcpp::LibusbDeviceHandler::error2trxstat(int e)
 
 void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     auto &callback_arg = *static_cast<libusb_callback_args *>(trx->user_data);
-    //客户端已经断连了后面的处理都没用了
-    if (callback_arg.handler.client_disconnection)[[unlikely]]
-            return;
 
     //调了回调则当前包并未在发送，因此只要调了回调就先将其删了
-    {
-        callback_arg.handler.transfer_tracker_.remove(callback_arg.seqnum);
+    callback_arg.handler->transfer_tracker_.remove(callback_arg.seqnum);
+
+    // 如果断连了，检查是否所有传输都完成了
+    if (callback_arg.handler->client_disconnection)[[unlikely]] {
+        if (callback_arg.handler->transfer_tracker_.concurrent_count() == 0) {
+            std::lock_guard lock(callback_arg.handler->transfer_complete_mutex_);
+            callback_arg.handler->transfer_complete_cv_.notify_one();
+        }
+        // 清理并返回
+        callback_arg.transfer_buffer.clear();
+        callback_arg.transfer_buffer.shrink_to_fit();
+        if (!callback_arg.handler->callback_args_pool_.free(&callback_arg)) {
+            delete &callback_arg;
+        }
+        libusb_free_transfer(trx);
+        return;
     }
+
     // std::error_code ec;
     switch (trx->status) {
         case LIBUSB_TRANSFER_COMPLETED:
@@ -502,7 +547,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
             break;
         case LIBUSB_TRANSFER_NO_DEVICE:
             dev_info(libusb_get_device(trx->dev_handle), "device removed?");
-            callback_arg.handler.device_removed = true;
+            callback_arg.handler->device_removed = true;
             break;
         default:
             dev_warn(libusb_get_device(trx->dev_handle),
@@ -513,31 +558,40 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     SPDLOG_DEBUG("libusb传输了{}个字节", trx->actual_length);
 
     std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{};
-    auto unlink_found = callback_arg.handler.session.load()->get_unlink_seqnum(callback_arg.seqnum);
+    auto unlink_found = callback_arg.handler->session.load()->get_unlink_seqnum(callback_arg.seqnum);
     if (!std::get<0>(unlink_found))[[likely]] {
         //发送ret_submit
-        data_type received_data;
+        auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+                callback_arg.seqnum,
+                trxstat2error(trx->status),
+                0,
+                trx->num_iso_packets,
+                std::move(callback_arg.transfer_buffer),
+                iso_packet_descriptors
+        );
+
         if (!callback_arg.is_out) {
-            if (trx->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
-                received_data = {
-                        trx->buffer + LIBUSB_CONTROL_SETUP_SIZE,
-                        trx->buffer + LIBUSB_CONTROL_SETUP_SIZE + trx->actual_length
-                };
-                assert(received_data.size()==trx->actual_length);
+            ret.actual_length = trx->actual_length;
+
+            if (trx->type == LIBUSB_TRANSFER_TYPE_CONTROL)[[unlikely]] {
+                // 控制传输：数据从偏移8开始
+                ret.send_config.data_offset = LIBUSB_CONTROL_SETUP_SIZE;
             }
             else if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
+                // ISO传输：需要重组数据并设置iso描述符
                 iso_packet_descriptors.resize(trx->num_iso_packets);
                 size_t iso_actual_length = 0;
                 for (int i = 0; i < trx->num_iso_packets; i++) {
                     auto &iso_packet = trx->iso_packet_desc[i];
                     iso_actual_length += iso_packet.actual_length;
                 }
-                received_data.resize(iso_actual_length, 0);
+                // ISO需要拷贝数据，因为需要重组
+                ret.transfer_buffer.resize(iso_actual_length);
                 size_t received_data_offset = 0;
                 size_t trx_buffer_offset = 0;
                 for (int i = 0; i < trx->num_iso_packets; i++) {
                     auto &iso_packet = trx->iso_packet_desc[i];
-                    std::memcpy(received_data.data() + received_data_offset, trx->buffer + trx_buffer_offset,
+                    std::memcpy(ret.transfer_buffer.data() + received_data_offset, trx->buffer + trx_buffer_offset,
                                 iso_packet.actual_length);
                     iso_packet_descriptors[i].offset = received_data_offset;
                     iso_packet_descriptors[i].length = iso_packet.actual_length;
@@ -547,35 +601,30 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                     received_data_offset += iso_packet.actual_length;
                     trx_buffer_offset += iso_packet.length;
                 }
+                ret.iso_packet_descriptor = std::move(iso_packet_descriptors);
+                ret.actual_length = static_cast<std::uint32_t>(iso_actual_length);
+                ret.send_config.data_offset = 0;
             }
-            else {
-                received_data = {
-                        trx->buffer,
-                        trx->buffer + trx->actual_length
-                };
-                assert(received_data.size()==trx->actual_length);
-                // SPDLOG_DEBUG("非控制和等时传输received_data长度{}个字节", received_data.size());
+            else[[likely]] {
+                // Bulk/Interrupt传输：零拷贝，直接使用移动过来的buffer
+                assert(trx->actual_length == ret.transfer_buffer.size());
+                ret.send_config.data_offset = 0;
             }
         }
+        else {
+            // OUT传输没有返回数据
+            ret.actual_length = 0;
+        }
+
         SPDLOG_DEBUG("libusb传输actual_length为{}个字节", trx->actual_length);
 
-
-        callback_arg.handler.session.load()->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-                        callback_arg.seqnum,
-                        trxstat2error(trx->status),
-                        0,
-                        trx->num_iso_packets,
-                        std::move(received_data),
-                        iso_packet_descriptors
-                        )
-                );
+        callback_arg.handler->session.load()->submit_ret_submit(std::move(ret));
     }
     else {
         auto cmd_unlink_seqnum = std::get<1>(unlink_found);
 
         //发送ret_unlink
-        callback_arg.handler.session.load()->submit_ret_unlink_and_then_remove_seqnum_unlink(
+        callback_arg.handler->session.load()->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
                         cmd_unlink_seqnum,
                         trxstat2error(trx->status)
@@ -584,9 +633,11 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                 );
     }
 
-    //清理数据
-    delete[] trx->buffer;
-    delete &callback_arg;
+    //清理数据，归还对象池
+    callback_arg.transfer_buffer.clear();
+    callback_arg.transfer_buffer.shrink_to_fit();
+    if (!callback_arg.handler->callback_args_pool_.free(&callback_arg)) {
+        delete &callback_arg;
+    }
     libusb_free_transfer(trx);
 }
-

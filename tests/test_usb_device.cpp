@@ -2,7 +2,7 @@
 
 #include "endpoint.h"
 #include "device.h"
-#include "StringPool.h"
+#include "utils/StringPool.h"
 
 using namespace usbipdcpp;
 

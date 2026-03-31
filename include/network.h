@@ -12,7 +12,7 @@
 namespace usbipdcpp {
 
     constexpr bool is_little_endian() {
-        if (std::is_constant_evaluated()) {
+        if consteval {
             return std::endian::native == std::endian::little;
         }
         else {

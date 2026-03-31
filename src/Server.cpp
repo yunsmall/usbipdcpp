@@ -8,7 +8,7 @@
 #include <asio/redirect_error.hpp>
 #include <spdlog/spdlog.h>
 
-#include "utils.h"
+#include "../include/utils/utils.h"
 #include "protocol.h"
 #include "type.h"
 #include "Session.h"
@@ -283,9 +283,9 @@ std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::try_moving_device_to_us
 
 void usbipdcpp::Server::print_devices() {
     std::shared_lock guard(devices_mutex);
-    spdlog::debug("有{}个可用设备", available_devices.size());
-    spdlog::debug("有{}个正在使用的设备，分别为", using_devices.size());
+    spdlog::info("有{}个可用设备", available_devices.size());
+    spdlog::info("有{}个正在使用的设备，分别为", using_devices.size());
     for (auto &dev: using_devices) {
-        spdlog::debug("{}", dev.first);
+        spdlog::info("{}", dev.first);
     }
 }

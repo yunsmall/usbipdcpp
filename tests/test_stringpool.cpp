@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "StringPool.h"
+#include "utils/StringPool.h"
 
 using namespace usbipdcpp;
 

@@ -47,10 +47,32 @@ architecture using:
 | `Server` | Main server class that manages device list and accepts connections |
 | `Session` | Represents a client connection, handles USBIP protocol |
 | `UsbDevice` | USB device descriptor and configuration |
+| `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
+| `AbstDeviceHandler` | Abstract base class for all device handlers |
+| `DeviceHandlerBase` | Intermediate base class providing common device handler functionality |
+| `VirtualDeviceHandler` | Base class for implementing virtual USB devices |
+| `LibusbDeviceHandler` | Handler for physical USB devices using libusb |
 | `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
 | `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
 | `SimpleVirtualDeviceHandler` | Simple device handler with no-op standard request implementations |
 | `StringPool` | Manages USB string descriptors (limited to 255 strings) |
+
+### Utility Classes
+
+| Class | Description |
+|-------|-------------|
+| `ObjectPool<T, InitialSize, MaxSize, ThreadSafe>` | Templated object pool for memory-efficient allocation. Supports initial fixed size with optional dynamic growth up to a maximum. Designed for embedded platforms (ESP32). |
+| `ConcurrentTransferTracker<TransferPtr, SegmentCount>` | Sharded lock-based transfer tracker for efficient concurrent transfer management. Uses atomic counters for fast-path operations. |
+
+### Class Hierarchy
+
+```
+AbstDeviceHandler
+└── DeviceHandlerBase
+    ├── LibusbDeviceHandler    (physical devices via libusb)
+    └── VirtualDeviceHandler   (virtual devices)
+        └── SimpleVirtualDeviceHandler
+```
 
 ### Threading Model
 

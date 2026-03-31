@@ -47,6 +47,7 @@ option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 
 option(USBIPDCPP_USE_COROUTINE "Use coroutine-based implementation" ON)
+option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
 
 find_package(asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -66,17 +67,16 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_definitions(
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
-            #            TRANSFER_DELAY_RECORD
     )
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     add_compile_definitions(
 #            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-#            TRANSFER_DELAY_RECORD
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             NDEBUG
     )
 else ()
     add_compile_definitions(
+            USBIPDCPP_TRACK_PACKAGE
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
             TRANSFER_DELAY_RECORD
     )
@@ -91,6 +91,9 @@ add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES}
 target_link_libraries(${PROJECT_NAME} PUBLIC asio::asio)
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
 target_include_directories(${PROJECT_NAME} PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+if(USBIPDCPP_FORCE_TRACK_PACKAGE)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_FORCE_TRACK_PACKAGE)
+endif()
 
 if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
     find_package(PkgConfig REQUIRED)

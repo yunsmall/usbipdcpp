@@ -1,6 +1,6 @@
 #pragma once
 
-#include "StringPool.h"
+#include "utils/StringPool.h"
 #include "DeviceHandler.h"
 
 namespace usbipdcpp {
@@ -21,8 +21,8 @@ namespace usbipdcpp {
         void dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                           const UsbEndpoint &ep, std::optional<UsbInterface> &interface, std::uint32_t transfer_flags,
                           std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                          const data_type &out_data,
-                          const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                          data_type&& out_data,
+                          std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptors,
                           usbipdcpp::error_code &ec) override;
         /**
          * @brief 新的客户端连接时会调这个函数
@@ -41,21 +41,21 @@ namespace usbipdcpp {
         void handle_control_urb(
                 std::uint32_t seqnum, const UsbEndpoint &ep,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                const SetupPacket &setup_packet, const data_type &out_data,
+                const SetupPacket &setup_packet, data_type&& out_data,
                 std::error_code &ec) override;
         void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                   UsbInterface &interface, std::uint32_t transfer_flags,
-                                  std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                  std::uint32_t transfer_buffer_length, data_type&& out_data,
                                   std::error_code &ec) override;
         void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                        UsbInterface &interface, std::uint32_t transfer_flags,
-                                       std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                       std::uint32_t transfer_buffer_length, data_type&& out_data,
                                        std::error_code &ec) override;
 
         void handle_isochronous_transfer(std::uint32_t seqnum,
                                          const UsbEndpoint &ep, UsbInterface &interface,
                                          std::uint32_t transfer_flags,
-                                         std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                         std::uint32_t transfer_buffer_length, data_type&& out_data,
                                          const std::vector<UsbIpIsoPacketDescriptor> &
                                          iso_packet_descriptors, std::error_code &ec) override;
 

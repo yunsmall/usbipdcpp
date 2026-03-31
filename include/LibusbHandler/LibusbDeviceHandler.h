@@ -8,7 +8,8 @@
 #include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "ConcurrentTransferTracker.h"
+#include "utils/ConcurrentTransferTracker.h"
+#include "utils/ObjectPool.h"
 #include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
@@ -27,21 +28,21 @@ namespace usbipdcpp {
         void handle_control_urb(
                 std::uint32_t seqnum, const UsbEndpoint &ep,
                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                const SetupPacket &setup_packet, const data_type &req, std::error_code &ec) override;
+                const SetupPacket &setup_packet, data_type &&transfer_data, std::error_code &ec) override;
         void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                   UsbInterface &interface, std::uint32_t transfer_flags,
-                                  std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                  std::uint32_t transfer_buffer_length, data_type &&transfer_data,
                                   std::error_code &ec) override;
         void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                        UsbInterface &interface, std::uint32_t transfer_flags,
-                                       std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                       std::uint32_t transfer_buffer_length, data_type &&transfer_data,
                                        std::error_code &ec) override;
 
         void handle_isochronous_transfer(std::uint32_t seqnum,
                                          const UsbEndpoint &ep, UsbInterface &interface,
                                          std::uint32_t transfer_flags,
                                          std::uint32_t transfer_buffer_length,
-                                         const data_type &req,
+                                         data_type &&transfer_data,
                                          const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                          std::error_code &ec) override;
 
@@ -67,12 +68,21 @@ namespace usbipdcpp {
         static enum libusb_transfer_status error2trxstat(int e);
 
         struct libusb_callback_args {
-            LibusbDeviceHandler &handler;
+            LibusbDeviceHandler *handler = nullptr;
             std::uint32_t seqnum;
             bool is_out;
+            data_type transfer_buffer;
         };
 
         static void transfer_callback(libusb_transfer *trx);
+
+        // 对象池：初始16个，最多64个
+        using CallbackArgsPool = ObjectPool<libusb_callback_args, 16, 64>;
+        CallbackArgsPool callback_args_pool_;
+
+        // 用于等待所有传输完成
+        std::mutex transfer_complete_mutex_;
+        std::condition_variable transfer_complete_cv_;
 
         //这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
         std::atomic_bool client_disconnection = false;

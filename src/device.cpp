@@ -88,13 +88,13 @@ void usbipdcpp::UsbDevice::handle_urb(
         const UsbEndpoint &ep,
         std::optional<UsbInterface> &interface,
         std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-        const std::vector<std::uint8_t> &out_data,
-        const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+        std::vector<uint8_t>&& out_data,
+        std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptors,
         std::error_code &ec) {
     SPDLOG_TRACE("设备处理URB，将其转发到对应handler中");
     if (handler) {
         handler->dispatch_urb(cmd, seqnum, ep, interface, transfer_buffer_length, transfer_buffer_length,
-                              setup_packet, out_data, iso_packet_descriptors, ec);
+                              setup_packet, std::move(out_data), std::move(iso_packet_descriptors), ec);
     }
     else {
         SPDLOG_ERROR("设备没注册handler");

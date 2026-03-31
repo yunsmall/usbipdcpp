@@ -10,12 +10,12 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                         const UsbEndpoint &ep, std::optional<UsbInterface> &interface,
                                         std::uint32_t transfer_flags,
                                         std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                                        const data_type &out_data,
-                                        const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                                        data_type&& out_data,
+                                        std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptors,
                                         usbipdcpp::error_code &ec) {
     // if (se)
     DeviceHandlerBase::dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet,
-                                    out_data, iso_packet_descriptors,
+                                    std::move(out_data), std::move(iso_packet_descriptors),
                                     ec);
 }
 
@@ -80,7 +80,7 @@ void VirtualDeviceHandler::handle_control_urb(
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet,
-        const std::vector<std::uint8_t> &out_data,
+        data_type&& out_data,
         std::error_code &ec) {
     auto unlink_ret = session.load()->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
@@ -433,7 +433,7 @@ void VirtualDeviceHandler::handle_bulk_transfer(
         UsbInterface &interface,
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
-        const data_type &out_data,
+        data_type&& out_data,
         std::error_code &ec) {
     auto unlink_ret = session.load()->get_unlink_seqnum(seqnum);
     if (!std::get<0>(unlink_ret)) {
@@ -469,7 +469,7 @@ void VirtualDeviceHandler::handle_interrupt_transfer(
         UsbInterface &interface,
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
-        const data_type &out_data,
+        data_type&& out_data,
         std::error_code &ec) {
 
     auto unlink_ret = session.load()->get_unlink_seqnum(seqnum);
@@ -506,7 +506,7 @@ void VirtualDeviceHandler::handle_isochronous_transfer(
         UsbInterface &interface,
         std::uint32_t transfer_flags,
         std::uint32_t transfer_buffer_length,
-        const data_type &req,
+        data_type&& req,
         const std::vector<UsbIpIsoPacketDescriptor> &
         iso_packet_descriptors,
         std::error_code &ec) {
