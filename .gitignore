@@ -4,6 +4,7 @@
 /cmake-*
 /[Bb]uild*
 /install
+/.claude/settings.local.json
 compile_commands.json
 CMakeUserPresets.json
 CLAUDE.md

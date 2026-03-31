@@ -88,6 +88,12 @@ namespace usbipdcpp {
 
         void register_session_exit_callback(std::function<void()> &&callback);
 
+        /**
+         * @brief 移除指定的 session 并触发 on_session_exit
+         * @param session 要移除的 session 指针
+         */
+        void remove_session(Session *session);
+
         ~Server();
 
     protected:

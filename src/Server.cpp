@@ -148,6 +148,33 @@ void usbipdcpp::Server::on_session_exit() {
     }
 }
 
+void usbipdcpp::Server::remove_session(Session *session) {
+    std::lock_guard lock(session_list_mutex);
+    // 从 sessions 列表中移除
+    for (auto it = sessions.begin(); it != sessions.end();) {
+        if (auto s = it->lock()) {
+            if (s.get() == session) {
+                it = sessions.erase(it);
+                break;
+            }
+            else {
+                ++it;
+            }
+        }
+        else {
+            // 清除已失效的 weak_ptr
+            it = sessions.erase(it);
+        }
+    }
+    if (sessions.empty()) {
+        all_sessions_closed_cv.notify_one();
+    }
+    // 调用回调
+    for (auto &callback: session_exit_callbacks) {
+        callback();
+    }
+}
+
 
 asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
     while (true) {

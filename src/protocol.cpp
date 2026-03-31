@@ -260,7 +260,7 @@ asio::awaitable<void> UsbIpResponse::UsbIpRetSubmit::to_socket_co(asio::ip::tcp:
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
     if (!transfer_buffer.empty()) {
-        if (iso_packet_descriptor.empty()) {
+        if (iso_packet_descriptor.empty())[[likely]] {
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
             buffers[1] = asio::buffer(transfer_buffer);
@@ -291,7 +291,7 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
     if (!transfer_buffer.empty()) {
-        if (iso_packet_descriptor.empty()) {
+        if (iso_packet_descriptor.empty())[[likely]] {
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
             buffers[1] = asio::buffer(transfer_buffer);

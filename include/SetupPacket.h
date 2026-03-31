@@ -74,6 +74,7 @@ namespace usbipdcpp {
 
         static constexpr std::uint8_t USB_TYPE_MASK = 0b01100000u;
         static constexpr std::uint8_t USB_RECIP_MASK = 0b00011111u;
+        static constexpr std::uint8_t USB_DIR_MASK = 0b10000000u;
 
         [[nodiscard]] static uint8_t calc_request_type(uint8_t request_type) {
             return (request_type & USB_TYPE_MASK);
@@ -96,22 +97,26 @@ namespace usbipdcpp {
         }
 
         [[nodiscard]] bool is_clear_halt_cmd() const {
-            uint8_t recip = calc_recipient();
+            // Linux kernel: bRequestType == USB_RECIP_ENDPOINT (0x02)
+            // 即 Standard(0x00) + Endpoint(0x02) + OUT(0x00) = 0x02
+            // 必须完整检查，不能只看Recip
             return request == static_cast<std::uint8_t>(StandardRequest::ClearFeature) &&
-                   recip == static_cast<std::uint8_t>(RequestRecipient::Endpoint) &&
+                   request_type == static_cast<std::uint8_t>(RequestRecipient::Endpoint) &&
                    value == USB_ENDPOINT_HALT;
         }
 
         [[nodiscard]] bool is_set_interface_cmd() const {
-            uint8_t recip = calc_recipient();
+            // Linux kernel: bRequestType == USB_RECIP_INTERFACE (0x01)
+            // 即 Standard(0x00) + Interface(0x01) + OUT(0x00) = 0x01
             return request == static_cast<std::uint8_t>(StandardRequest::SetInterface) &&
-                   recip == static_cast<std::uint8_t>(RequestRecipient::Interface);
+                   request_type == static_cast<std::uint8_t>(RequestRecipient::Interface);
         }
 
         [[nodiscard]] bool is_set_configuration_cmd() const {
-            uint8_t recip = calc_recipient();
+            // Linux kernel: bRequestType == USB_RECIP_DEVICE (0x00)
+            // 即 Standard(0x00) + Device(0x00) + OUT(0x00) = 0x00
             return request == static_cast<std::uint8_t>(StandardRequest::SetConfiguration) &&
-                   recip == static_cast<std::uint8_t>(RequestRecipient::Device);
+                   request_type == static_cast<std::uint8_t>(RequestRecipient::Device);
         }
 
         bool is_out() const {
@@ -129,15 +134,13 @@ namespace usbipdcpp {
 
 
         [[nodiscard]] bool is_reset_device_cmd() const {
-            uint8_t request_type = calc_request_type();
-            uint8_t recip = calc_recipient();
-
-
+            // Linux kernel: bRequestType == USB_RT_PORT (0x23)
+            // 即 Class(0x20) + Other(0x03) + OUT(0x00) = 0x23
+            // 必须完整检查bRequestType，不能分开检查Type和Recip而忽略Dir
             if ((request == static_cast<std::uint8_t>(StandardRequest::SetFeature)) &&
-                (request_type == static_cast<std::uint8_t>(RequestType::Class)) &&
-                (recip == static_cast<std::uint8_t>(RequestRecipient::Other)) &&
+                (request_type == (static_cast<std::uint8_t>(RequestType::Class) |
+                                  static_cast<std::uint8_t>(RequestRecipient::Other))) &&
                 (value == static_cast<std::uint8_t>(PortFeat::Reset))) {
-                // usbip_dbg_stub_rx("reset_device_cmd, port %u", index);
                 return true;
             }
             return false;

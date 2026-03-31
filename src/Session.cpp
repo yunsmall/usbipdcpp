@@ -102,10 +102,8 @@ void usbipdcpp::Session::run_co() {
     run_thread = std::thread([self=std::move(self)]() {
         self->session_io_context.run();
 
-        //处理结束后自动往服务器中删除自身
-        self->remove_self_from_server();
-
-        self->server.on_session_exit();
+        //处理结束后自动往服务器中删除自身并触发退出回调
+        self->server.remove_session(self.get());
         //把当前这个线程detach了，防止线程内部析构自己导致报错
         self->run_thread.detach();
     });
@@ -117,10 +115,8 @@ void usbipdcpp::Session::run() {
     run_thread = std::thread([self=std::move(self)]() {
         self->parse_op();
 
-        //处理结束后自动往服务器中删除自身
-        self->remove_self_from_server();
-
-        self->server.on_session_exit();
+        //处理结束后自动往服务器中删除自身并触发退出回调
+        self->server.remove_session(self.get());
         //把当前这个线程detach了，防止线程内部析构自己导致报错
         self->run_thread.detach();
     });
@@ -338,28 +334,6 @@ close_socket:
     socket.close(ignore_ec);
 }
 #endif
-
-void usbipdcpp::Session::remove_self_from_server() {
-    std::lock_guard lock(server.session_list_mutex);
-    for (auto it = server.sessions.begin(); it != server.sessions.end();) {
-        if (auto s = it->lock()) {
-            if (s.get() == this) {
-                it = server.sessions.erase(it);
-                break;
-            }
-            else {
-                ++it;
-            }
-        }
-        else {
-            // 清除已失效的 weak_ptr
-            it = server.sessions.erase(it);
-        }
-    }
-    if (server.sessions.empty()) {
-        server.all_sessions_closed_cv.notify_one();
-    }
-}
 
 void usbipdcpp::Session::immediately_stop() {
     should_immediately_stop = true;

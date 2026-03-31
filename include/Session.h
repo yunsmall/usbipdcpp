@@ -109,8 +109,6 @@ namespace usbipdcpp {
         void parse_op();
 #endif
 
-        void remove_self_from_server();
-
         /**
          * @brief 置停止标志位，并且关闭socket。只能由Server调用。
          * 内部不会关闭线程，只会通知线程关闭

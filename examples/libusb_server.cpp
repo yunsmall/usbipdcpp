@@ -10,6 +10,8 @@ using namespace usbipdcpp;
 int main() {
     spdlog::set_level(spdlog::level::trace);
     int err;
+    // 启用 libusb 调试日志
+    // libusb_set_option(nullptr, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_DEBUG);
     err = libusb_init(nullptr);
     if (err) {
         SPDLOG_ERROR("libusb_init failed: {}", libusb_strerror(err));

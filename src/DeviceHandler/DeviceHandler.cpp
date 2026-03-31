@@ -24,7 +24,6 @@ void AbstDeviceHandler::dispatch_urb(
         const SetupPacket &setup_packet, const std::vector<std::uint8_t> &out_data,
         const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
         usbipdcpp::error_code &ec) {
-    std::lock_guard lock(self_mutex);
     if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) {
         SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()), setup_packet.to_string());
         handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, out_data, ec);

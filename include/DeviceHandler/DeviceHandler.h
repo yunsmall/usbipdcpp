@@ -107,9 +107,6 @@ namespace usbipdcpp {
     protected:
         UsbDevice &handle_device;
         std::atomic<Session *> session = nullptr;
-
-    private:
-        std::mutex self_mutex;
     };
 
     class DeviceHandlerBase : public AbstDeviceHandler {

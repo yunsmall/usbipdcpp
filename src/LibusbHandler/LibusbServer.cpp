@@ -294,6 +294,7 @@ void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
                             SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
                         }
                     }
+                    libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
                 }
                 server_available_devices.erase(i);
@@ -417,6 +418,7 @@ void usbipdcpp::LibusbServer::stop() {
                             SPDLOG_ERROR("释放设备接口{}时出错: {}", intf_i, libusb_strerror(err));
                         }
                     }
+                    libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
                 }
                 else {
@@ -439,6 +441,7 @@ void usbipdcpp::LibusbServer::stop() {
                             SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
                         }
                     }
+                    libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
                 }
                 else {

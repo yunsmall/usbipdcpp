@@ -1,7 +1,6 @@
 #pragma once
 
-#include <map>
-#include <shared_mutex>
+#include <atomic>
 
 #include <asio.hpp>
 #include <libusb-1.0/libusb.h>
@@ -9,6 +8,7 @@
 #include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
+#include "ConcurrentTransferTracker.h"
 #include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
@@ -45,17 +45,19 @@ namespace usbipdcpp {
                                          const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                          std::error_code &ec) override;
 
-        bool tweak_clear_halt_cmd(const SetupPacket &setup_packet);
-        bool tweak_set_interface_cmd(const SetupPacket &setup_packet);
-        bool tweak_set_configuration_cmd(const SetupPacket &setup_packet);
-        bool tweak_reset_device_cmd(const SetupPacket &setup_packet);
+        int tweak_clear_halt_cmd(const SetupPacket &setup_packet);
+        int tweak_set_interface_cmd(const SetupPacket &setup_packet);
+        int tweak_set_configuration_cmd(const SetupPacket &setup_packet);
+        int tweak_reset_device_cmd(const SetupPacket &setup_packet);
 
         /**
-         * @brief 返回是否做了特殊操作
+         * @brief 处理特殊控制请求
          * @param setup_packet
-         * @return
+         * @return -1: 不需要 tweak，应该提交 transfer
+         *          0: tweak 成功，不需要提交 transfer
+         *         >0: tweak 失败（libusb 错误码），不需要提交 transfer
          */
-        bool tweak_special_requests(const SetupPacket &setup_packet);
+        int tweak_special_requests(const SetupPacket &setup_packet);
 
         static uint8_t get_libusb_transfer_flags(uint32_t in);
 
@@ -76,8 +78,8 @@ namespace usbipdcpp {
         std::atomic_bool client_disconnection = false;
         std::atomic_bool device_removed = false;
 
-        std::map<std::uint32_t, libusb_transfer *> transferring_data;
-        std::shared_mutex transferring_data_mutex;
+        // 分段锁传输追踪器
+        ConcurrentTransferTracker<libusb_transfer *> transfer_tracker_;
 
         libusb_device_handle *const native_handle;
 
