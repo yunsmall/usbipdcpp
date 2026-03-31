@@ -13,7 +13,7 @@ const usbipdcpp::data_type SimpleHidInterfaceHandler::report_descriptor_ = {
         0x75, 0x01, //   Report Size (1)
         0x95, 0x01, //   Report Count (1)
         0x81, 0x02, //   Input (Data,Var,Abs)
-        0xC0 // End Collection
+        0xC0        // End Collection
 };
 
 SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,

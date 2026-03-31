@@ -616,23 +616,23 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
     std::shared_lock lock(data_mutex);
     std::uint16_t version_bcd = usb_version;
     data_type desc = {
-            0x12, // bLength
+            0x12,                                              // bLength
             static_cast<std::uint8_t>(DescriptorType::Device), // bDescriptorType: Device
-            static_cast<std::uint8_t>(version_bcd), // bcdUSB: USB 2.0
+            static_cast<std::uint8_t>(version_bcd),            // bcdUSB: USB 2.0
             static_cast<std::uint8_t>(version_bcd >> 8),
-            handle_device.device_class, // bDeviceClass
-            handle_device.device_subclass, // bDeviceSubClass
-            handle_device.device_protocol, // bDeviceProtocol
+            handle_device.device_class,                                      // bDeviceClass
+            handle_device.device_subclass,                                   // bDeviceSubClass
+            handle_device.device_protocol,                                   // bDeviceProtocol
             static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0
-            static_cast<std::uint8_t>(handle_device.vendor_id), // idVendor
+            static_cast<std::uint8_t>(handle_device.vendor_id),              // idVendor
             static_cast<std::uint8_t>(handle_device.vendor_id >> 8),
             static_cast<std::uint8_t>(handle_device.product_id), // idProduct
             static_cast<std::uint8_t>(handle_device.product_id >> 8),
             handle_device.device_bcd.minor, // bcdDevice
             handle_device.device_bcd.major,
             string_manufacturer_value, // iManufacturer
-            string_product_value, // iProduct
-            string_serial_value, // iSerial
+            string_product_value,      // iProduct
+            string_serial_value,       // iSerial
             handle_device.num_configurations
     };
 
@@ -647,10 +647,10 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
                                                    std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
-            0x05, // bLength
+            0x05,                                           // bLength
             static_cast<std::uint8_t>(DescriptorType::BOS), // bDescriptorType: BOS
-            0x05, 0x00, // wTotalLength
-            0x00 // bNumCapabilities
+            0x05, 0x00,                                     // wTotalLength
+            0x00                                            // bNumCapabilities
     };
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
@@ -662,28 +662,28 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(
         std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
-            0x09, // bLength
+            0x09,                                                     // bLength
             static_cast<std::uint8_t>(DescriptorType::Configuration), // bDescriptorType: Configuration
             0x00,
-            0x00, // wTotalLength: to be filled below
+            0x00,                                                       // wTotalLength: to be filled below
             static_cast<std::uint8_t>(handle_device.interfaces.size()), // bNumInterfaces
-            handle_device.configuration_value, // bConfigurationValue
-            string_configuration_value, // iConfiguration
-            0x80, // bmAttributes Bus Powered
-            0x32, // bMaxPower 100mA
+            handle_device.configuration_value,                          // bConfigurationValue
+            string_configuration_value,                                 // iConfiguration
+            0x80,                                                       // bmAttributes Bus Powered
+            0x32,                                                       // bMaxPower 100mA
     };
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
         data_type intf_desc = {
-                0x09, // bLength
+                0x09,                                                 // bLength
                 static_cast<std::uint8_t>(DescriptorType::Interface), // bDescriptorType: Interface
-                static_cast<std::uint8_t>(i), // bInterfaceNum
-                0x00, // bAlternateSettings
-                static_cast<std::uint8_t>(intf.endpoints.size()), // bNumEndpoints
-                intf.interface_class, // bInterfaceClass
-                intf.interface_subclass, // bInterfaceSubClass
-                intf.interface_protocol, // bInterfaceProtocol
-                intf.handler->get_string_interface_value(), //iInterface
+                static_cast<std::uint8_t>(i),                         // bInterfaceNum
+                0x00,                                                 // bAlternateSettings
+                static_cast<std::uint8_t>(intf.endpoints.size()),     // bNumEndpoints
+                intf.interface_class,                                 // bInterfaceClass
+                intf.interface_subclass,                              // bInterfaceSubClass
+                intf.interface_protocol,                              // bInterfaceProtocol
+                intf.handler->get_string_interface_value(),           //iInterface
         };
         auto class_specific_descriptor = intf.handler->get_class_specific_descriptor();
         intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());

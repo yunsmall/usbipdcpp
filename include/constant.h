@@ -142,14 +142,12 @@ enum class RequestType {
 };
 
 enum class TransferFlag {
-    URB_SHORT_NOT_OK = 0x0001, /* report short reads as errors */
-    URB_ISO_ASAP = 0x0002, /* iso-only; use the first unexpired */
-    /* slot in the schedule */
+    URB_SHORT_NOT_OK = 0x0001,        /* report short reads as errors */
+    URB_ISO_ASAP = 0x0002,            /* iso-only; use the first unexpired  slot in the schedule */
     URB_NO_TRANSFER_DMA_MAP = 0x0004, /* urb->transfer_dma valid on submit */
-    URB_NO_FSBR = 0x0020, /* UHCI-specific */
-    URB_ZERO_PACKET = 0x0040, /* Finish bulk OUT with short packet */
-    URB_NO_INTERRUPT = 0x0080, /* HINT: no non-error interrupt */
-    /* needed */
+    URB_NO_FSBR = 0x0020,             /* UHCI-specific */
+    URB_ZERO_PACKET = 0x0040,         /* Finish bulk OUT with short packet */
+    URB_NO_INTERRUPT = 0x0080,        /* HINT: no non-error interrupt needed */
     URB_FREE_BUFFER = 0x0100,
 };
 }

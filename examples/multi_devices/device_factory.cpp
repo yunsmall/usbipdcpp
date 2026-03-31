@@ -17,7 +17,7 @@ DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_poo
                     .interface_protocol = 0x00,
                     .endpoints = {
                             usbipdcpp::UsbEndpoint{
-                                    .address = 0x81, // IN endpoint
+                                    .address = 0x81,    // IN endpoint
                                     .attributes = 0x03, // Interrupt
                                     .max_packet_size = 8,
                                     .interval = 10

@@ -1,7 +1,7 @@
 /.idea
 /.vscode
 /.cache
-/cmake-*
+/cmake-build*
 /[Bb]uild*
 /install
 /.claude/settings.local.json

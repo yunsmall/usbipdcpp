@@ -40,7 +40,9 @@ template<typename T>
 concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
 {
     { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-    { static_cast<const std::remove_cvref_t<T> &>(t1).to_socket_co(sock, ec) } -> std::same_as<asio::awaitable<void>>;
+    {
+        static_cast<const std::remove_cvref_t<T> &>(t1).to_socket_co(sock, ec)
+    } -> std::same_as<asio::awaitable<void>>;
     { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
 };
 
@@ -165,7 +167,8 @@ constexpr std::size_t calculate_data_total_size_with_range(const Args &... arg) 
  * @param args 整数
  */
 template<std::unsigned_integral... Args>
-[[nodiscard]] asio::awaitable<void> unsigned_integral_read_from_socket_co(asio::ip::tcp::socket &sock, Args &... args) {
+[[nodiscard]] asio::awaitable<void> unsigned_integral_read_from_socket_co(
+        asio::ip::tcp::socket &sock, Args &... args) {
     constexpr auto total_size = calculate_unsigned_integral_total_size<Args...>();
 
     std::array<std::uint8_t, total_size> buffer;

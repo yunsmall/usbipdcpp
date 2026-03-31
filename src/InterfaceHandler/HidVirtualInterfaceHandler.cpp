@@ -97,12 +97,12 @@ usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_descript
 usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::get_class_specific_descriptor() {
     auto report_descriptor_size = get_report_descriptor_size();
     return {
-            0x09, // bLength
+            0x09,                   // bLength
             HidDescriptorType::Hid, // bDescriptorType: HID
             0x11,
-            0x01, // bcdHID 1.11
-            0x00, // bCountryCode
-            0x01, // bNumDescriptors
+            0x01,                      // bcdHID 1.11
+            0x00,                      // bCountryCode
+            0x01,                      // bNumDescriptors
             HidDescriptorType::Report, // bDescriptorType[0] HID
             static_cast<std::uint8_t>(report_descriptor_size),
             static_cast<std::uint8_t>(report_descriptor_size >> 8), // wDescriptorLength[0]

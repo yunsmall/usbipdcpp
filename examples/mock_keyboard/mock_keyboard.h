@@ -134,7 +134,7 @@ public:
     */
 
     struct State {
-        std::uint8_t modifier = 0; // 修饰键
+        std::uint8_t modifier = 0;          // 修饰键
         std::array<std::uint8_t, 6> keys{}; // 按键码数组
 
         bool operator==(const State &) const = default;
