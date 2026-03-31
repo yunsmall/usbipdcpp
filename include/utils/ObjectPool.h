@@ -39,11 +39,11 @@ public:
     }
 
     // 禁止拷贝
-    ObjectPool(const ObjectPool&) = delete;
-    ObjectPool& operator=(const ObjectPool&) = delete;
+    ObjectPool(const ObjectPool &) = delete;
+    ObjectPool &operator=(const ObjectPool &) = delete;
 
     // 允许移动
-    ObjectPool(ObjectPool&& other) noexcept {
+    ObjectPool(ObjectPool &&other) noexcept {
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(other.mutex_);
         }
@@ -54,7 +54,7 @@ public:
         other.capacity_ = 0;
     }
 
-    ObjectPool& operator=(ObjectPool&& other) noexcept {
+    ObjectPool &operator=(ObjectPool &&other) noexcept {
         if (this != &other) {
             clear();
             if constexpr (ThreadSafe) {
@@ -73,11 +73,12 @@ public:
      * @brief 分配对象
      * @return 对象指针，池空且达上限时返回 nullptr
      */
-    T* alloc() {
+    T *alloc() {
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
             return alloc_impl();
-        } else {
+        }
+        else {
             return alloc_impl();
         }
     }
@@ -87,13 +88,15 @@ public:
      * @param obj 对象指针
      * @return true 成功归还，false 池满（对象未归还）
      */
-    bool free(T* obj) {
-        if (!obj) return false;
+    bool free(T *obj) {
+        if (!obj)
+            return false;
 
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
             return free_impl(obj);
-        } else {
+        }
+        else {
             return free_impl(obj);
         }
     }
@@ -105,7 +108,8 @@ public:
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
             return available_;
-        } else {
+        }
+        else {
             return available_;
         }
     }
@@ -117,7 +121,8 @@ public:
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
             return capacity_;
-        } else {
+        }
+        else {
             return capacity_;
         }
     }
@@ -129,20 +134,21 @@ public:
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
             clear_impl();
-        } else {
+        }
+        else {
             clear_impl();
         }
     }
 
 private:
-    static constexpr size_t CHUNK_SIZE = 16;  // 每次扩容数量
+    static constexpr size_t CHUNK_SIZE = 16; // 每次扩容数量
 
-    std::vector<T*> pool_;
+    std::vector<T *> pool_;
     size_t available_ = 0;
     size_t capacity_ = 0;
     mutable std::conditional_t<ThreadSafe, std::mutex, char> mutex_{};
 
-    T* alloc_impl() {
+    T *alloc_impl() {
         if (available_ > 0) {
             return pool_[--available_];
         }
@@ -158,19 +164,19 @@ private:
             return pool_[--available_];
         }
 
-        return nullptr;  // 达到上限
+        return nullptr; // 达到上限
     }
 
-    bool free_impl(T* obj) {
+    bool free_impl(T *obj) {
         if (available_ >= capacity_) {
-            return false;  // 池满
+            return false; // 池满
         }
         pool_[available_++] = obj;
         return true;
     }
 
     void clear_impl() {
-        for (auto* ptr : pool_) {
+        for (auto *ptr: pool_) {
             delete ptr;
         }
         pool_.clear();

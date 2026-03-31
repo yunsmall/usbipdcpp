@@ -14,7 +14,7 @@
 #include "protocol.h"
 #include "../include/utils/utils.h"
 
-usbipdcpp::Session::Session(Server &server):
+usbipdcpp::Session::Session(Server &server) :
     server(server),
     socket(session_io_context) {
 }
@@ -431,13 +431,13 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                         SPDLOG_TRACE("->请求数据{}", get_every_byte(cmd2.data));
 
 #ifdef TRANSFER_DELAY_RECORD
-                        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) {
+if (ep.attributes== static_cast<std::uint8_t>(EndpointAttributes::Control)) {
                             spdlog::trace("{}为控制传输", cmd2.header.seqnum);
                         }
-                        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
+                        else if (ep.attributes== static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
                             spdlog::trace("{}为中断传输", cmd2.header.seqnum);
                         }
-                        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) {
+                        else if (ep.attributes== static_cast<std::uint8_t>(EndpointAttributes::Bulk)) {
                             spdlog::trace("{}为块传输", cmd2.header.seqnum);
                         }
                         else {
@@ -445,24 +445,24 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                         }
 #endif
 
-                        usbipdcpp::error_code ec_during_handling_urb;
-                        // start_processing_urb();
-                        current_import_device->handle_urb(
-                                cmd2,
-                                current_seqnum,
-                                ep,
-                                intf,
-                                cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data), std::move(cmd2.iso_packet_descriptor),
-                                ec_during_handling_urb
-                                );
+usbipdcpp::error_code ec_during_handling_urb;
+// start_processing_urb();
+current_import_device->handle_urb(
+        cmd2,
+        current_seqnum,
+        ep,
+        intf,
+        cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data), std::move(cmd2.iso_packet_descriptor),
+        ec_during_handling_urb
+        );
 
                         if (ec_during_handling_urb) {
-                            SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
-                            //发生错误代表已经不能继续通信了
-                            receiver_ec = ec_during_handling_urb;
-                            should_immediately_stop = true;
-                            co_return;
-                        }
+    SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
+    //发生错误代表已经不能继续通信了
+    receiver_ec = ec_during_handling_urb;
+    should_immediately_stop = true;
+    co_return;
+}
                     }
                     else {
                         SPDLOG_WARN("找不到端点{}", real_ep);
@@ -476,19 +476,19 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                     }
                 }
                 else if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdUnlink, T>) {
-                    UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
-                    SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
+    UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
+    SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                    {
-                        std::lock_guard lock(unlink_map_mutex);
-                        unlink_map.emplace(cmd2.unlink_seqnum, cmd2.header.seqnum);
-                    }
-                    current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
-                }
+    {
+        std::lock_guard lock(unlink_map_mutex);
+        unlink_map.emplace(cmd2.unlink_seqnum, cmd2.header.seqnum);
+    }
+    current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
+}
                 else if constexpr (std::is_same_v<std::monostate, T>) {
-                    SPDLOG_ERROR("收到未知包");
-                    receiver_ec = make_error_code(ErrorType::UNKNOWN_CMD);
-                }
+    SPDLOG_ERROR("收到未知包");
+    receiver_ec = make_error_code(ErrorType::UNKNOWN_CMD);
+}
                 else {
                     //确保处理了所有可能类型
                     static_assert(!std::is_same_v<T, T>);
@@ -497,20 +497,20 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
             }, command);
         }
     }
-    //通知设备断连，告诉设备禁止再发消息，这里阻塞没关系，毕竟已经不接受
-    current_import_device->on_disconnection(receiver_ec);
-    //然后再关闭发送的channel，防止先关闭了但设备因还未被通知到关闭而报错
-    transfer_channel->close();
+//通知设备断连，告诉设备禁止再发消息，这里阻塞没关系，毕竟已经不接受
+current_import_device->on_disconnection (receiver_ec);
+//然后再关闭发送的channel，防止先关闭了但设备因还未被通知到关闭而报错
+transfer_channel->close();
 
-    /* 这里先标记为可用是可行的
-     * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
-     * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
-     * 因此先标记为可用再清除这两个变量的状态
-    */
-    server.try_moving_device_to_available(*current_import_device_id);
-    current_import_device_id.reset();
-    current_import_device.reset();
-    SPDLOG_TRACE("将当前导入设备的busid设为空");
+/* 这里先标记为可用是可行的
+ * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
+ * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
+ * 因此先标记为可用再清除这两个变量的状态
+*/
+server.try_moving_device_to_available (*current_import_device_id);
+current_import_device_id.reset();
+current_import_device.reset();
+SPDLOG_TRACE ("将当前导入设备的busid设为空");
 }
 
 asio::awaitable<void> usbipdcpp::Session::sender_co(usbipdcpp::error_code &ec) {
@@ -660,7 +660,8 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                                 current_seqnum,
                                 ep,
                                 intf,
-                                cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data), std::move(cmd2.iso_packet_descriptor),
+                                cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data),
+                                std::move(cmd2.iso_packet_descriptor),
                                 ec_during_handling_urb
                                 );
 

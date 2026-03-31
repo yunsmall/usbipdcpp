@@ -59,7 +59,7 @@ TEST(TestUsbIpRetUnlink, ToBytes) {
 
 TEST(TestOpRepImport, CreateOnFailure) {
     auto ret = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-        static_cast<std::uint32_t>(OperationStatuType::NoDev));
+            static_cast<std::uint32_t>(OperationStatuType::NoDev));
 
     EXPECT_EQ(ret.status, static_cast<std::uint32_t>(OperationStatuType::NoDev));
     EXPECT_FALSE(ret.device);
@@ -67,22 +67,22 @@ TEST(TestOpRepImport, CreateOnFailure) {
 
 TEST(TestOpRepImport, CreateOnSuccess) {
     auto device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/test/device",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234,
-        .product_id = 0x5678,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .path = "/test/device",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5678,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = {},
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
     });
 
     auto ret = UsbIpResponse::OpRepImport::create_on_success(device);
@@ -96,41 +96,41 @@ TEST(TestOpRepDevlist, CreateFromDevices) {
     std::vector<std::shared_ptr<UsbDevice>> devices;
 
     devices.push_back(std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/test/device1",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234,
-        .product_id = 0x5678,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .path = "/test/device1",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5678,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = {},
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
     }));
 
     devices.push_back(std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/test/device2",
-        .busid = "1-2",
-        .bus_num = 1,
-        .dev_num = 2,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
-        .vendor_id = 0xABCD,
-        .product_id = 0xEF01,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .path = "/test/device2",
+            .busid = "1-2",
+            .bus_num = 1,
+            .dev_num = 2,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
+            .vendor_id = 0xABCD,
+            .product_id = 0xEF01,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = {},
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
     }));
 
     auto ret = UsbIpResponse::OpRepDevlist::create_from_devices(devices);

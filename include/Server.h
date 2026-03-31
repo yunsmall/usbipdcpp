@@ -16,127 +16,127 @@
 
 
 namespace usbipdcpp {
-    class Session;
+class Session;
+
+/**
+ * @brief 服务器网络配置
+ */
+struct ServerNetworkConfig {
+    /// socket 接收缓冲区大小（字节），0 表示使用系统默认值
+    std::size_t socket_recv_buffer_size = 128 * 1024;
+    /// socket 发送缓冲区大小（字节），0 表示使用系统默认值
+    std::size_t socket_send_buffer_size = 128 * 1024;
+    /// 是否禁用 Nagle 算法（减少小包延迟）
+    bool tcp_no_delay = true;
+};
+
+class Server final {
+public:
+    friend class Session;
+
+    Server() = default;
+    explicit Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config = {});
+    Server(const Server &) = delete;
+    Server(Server &&) = delete;
+    /**
+     * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
+     * 在start前后调用add_device都可以。
+     * @param ep 监听地址
+     */
+    void start(asio::ip::tcp::endpoint &ep);
+    /**
+     * @brief 内部先关闭每一个session的socket，再关闭io_context。
+     * 效果相当于每个客户端都调用了detach
+     */
+    void stop();
 
     /**
-     * @brief 服务器网络配置
+     * @brief 添加一个device，线程安全。不管server是否启动都可以调用
+     * @param device 待添加的设备
      */
-    struct ServerNetworkConfig {
-        /// socket 接收缓冲区大小（字节），0 表示使用系统默认值
-        std::size_t socket_recv_buffer_size = 128 * 1024;
-        /// socket 发送缓冲区大小（字节），0 表示使用系统默认值
-        std::size_t socket_send_buffer_size = 128 * 1024;
-        /// 是否禁用 Nagle 算法（减少小包延迟）
-        bool tcp_no_delay = true;
-    };
+    void add_device(std::shared_ptr<UsbDevice> &&device);
 
-    class Server final {
-    public:
-        friend class Session;
+    bool has_bound_device(const std::string &busid);
 
-        Server() = default;
-        explicit Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config = {});
-        Server(const Server &) = delete;
-        Server(Server &&) = delete;
-        /**
-         * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
-         * 在start前后调用add_device都可以。
-         * @param ep 监听地址
-         */
-        void start(asio::ip::tcp::endpoint &ep);
-        /**
-         * @brief 内部先关闭每一个session的socket，再关闭io_context。
-         * 效果相当于每个客户端都调用了detach
-         */
-        void stop();
+    size_t get_session_count();
 
-        /**
-         * @brief 添加一个device，线程安全。不管server是否启动都可以调用
-         * @param device 待添加的设备
-         */
-        void add_device(std::shared_ptr<UsbDevice> &&device);
+    void print_bound_devices();
 
-        bool has_bound_device(const std::string &busid);
+    /**
+     * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
+     * @return
+     */
+    [[nodiscard]] std::vector<std::shared_ptr<UsbDevice>> &get_available_devices() {
+        return available_devices;
+    }
 
-        size_t get_session_count();
+    /**
+     * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
+     * @return
+     */
+    [[nodiscard]] std::map<std::string, std::shared_ptr<UsbDevice>> &get_using_devices() {
+        return using_devices;
+    }
 
-        void print_bound_devices();
+    /**
+     * @brief 操作设备数据请调用这个函数获取锁后使用
+     * @return
+     */
+    [[nodiscard]] std::shared_mutex &get_devices_mutex() {
+        return devices_mutex;
+    }
 
-        /**
-         * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
-         * @return
-         */
-        [[nodiscard]] std::vector<std::shared_ptr<UsbDevice>> &get_available_devices() {
-            return available_devices;
-        }
+    void register_session_exit_callback(std::function<void()> &&callback);
 
-        /**
-         * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
-         * @return
-         */
-        [[nodiscard]] std::map<std::string, std::shared_ptr<UsbDevice>> &get_using_devices() {
-            return using_devices;
-        }
+    /**
+     * @brief 移除指定的 session 并触发 on_session_exit
+     * @param session 要移除的 session 指针
+     */
+    void remove_session(Session *session);
 
-        /**
-         * @brief 操作设备数据请调用这个函数获取锁后使用
-         * @return
-         */
-        [[nodiscard]] std::shared_mutex &get_devices_mutex() {
-            return devices_mutex;
-        }
+    ~Server();
 
-        void register_session_exit_callback(std::function<void()> &&callback);
+protected:
+    asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
-        /**
-         * @brief 移除指定的 session 并触发 on_session_exit
-         * @param session 要移除的 session 指针
-         */
-        void remove_session(Session *session);
+    bool is_device_using(const std::string &busid);
 
-        ~Server();
+    void try_moving_device_to_available(const std::string &busid);
 
-    protected:
-        asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
+    /**
+     * @brief Try to move device to using_devices, and return this device,
+     * return nullptr if there is no such device in available_devices or moved failed.
+     * @param busid device busid
+     * @return device or nullptr when error
+     */
+    std::shared_ptr<UsbDevice> try_moving_device_to_using(const std::string &busid);
 
-        bool is_device_using(const std::string &busid);
+    void print_devices();
 
-        void try_moving_device_to_available(const std::string &busid);
+    std::atomic_bool should_stop = false;
 
-        /**
-         * @brief Try to move device to using_devices, and return this device,
-         * return nullptr if there is no such device in available_devices or moved failed.
-         * @param busid device busid
-         * @return device or nullptr when error
-         */
-        std::shared_ptr<UsbDevice> try_moving_device_to_using(const std::string &busid);
+    ServerNetworkConfig network_config;
 
-        void print_devices();
+    std::list<std::weak_ptr<Session>> sessions;
+    std::shared_mutex session_list_mutex;
+    std::condition_variable_any all_sessions_closed_cv;
 
-        std::atomic_bool should_stop = false;
+    //网络通信请异步使用这个io_context
+    asio::io_context asio_io_context;
+    //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
+    std::thread network_io_thread;
 
-        ServerNetworkConfig network_config;
+private:
+    void on_session_exit();
 
-        std::list<std::weak_ptr<Session>> sessions;
-        std::shared_mutex session_list_mutex;
-        std::condition_variable_any all_sessions_closed_cv;
+    std::list<std::function<void()>> session_exit_callbacks;
+    std::shared_mutex exit_callbacks_mutex;
 
-        //网络通信请异步使用这个io_context
-        asio::io_context asio_io_context;
-        //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
-        std::thread network_io_thread;
-
-    private:
-        void on_session_exit();
-
-        std::list<std::function<void()>> session_exit_callbacks;
-        std::shared_mutex exit_callbacks_mutex;
-
-        //可供导入的设备
-        std::vector<std::shared_ptr<UsbDevice>> available_devices;
-        //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
-        std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
-        //锁available_devices和using_devices两个变量
-        std::shared_mutex devices_mutex;
-    };
+    //可供导入的设备
+    std::vector<std::shared_ptr<UsbDevice>> available_devices;
+    //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
+    std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
+    //锁available_devices和using_devices两个变量
+    std::shared_mutex devices_mutex;
+};
 }

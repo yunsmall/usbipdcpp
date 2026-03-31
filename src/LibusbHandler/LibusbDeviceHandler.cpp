@@ -568,7 +568,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                 trx->num_iso_packets,
                 std::move(callback_arg.transfer_buffer),
                 iso_packet_descriptors
-        );
+                );
 
         if (!callback_arg.is_out) {
             ret.actual_length = trx->actual_length;

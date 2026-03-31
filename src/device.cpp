@@ -88,8 +88,8 @@ void usbipdcpp::UsbDevice::handle_urb(
         const UsbEndpoint &ep,
         std::optional<UsbInterface> &interface,
         std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-        std::vector<uint8_t>&& out_data,
-        std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptors,
+        std::vector<uint8_t> &&out_data,
+        std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors,
         std::error_code &ec) {
     SPDLOG_TRACE("设备处理URB，将其转发到对应handler中");
     if (handler) {

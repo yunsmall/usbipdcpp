@@ -7,23 +7,23 @@
 #include <libevdev/libevdev.h>
 
 namespace usbipdcpp {
-    namespace umouse {
+namespace umouse {
 
-        struct MouseDescript {
-            std::string name;
-            std::filesystem::path path;
-        };
+    struct MouseDescript {
+        std::string name;
+        std::filesystem::path path;
+    };
 
-        struct MouseDevice {
-            int fd;
-            libevdev *dev;
-            std::filesystem::path path;
-        };
+    struct MouseDevice {
+        int fd;
+        libevdev *dev;
+        std::filesystem::path path;
+    };
 
-        std::vector<MouseDescript> findAllMouses();
+    std::vector<MouseDescript> findAllMouses();
 
-        MouseDevice openMouse(const std::filesystem::path &path);
+    MouseDevice openMouse(const std::filesystem::path &path);
 
-        void closeMouse(MouseDevice &device);
-    }
+    void closeMouse(MouseDevice &device);
+}
 }

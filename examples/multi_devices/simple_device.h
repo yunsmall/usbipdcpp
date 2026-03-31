@@ -49,7 +49,8 @@ public:
                                                  const usbipdcpp::data_type &out_data, std::error_code &ec) override;
     usbipdcpp::data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) override;
-    void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length, const usbipdcpp::data_type &data,
+    void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
+                            const usbipdcpp::data_type &data,
                             std::uint32_t *p_status) override;
     usbipdcpp::data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                           std::uint32_t *p_status) override;

@@ -46,12 +46,12 @@ public:
         std::lock_guard lock(segment_locks_[segment_idx]);
 
         auto [it, inserted] = segments_[segment_idx].emplace(
-            seqnum,
-            TransferInfo{
-                .seqnum = seqnum,
-                .transfer = transfer,
-                .endpoint = endpoint
-            });
+                seqnum,
+                TransferInfo{
+                        .seqnum = seqnum,
+                        .transfer = transfer,
+                        .endpoint = endpoint
+                });
 
         if (inserted) {
             concurrent_transfer_count_.fetch_add(1, std::memory_order_release);
@@ -116,7 +116,7 @@ public:
         std::vector<TransferInfo> result;
         for (size_t i = 0; i < SEGMENT_COUNT; ++i) {
             std::shared_lock lock(segment_locks_[i]);
-            for (const auto& [seqnum, info] : segments_[i]) {
+            for (const auto &[seqnum, info]: segments_[i]) {
                 result.push_back(info);
             }
         }

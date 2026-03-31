@@ -80,7 +80,7 @@ void MockMouseInterfaceHandler::on_disconnection(error_code &ec) {
     send_thread.join();
 }
 
-MockMouseInterfaceHandler::MockMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool):
+MockMouseInterfaceHandler::MockMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 

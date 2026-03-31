@@ -35,12 +35,12 @@ TEST(TestUsbEndpoint, CustomMaxPacketSize) {
 
 TEST(TestUsbInterface, BasicInterface) {
     UsbInterface intf{
-        .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-        .interface_subclass = 0x00,
-        .interface_protocol = 0x00,
-        .endpoints = {
-            UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10}
-        }
+            .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+            .interface_subclass = 0x00,
+            .interface_protocol = 0x00,
+            .endpoints = {
+                    UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10}
+            }
     };
 
     EXPECT_EQ(intf.interface_class, static_cast<std::uint8_t>(ClassCode::HID));
@@ -51,22 +51,22 @@ TEST(TestUsbDevice, BasicDevice) {
     StringPool string_pool;
 
     auto device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/test/device",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234,
-        .product_id = 0x5678,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .path = "/test/device",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5678,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = {},
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
     });
 
     EXPECT_EQ(device->busid, "1-1");
@@ -76,34 +76,34 @@ TEST(TestUsbDevice, BasicDevice) {
 
 TEST(TestUsbDevice, FindEndpoint) {
     std::vector<UsbInterface> interfaces = {
-        UsbInterface{
-            .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-            .interface_subclass = 0x00,
-            .interface_protocol = 0x00,
-            .endpoints = {
-                UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
-                UsbEndpoint{.address = 0x01, .attributes = 0x02, .max_packet_size = 64, .interval = 0}
+            UsbInterface{
+                    .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                    .interface_subclass = 0x00,
+                    .interface_protocol = 0x00,
+                    .endpoints = {
+                            UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
+                            UsbEndpoint{.address = 0x01, .attributes = 0x02, .max_packet_size = 64, .interval = 0}
+                    }
             }
-        }
     };
 
     auto device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/test/device",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234,
-        .product_id = 0x5678,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = interfaces,
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .path = "/test/device",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5678,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
     });
 
     // 查找存在的端点

@@ -14,8 +14,8 @@ int main() {
             UsbInterface{
                     .interface_class = static_cast<std::uint8_t>(
                         ClassCode::HID),
-                    .interface_subclass = 0x01,  // Boot Interface Subclass
-                    .interface_protocol = 0x01,  // Keyboard
+                    .interface_subclass = 0x01, // Boot Interface Subclass
+                    .interface_protocol = 0x01, // Keyboard
                     .endpoints = {
                             UsbEndpoint{
                                     .address = 0x81, // IN

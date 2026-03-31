@@ -7,22 +7,23 @@
 #include "endpoint.h"
 #include "constant.h"
 
-std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_pool) {
+std::shared_ptr<usbipdcpp::UsbDevice>
+DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_pool) {
     // 创建接口端点
     std::vector<usbipdcpp::UsbInterface> interfaces = {
-        usbipdcpp::UsbInterface{
-            .interface_class = static_cast<std::uint8_t>(usbipdcpp::ClassCode::HID),
-            .interface_subclass = 0x00,
-            .interface_protocol = 0x00,
-            .endpoints = {
-                usbipdcpp::UsbEndpoint{
-                    .address = 0x81,  // IN endpoint
-                    .attributes = 0x03, // Interrupt
-                    .max_packet_size = 8,
-                    .interval = 10
-                }
+            usbipdcpp::UsbInterface{
+                    .interface_class = static_cast<std::uint8_t>(usbipdcpp::ClassCode::HID),
+                    .interface_subclass = 0x00,
+                    .interface_protocol = 0x00,
+                    .endpoints = {
+                            usbipdcpp::UsbEndpoint{
+                                    .address = 0x81, // IN endpoint
+                                    .attributes = 0x03, // Interrupt
+                                    .max_packet_size = 8,
+                                    .interval = 10
+                            }
+                    }
             }
-        }
     };
 
     // 为接口设置处理器
@@ -30,22 +31,22 @@ std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int in
 
     // 创建设备
     auto device = std::make_shared<usbipdcpp::UsbDevice>(usbipdcpp::UsbDevice{
-        .path = generate_path(index),
-        .busid = generate_busid(index),
-        .bus_num = 1,
-        .dev_num = static_cast<std::uint32_t>(index),
-        .speed = static_cast<std::uint32_t>(usbipdcpp::UsbSpeed::Full),
-        .vendor_id = generate_vendor_id(index),
-        .product_id = generate_product_id(index),
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = interfaces,
-        .ep0_in = usbipdcpp::UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = usbipdcpp::UsbEndpoint::get_default_ep0_out(),
+            .path = generate_path(index),
+            .busid = generate_busid(index),
+            .bus_num = 1,
+            .dev_num = static_cast<std::uint32_t>(index),
+            .speed = static_cast<std::uint32_t>(usbipdcpp::UsbSpeed::Full),
+            .vendor_id = generate_vendor_id(index),
+            .product_id = generate_product_id(index),
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = usbipdcpp::UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = usbipdcpp::UsbEndpoint::get_default_ep0_out(),
     });
 
     // 为设备设置处理器
@@ -58,7 +59,7 @@ std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int in
 }
 
 std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> DeviceFactory::create_devices(int count,
-                                                                                  usbipdcpp::StringPool &string_pool) {
+    usbipdcpp::StringPool &string_pool) {
     std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> devices;
     devices.reserve(count);
 

@@ -22,7 +22,7 @@ int main() {
     usbipdcpp::Server server;
 
     // 将所有设备添加到服务器
-    for (auto &device : devices) {
+    for (auto &device: devices) {
         server.add_device(std::move(device));
     }
 

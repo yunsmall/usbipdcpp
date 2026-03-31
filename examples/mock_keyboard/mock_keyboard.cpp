@@ -67,15 +67,15 @@ void MockKeyboardInterfaceHandler::on_disconnection(error_code &ec) {
     send_thread.join();
 }
 
-MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool):
+MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
 void MockKeyboardInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                          std::uint32_t transfer_flags,
-                                                          std::uint32_t transfer_buffer_length,
-                                                          const data_type &out_data,
-                                                          std::error_code &ec) {
+                                                             std::uint32_t transfer_flags,
+                                                             std::uint32_t transfer_buffer_length,
+                                                             const data_type &out_data,
+                                                             std::error_code &ec) {
     if (ep.is_in()) {
         //往队列里添加东西
         std::lock_guard lock(int_req_queue_mutex);
@@ -98,8 +98,9 @@ void MockKeyboardInterfaceHandler::request_clear_feature(std::uint16_t feature_s
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MockKeyboardInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                               std::uint32_t *p_status) {
+void MockKeyboardInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector,
+                                                                  std::uint8_t ep_address,
+                                                                  std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_clear_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
@@ -119,7 +120,8 @@ std::uint16_t MockKeyboardInterfaceHandler::request_get_status(std::uint32_t *p_
     return 0;
 }
 
-std::uint16_t MockKeyboardInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
+std::uint16_t MockKeyboardInterfaceHandler::request_endpoint_get_status(
+        std::uint8_t ep_address, std::uint32_t *p_status) {
     return 0;
 }
 
@@ -129,7 +131,7 @@ void MockKeyboardInterfaceHandler::request_set_feature(std::uint16_t feature_sel
 }
 
 void MockKeyboardInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                             std::uint32_t *p_status) {
+                                                                std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_endpoint_set_feature");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
@@ -144,17 +146,18 @@ data_type MockKeyboardInterfaceHandler::get_report_descriptor() {
 }
 
 void MockKeyboardInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
-                                                                        const UsbEndpoint &ep,
-                                                                        std::uint32_t transfer_flags,
-                                                                        std::uint32_t transfer_buffer_length,
-                                                                        const SetupPacket &setup_packet,
-                                                                        const data_type &out_data,
-                                                                        std::error_code &ec) {
+                                                                           const UsbEndpoint &ep,
+                                                                           std::uint32_t transfer_flags,
+                                                                           std::uint32_t transfer_buffer_length,
+                                                                           const SetupPacket &setup_packet,
+                                                                           const data_type &out_data,
+                                                                           std::error_code &ec) {
     session.load()->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 
-data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                        std::uint32_t *p_status) {
+data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,
+                                                           std::uint16_t length,
+                                                           std::uint32_t *p_status) {
     auto report_type = static_cast<HIDReportType>(type);
     if (report_type == HIDReportType::Input) {
         std::unique_lock lock(state_mutex);
@@ -171,13 +174,14 @@ data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, st
 }
 
 void MockKeyboardInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                   const data_type &data, std::uint32_t *p_status) {
+                                                      const data_type &data, std::uint32_t *p_status) {
     SPDLOG_WARN("unhandled request_set_report");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-data_type MockKeyboardInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                      std::uint32_t *p_status) {
+data_type MockKeyboardInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
+                                                         std::uint16_t length,
+                                                         std::uint32_t *p_status) {
     data_type result;
     vector_append_to_net(result, (std::uint16_t) idle_speed);
     return result;

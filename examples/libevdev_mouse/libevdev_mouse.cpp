@@ -254,7 +254,7 @@ void LibevdevMouseInterfaceHandler::reset_relative_data() {
     current_state.move_vertical = 0;
 }
 
-LibevdevMouseInterfaceHandler::LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool):
+LibevdevMouseInterfaceHandler::LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 

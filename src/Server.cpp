@@ -13,8 +13,8 @@
 #include "type.h"
 #include "Session.h"
 
-usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config)
-    : network_config(std::move(network_config)) {
+usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config) :
+    network_config(std::move(network_config)) {
     available_devices.reserve(devices.size());
     for (auto &device: devices) {
         available_devices.emplace_back(std::make_shared<UsbDevice>(std::move(device)));
@@ -192,16 +192,16 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
             std::error_code socket_opt_ec;
             if (network_config.socket_recv_buffer_size > 0) {
                 session->socket.set_option(
-                    asio::socket_base::receive_buffer_size(network_config.socket_recv_buffer_size),
-                    socket_opt_ec);
+                        asio::socket_base::receive_buffer_size(network_config.socket_recv_buffer_size),
+                        socket_opt_ec);
                 if (socket_opt_ec) {
                     SPDLOG_WARN("Failed to set receive buffer size: {}", socket_opt_ec.message());
                 }
             }
             if (network_config.socket_send_buffer_size > 0) {
                 session->socket.set_option(
-                    asio::socket_base::send_buffer_size(network_config.socket_send_buffer_size),
-                    socket_opt_ec);
+                        asio::socket_base::send_buffer_size(network_config.socket_send_buffer_size),
+                        socket_opt_ec);
                 if (socket_opt_ec) {
                     SPDLOG_WARN("Failed to set send buffer size: {}", socket_opt_ec.message());
                 }
@@ -254,7 +254,7 @@ void usbipdcpp::Server::try_moving_device_to_available(const std::string &busid)
     auto ret = using_devices.find(busid);
     if (ret != using_devices.end()) {
         SPDLOG_INFO("成功将{}转移到可用设备中", busid);
-        auto& dev = ret->second;
+        auto &dev = ret->second;
         available_devices.emplace_back(std::move(dev));
         using_devices.erase(busid);
     }
