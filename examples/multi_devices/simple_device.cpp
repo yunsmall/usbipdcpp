@@ -31,11 +31,11 @@ void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
     if (ep.is_in()) {
         // 返回一个简单的数据
         usbipdcpp::data_type data = {0x00};
-        session.load()->submit_ret_submit(
+        session->submit_ret_submit(
                 usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
     }
     else {
-        session.load()->submit_ret_submit(
+        session->submit_ret_submit(
                 usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum));
     }
 }
@@ -101,7 +101,7 @@ void SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb(
         const usbipdcpp::SetupPacket &setup_packet,
         const usbipdcpp::data_type &out_data, std::error_code &ec) {
     SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb");
-    session.load()->submit_ret_submit(
+    session->submit_ret_submit(
             usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
 }
 

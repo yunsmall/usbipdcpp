@@ -95,7 +95,7 @@ protected:
 
     //不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
     //发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交
-    int timeout_milliseconds = 0;
+    static constexpr int timeout_milliseconds = 0;
 };
 
 }

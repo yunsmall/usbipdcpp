@@ -17,6 +17,7 @@
 #include <deque>
 #endif
 
+#include "utils/LatencyTracker.h"
 #include "protocol.h"
 #include "type.h"
 
@@ -82,6 +83,8 @@ public:
 
 
     ~Session();
+
+    LATENCY_TRACKER_MEMBER(latency_tracker);
 
 private:
 #ifdef USBIPDCPP_USE_COROUTINE

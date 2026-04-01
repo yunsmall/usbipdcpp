@@ -381,13 +381,17 @@ void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
         try {
             SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
             while (!should_exit_libusb_event_thread) {
-                auto ret = libusb_handle_events(nullptr);
-                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) {
+                //usbipd-libusb说这个函数有性能问题，起初我还不信，延时分析了一下发现果真如此
+                // auto ret = libusb_handle_events(nullptr);
+                struct timeval tv = {0, 0};
+                auto ret = libusb_handle_events_timeout(nullptr, &tv);//所以这里直接死循环？
+
+                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread)[[unlikely]] {
                     SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
                     break;
                 }
-                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) {
-                    fprintf(stderr, "Event handling error: %s\n", libusb_error_name(ret));
+                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED)[[unlikely]] {
+                    SPDLOG_ERROR("Event handling error: {}\n", libusb_strerror(ret));
                     break;
                 }
             }

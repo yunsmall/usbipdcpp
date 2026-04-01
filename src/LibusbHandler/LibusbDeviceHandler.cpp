@@ -47,15 +47,34 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
-    int err = 0;
     if (device_removed)[[unlikely]]
             return;
+
     auto info = transfer_tracker_.get(seqnum);
     if (info.has_value()) {
-        err = libusb_cancel_transfer(info->transfer);
+        int err = libusb_cancel_transfer(info->transfer);
+        if (err)[[unlikely]] {
+            SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
+        }
     }
-    if (err)[[unlikely]] {
-        SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
+    else {
+        // transfer 已经完成（不在 transfer_tracker_ 中），需要立即发送 status=0 的 ret_unlink
+        //
+        // 时序说明（参考 usbipd-libusb stub_tx_loop 注释）：
+        // 如果 transfer 完成早于收到 CMD_UNLINK，transfer_callback 已经发送了 ret_submit，
+        // 此时 handle_unlink_seqnum 在 transfer_tracker_ 中找不到目标。
+        // 这种情况下需要立即发送 status=0 的 ret_unlink。
+        // 客户端会先收到 ret_submit，再收到 ret_unlink，vhci 驱动会理解这是 unlink 太晚了，
+        // 忽略 ret_unlink，使用 ret_submit 的结果。这种"两个都发"的行为是正确的。
+        auto unlink_seqnum_opt = session->get_unlink_seqnum(seqnum);
+        if (std::get<0>(unlink_seqnum_opt))[[likely]] {
+            auto cmd_unlink_seqnum = std::get<1>(unlink_seqnum_opt);
+            SPDLOG_DEBUG("transfer {} 已完成，立即发送 ret_unlink {}", seqnum, cmd_unlink_seqnum);
+            session->submit_ret_unlink_and_then_remove_seqnum_unlink(
+                    UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(cmd_unlink_seqnum, 0),
+                    seqnum
+                    );
+        }
     }
 }
 
@@ -83,7 +102,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         auto transfer = libusb_alloc_transfer(0);
         if (!transfer)[[unlikely]] {
             SPDLOG_ERROR("libusb_alloc_transfer 失败");
-            session.load()->submit_ret_submit(
+            session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
             return;
         }
@@ -132,7 +151,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
             }
             libusb_free_transfer(transfer);
             // ec = make_error_code(ErrorType::TRANSFER_ERROR);
-            session.load()->submit_ret_submit(
+            session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
             if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
                 device_removed = true;
@@ -143,7 +162,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
     }
     // tweak 成功或失败，都不提交 transfer，发送成功响应
     // 与 usbipd-libusb 行为一致：特殊命令无论成功失败都返回成功
-    session.load()->submit_ret_submit(
+    session->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum));
 }
 
@@ -158,6 +177,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
         return;
     }
     bool is_out = !ep.is_in();
+
+    LATENCY_TRACK(session->latency_tracker,seqnum,"LibusbDeviceHandler::handle_bulk_transfer进来");
 
     SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", is_out?"Out":"In", ep.address);
     auto transfer = libusb_alloc_transfer(0);
@@ -182,6 +203,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
 
     transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
+    LATENCY_TRACK(session->latency_tracker,seqnum,"LibusbDeviceHandler::handle_bulk_transfer libusb_submit_transfer");
     auto err = libusb_submit_transfer(transfer);
     if (err < 0)[[unlikely]] {
         SPDLOG_ERROR("块传输失败，{}", libusb_strerror(err));
@@ -196,7 +218,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
-        session.load()->submit_ret_submit(
+        session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
 }
@@ -255,7 +277,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
-        session.load()->submit_ret_submit(
+        session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
 }
@@ -326,7 +348,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
-        session.load()->submit_ret_submit(
+        session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
     }
 }
@@ -392,20 +414,13 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd(const SetupPacke
 }
 
 int usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &setup_packet) {
-    SPDLOG_DEBUG("{}: libusb_reset_device",
+    SPDLOG_DEBUG("{}: usb_queue_reset_device",
                  get_device_busid(libusb_get_device(native_handle)));
 
-    auto err = libusb_reset_device(native_handle);
-    if (err) [[unlikely]] {
-        SPDLOG_ERROR("{}: libusb_reset_device error: {}",
-                     get_device_busid(libusb_get_device(native_handle)),
-                     libusb_strerror(err));
-        return err; // 返回错误码
-    }
-
-    SPDLOG_DEBUG("{}: libusb_reset_device done",
-                 get_device_busid(libusb_get_device(native_handle)));
-    return 0; // 返回 0 表示成功
+    // 参考 usbipd-libusb：不执行 libusb_reset_device
+    // reset 可能导致设备重新枚举，连接会断开
+    // libusb_reset_device(native_handle);
+    return 0;
 }
 
 int usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &setup_packet) {
@@ -503,6 +518,8 @@ enum libusb_transfer_status usbipdcpp::LibusbDeviceHandler::error2trxstat(int e)
 void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     auto &callback_arg = *static_cast<libusb_callback_args *>(trx->user_data);
 
+    LATENCY_TRACK(callback_arg.handler->session->latency_tracker,callback_arg.seqnum,"LibusbDeviceHandler::transfer_callback调用");
+
     //调了回调则当前包并未在发送，因此只要调了回调就先将其删了
     callback_arg.handler->transfer_tracker_.remove(callback_arg.seqnum);
 
@@ -558,7 +575,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     SPDLOG_DEBUG("libusb传输了{}个字节", trx->actual_length);
 
 
-    auto unlink_found = callback_arg.handler->session.load()->get_unlink_seqnum(callback_arg.seqnum);
+    auto unlink_found = callback_arg.handler->session->get_unlink_seqnum(callback_arg.seqnum);
     if (!std::get<0>(unlink_found))[[likely]] {
         //发送ret_submit
         auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
@@ -626,13 +643,14 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
 
         SPDLOG_DEBUG("libusb传输actual_length为{}个字节", trx->actual_length);
 
-        callback_arg.handler->session.load()->submit_ret_submit(std::move(ret));
+        LATENCY_TRACK(callback_arg.handler->session->latency_tracker,callback_arg.seqnum,"LibusbDeviceHandler::transfer_callback submit_ret_submit");
+        callback_arg.handler->session->submit_ret_submit(std::move(ret));
     }
     else {
         auto cmd_unlink_seqnum = std::get<1>(unlink_found);
-
+        LATENCY_TRACK_END_MSG(callback_arg.handler->session->latency_tracker,cmd_unlink_seqnum,"cmd_unlink_seqnum被unlink");
         //发送ret_unlink
-        callback_arg.handler->session.load()->submit_ret_unlink_and_then_remove_seqnum_unlink(
+        callback_arg.handler->session->submit_ret_unlink_and_then_remove_seqnum_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
                         cmd_unlink_seqnum,
                         trxstat2error(trx->status)

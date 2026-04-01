@@ -247,7 +247,7 @@ bool usbipdcpp::Server::is_device_using(const std::string &busid) {
 
 void usbipdcpp::Server::try_moving_device_to_available(const std::string &busid) {
     print_devices();
-    SPDLOG_INFO("尝试将{}转移到可用设备中", busid);
+    SPDLOG_DEBUG("尝试将{}转移到可用设备中", busid);
     std::lock_guard lock(devices_mutex);
     // SPDLOG_TRACE("成功获得两个锁");
 

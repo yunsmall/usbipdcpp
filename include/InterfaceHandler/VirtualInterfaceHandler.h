@@ -100,7 +100,7 @@ public:
     }
 
 protected:
-    std::atomic<Session *> session = nullptr;
+    Session * session = nullptr;
 
     std::uint8_t string_interface;
 

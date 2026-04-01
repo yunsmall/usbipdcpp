@@ -110,7 +110,7 @@ protected:
 
 protected:
     UsbDevice &handle_device;
-    std::atomic<Session *> session = nullptr;
+    Session * session = nullptr;
 };
 
 class DeviceHandlerBase : public AbstDeviceHandler {
