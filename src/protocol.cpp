@@ -5,6 +5,7 @@
 #include <asio.hpp>
 #include <variant>
 #include <spdlog/spdlog.h>
+#include "utils/SmallVector.h"
 
 
 using namespace usbipdcpp;
@@ -260,18 +261,43 @@ asio::awaitable<void> UsbIpResponse::UsbIpRetSubmit::to_socket_co(asio::ip::tcp:
                                                        number_of_packets, error_count));
     if (!transfer_buffer.empty() && actual_length > 0) {
         if (iso_packet_descriptor.empty())[[likely]] {
+            // 非等时传输：header + data
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
             buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             co_await asio::async_write(sock, buffers, asio::redirect_error(asio::use_awaitable, ec));
         }
         else {
-            std::array<asio::const_buffer, 3> buffers;
-            buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
-            auto iso_dec_data = serializable_array_range_to_network_data(iso_packet_descriptor);
-            buffers[2] = asio::buffer(iso_dec_data);
-            co_await asio::async_write(sock, buffers, asio::redirect_error(asio::use_awaitable, ec));
+            // 等时传输：header + scatter-gather data + scatter-gather iso descriptors
+            // 零动态分配（64 个 iso packet 以内）
+
+            // 存储每个 iso descriptor 的字节（每个 16 字节）
+            SmallVector<decltype(UsbIpIsoPacketDescriptor{}.to_bytes()), 64> iso_desc_bytes;
+            for (const auto &iso: iso_packet_descriptor) {
+                iso_desc_bytes.push_back(iso.to_bytes());
+            }
+
+            // 组织 scatter-gather buffer
+            SmallVector<asio::const_buffer, 130> buffers; // 1 header + 64 data + 64 iso_desc
+            buffers.push_back(asio::buffer(data1));
+
+            // scatter-gather 发送每个 iso packet 数据
+            size_t original_offset = 0;
+            for (const auto &iso: iso_packet_descriptor) {
+                buffers.push_back(asio::buffer(
+                        transfer_buffer.data() + original_offset,
+                        iso.actual_length
+                        ));
+                original_offset += iso.length; // 累加原始长度，跳过 padding
+            }
+
+            // scatter-gather 发送每个 iso descriptor
+            for (const auto &bytes: iso_desc_bytes) {
+                buffers.push_back(asio::buffer(bytes));
+            }
+
+            co_await asio::async_write(sock, buffers,
+                                       asio::redirect_error(asio::use_awaitable, ec));
         }
     }
     else {
@@ -290,17 +316,41 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
                                                        number_of_packets, error_count));
     if (!transfer_buffer.empty() && actual_length > 0) {
         if (iso_packet_descriptor.empty())[[likely]] {
+            // 非等时传输：header + data
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
             buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
             asio::write(sock, buffers, ec);
         }
         else {
-            std::array<asio::const_buffer, 3> buffers;
-            buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
-            auto iso_dec_data = serializable_array_range_to_network_data(iso_packet_descriptor);
-            buffers[2] = asio::buffer(iso_dec_data);
+            // 等时传输：header + scatter-gather data + scatter-gather iso descriptors
+            // 零动态分配（64 个 iso packet 以内）
+
+            // 存储每个 iso descriptor 的字节（每个 16 字节）
+            SmallVector<decltype(UsbIpIsoPacketDescriptor{}.to_bytes()), 64> iso_desc_bytes;
+            for (const auto &iso: iso_packet_descriptor) {
+                iso_desc_bytes.push_back(iso.to_bytes());
+            }
+
+            // 组织 scatter-gather buffer
+            SmallVector<asio::const_buffer, 130> buffers; // 1 header + 64 data + 64 iso_desc
+            buffers.push_back(asio::buffer(data1));
+
+            // scatter-gather 发送每个 iso packet 数据
+            size_t original_offset = 0;
+            for (const auto &iso: iso_packet_descriptor) {
+                buffers.push_back(asio::buffer(
+                        transfer_buffer.data() + original_offset,
+                        iso.actual_length
+                        ));
+                original_offset += iso.length_in_transfer_buffer_only_for_send;
+            }
+
+            // scatter-gather 发送每个 iso descriptor
+            for (const auto &bytes: iso_desc_bytes) {
+                buffers.push_back(asio::buffer(bytes));
+            }
+
             asio::write(sock, buffers, ec);
         }
     }
@@ -333,8 +383,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
         std::uint32_t seqnum, std::uint32_t status, std::uint32_t start_frame,
         std::uint32_t number_of_packets, std::vector<std::uint8_t> &&transfer_buffer,
-        const std::vector<UsbIpIsoPacketDescriptor> &
-        iso_packet_descriptor) {
+        std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptor) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
                     USBIP_RET_SUBMIT,
@@ -346,7 +395,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
             .number_of_packets = number_of_packets,
             .error_count = 0,
             .transfer_buffer = std::move(transfer_buffer),
-            .iso_packet_descriptor = iso_packet_descriptor
+            .iso_packet_descriptor = std::move(iso_packet_descriptor)
     };
     return ret;
 }

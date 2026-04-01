@@ -139,6 +139,11 @@ struct UsbIpIsoPacketDescriptor {
     void from_socket(asio::ip::tcp::socket &sock);
 
     bool operator==(const UsbIpIsoPacketDescriptor &other) const = default;
+
+    //发送出去的数据是紧凑的，但需要有个信息来确定发送时当前数据在内存中的长度以确定在内存中遍历的步长。
+    //这个变量只是为了发送时在内存中处理更加方便，与usbip协议无关
+    //对于libusb来说，这个值需要为libusb_iso_packet_descriptor::length
+    std::uint32_t length_in_transfer_buffer_only_for_send;
 };
 
 static_assert(Serializable<UsbIpIsoPacketDescriptor>);
@@ -345,8 +350,7 @@ namespace UsbIpResponse {
                 std::uint32_t start_frame,
                 std::uint32_t number_of_packets,
                 std::vector<std::uint8_t> &&transfer_buffer,
-                const std::vector<UsbIpIsoPacketDescriptor> &
-                iso_packet_descriptor
+                std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptor
                 );
         static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum);
         static UsbIpRetSubmit create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status);

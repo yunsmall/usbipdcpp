@@ -557,7 +557,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     }
     SPDLOG_DEBUG("libusb传输了{}个字节", trx->actual_length);
 
-    std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{};
+
     auto unlink_found = callback_arg.handler->session.load()->get_unlink_seqnum(callback_arg.seqnum);
     if (!std::get<0>(unlink_found))[[likely]] {
         //发送ret_submit
@@ -567,7 +567,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                 0,
                 trx->num_iso_packets,
                 std::move(callback_arg.transfer_buffer),
-                iso_packet_descriptors
+                {}
                 );
 
         if (!callback_arg.is_out) {
@@ -578,25 +578,33 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
                 ret.send_config.data_offset = LIBUSB_CONTROL_SETUP_SIZE;
             }
             else if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
-                // ISO传输：需要重组数据并设置iso描述符
+                std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{};
+                // ISO传输：零拷贝，使用 scatter-gather 发送
+                // iso_packet_descriptor 用于 USBIP 协议：
+                // - offset: 紧凑排列后的偏移（协议要求）
+                // - length: 原始长度（用于 to_socket_co 计算原始 buffer 偏移）
+                // - actual_length: 实际数据长度
                 iso_packet_descriptors.resize(trx->num_iso_packets);
+
+                //重新计算长度，一般来说不用，但写了更保险
                 size_t iso_actual_length = 0;
                 for (int i = 0; i < trx->num_iso_packets; i++) {
                     auto &iso_packet = trx->iso_packet_desc[i];
                     iso_actual_length += iso_packet.actual_length;
                 }
-                // ISO需要拷贝数据，因为需要重组
-                ret.transfer_buffer.resize(iso_actual_length);
+
+                // 计算紧凑的iso包描述
                 size_t received_data_offset = 0;
                 size_t trx_buffer_offset = 0;
                 for (int i = 0; i < trx->num_iso_packets; i++) {
                     auto &iso_packet = trx->iso_packet_desc[i];
-                    std::memcpy(ret.transfer_buffer.data() + received_data_offset, trx->buffer + trx_buffer_offset,
-                                iso_packet.actual_length);
                     iso_packet_descriptors[i].offset = received_data_offset;
                     iso_packet_descriptors[i].length = iso_packet.actual_length;
                     iso_packet_descriptors[i].actual_length = iso_packet.actual_length;
                     iso_packet_descriptors[i].status = trxstat2error(iso_packet.status);
+
+                    //记录在内存中的长度以便发送时遍历每一小节
+                    iso_packet_descriptors[i].length_in_transfer_buffer_only_for_send = iso_packet.length;
 
                     received_data_offset += iso_packet.actual_length;
                     trx_buffer_offset += iso_packet.length;
