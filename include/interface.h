@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "endpoint.h"
+#include "Endpoint.h"
 #include "network.h"
 
 namespace usbipdcpp {

@@ -5,7 +5,7 @@
 #include "protocol.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "endpoint.h"
+#include "Endpoint.h"
 
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle) :
     DeviceHandlerBase(handle_device), native_handle(native_handle) {
@@ -14,15 +14,14 @@ usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, li
 usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() = default;
 
 void usbipdcpp::LibusbDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    session = &current_session;
+    DeviceHandlerBase::on_new_connection(current_session, ec);
     //标记客户端连接
     client_disconnection = false;
 }
 
 void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
     client_disconnection = true;
-    if (device_removed)[[unlikely]]
-            return;
+    // 不检查 device_removed，因为 libusb 会在设备拔出时正确触发回调（LIBUSB_TRANSFER_NO_DEVICE）
 
     // 取消所有传输
     auto transfers = transfer_tracker_.get_all_transfers();
@@ -43,7 +42,8 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
 
     //为下次连接做准备，清空自身状态
     callback_args_pool_.clear();
-    session = nullptr;
+
+    DeviceHandlerBase::on_disconnection(ec);
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
@@ -137,9 +137,8 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
 
         transfer_tracker_.register_transfer(seqnum, transfer, ep.address);
 
-        SPDLOG_TRACE("准备提交控制传输，seqnum: {}", seqnum);
+        LATENCY_TRACK(session->latency_tracker,seqnum,"LibusbDeviceHandler::handle_control_urb libusb_submit_transfer");
         auto err = libusb_submit_transfer(transfer);
-        SPDLOG_TRACE("libusb_submit_transfer 返回: {}", err);
 
         if (err < 0)[[unlikely]] {
             SPDLOG_ERROR("控制传输给设备失败：{}", libusb_strerror(err));
@@ -297,8 +296,6 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
         ec = make_error_code(ErrorType::NO_DEVICE);
         return;
     }
-
-    spdlog::debug("等时传输");
 
     bool is_out = !ep.is_in();
     SPDLOG_DEBUG("同步传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out?"Out":"In", ep.address);

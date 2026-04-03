@@ -70,15 +70,6 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
                     )
             );
 }
-
-void VirtualInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    session = &current_session;
-}
-
-void VirtualInterfaceHandler::on_disconnection(error_code &ec) {
-    session = nullptr;
-}
-
 data_type VirtualInterfaceHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                                           std::uint16_t descriptor_length, std::uint32_t *p_status) {
     *p_status = static_cast<uint32_t>(UrbStatusType::StatusEPIPE);

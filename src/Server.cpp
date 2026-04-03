@@ -22,6 +22,9 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig 
 }
 
 void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
+    if (before_thread_create_callback) {
+        before_thread_create_callback(ThreadPurpose::NetworkIO);
+    }
     network_io_thread = std::thread([&,this]() {
         try {
             asio::ip::tcp::acceptor acceptor(asio_io_context);
@@ -41,6 +44,9 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
             std::exit(1);
         }
     });
+    if (after_thread_create_callback) {
+        after_thread_create_callback(ThreadPurpose::NetworkIO, network_io_thread);
+    }
 }
 
 void usbipdcpp::Server::stop() {
@@ -53,6 +59,7 @@ void usbipdcpp::Server::stop() {
         }
     }
     {
+        spdlog::info("等待所有session关闭");
         std::unique_lock lock(session_list_mutex);
         all_sessions_closed_cv.wait(lock, [this] { return sessions.empty(); });
     }

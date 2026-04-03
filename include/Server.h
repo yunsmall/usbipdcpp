@@ -8,15 +8,25 @@
 #include <thread>
 #include <condition_variable>
 #include <cstddef>
+#include <functional>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
 
-#include "device.h"
+#include "Device.h"
 
 
 namespace usbipdcpp {
 class Session;
+
+/**
+ * @brief 线程用途标识，用于线程创建前回调
+ */
+enum class ThreadPurpose {
+    NetworkIO,      // Server的网络IO线程
+    SessionMain,    // Session主线程
+    SessionSender   // Session发送线程（非协程版本）
+};
 
 /**
  * @brief 服务器网络配置
@@ -89,10 +99,32 @@ public:
     void register_session_exit_callback(std::function<void()> &&callback);
 
     /**
+     * @brief 设置线程创建前回调，用于嵌入式平台设置线程核心亲和性等
+     * @param callback 回调函数，接收线程用途标识
+     */
+    void set_before_thread_create_callback(std::function<void(ThreadPurpose)> &&callback) {
+        before_thread_create_callback = std::move(callback);
+    }
+
+    /**
+     * @brief 设置线程创建后回调，用于设置线程名称等
+     * @param callback 回调函数，接收线程用途标识和线程引用
+     */
+    void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread&)> &&callback) {
+        after_thread_create_callback = std::move(callback);
+    }
+
+    /**
      * @brief 移除指定的 session 并触发 on_session_exit
      * @param session 要移除的 session 指针
      */
     void remove_session(Session *session);
+
+# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+    void set_busy_wait_callback(std::function<void()> &&callback) {
+        busy_wait_callback = std::move(callback);
+    }
+#endif
 
     ~Server();
 
@@ -116,6 +148,16 @@ protected:
     std::atomic_bool should_stop = false;
 
     ServerNetworkConfig network_config;
+
+    // 线程创建前回调
+    std::function<void(ThreadPurpose)> before_thread_create_callback;
+    // 线程创建后回调
+    std::function<void(ThreadPurpose, std::thread&)> after_thread_create_callback;
+
+# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+    // busy-wait 回调，由 LibusbServer 设置，在 sender 的 busy-wait 循环中调用
+    std::function<void()> busy_wait_callback;
+# endif
 
     std::list<std::weak_ptr<Session>> sessions;
     std::shared_mutex session_list_mutex;

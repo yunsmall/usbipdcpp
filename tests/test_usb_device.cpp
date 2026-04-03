@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "endpoint.h"
-#include "device.h"
+#include "Endpoint.h"
+#include "Device.h"
 #include "utils/StringPool.h"
 
 using namespace usbipdcpp;

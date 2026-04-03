@@ -4,7 +4,8 @@
 
 #include "interface.h"
 #include "constant.h"
-#include "device.h"
+#include "Device.h"
+#include "Session.h"
 #include "protocol.h"
 #include "type.h"
 #include "InterfaceHandler/InterfaceHandler.h"
@@ -55,10 +56,9 @@ void AbstDeviceHandler::dispatch_urb(
     }
 }
 
-void AbstDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    session = &current_session;
-}
-
-void AbstDeviceHandler::on_disconnection(error_code &ec) {
-    session = nullptr;
+void AbstDeviceHandler::trigger_session_stop() {
+    std::lock_guard lock(session_mutex_);
+    if (session) {
+        session->immediately_stop();
+    }
 }

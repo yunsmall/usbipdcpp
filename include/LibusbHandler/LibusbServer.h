@@ -53,14 +53,32 @@ public:
      */
     static libusb_device *find_by_busid(const std::string &busid);
 
+    void start_hotplug_monitor();
+    void stop_hotplug_monitor();
+
 protected:
     Server server;
 
+# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     std::atomic<bool> should_exit_libusb_event_thread = false;
 
     //不可在这个线程发送网络包
     std::thread libusb_event_thread;
+# endif
 
     std::vector<libusb_device *> host_devices;
+
+    // 热插拔相关
+    libusb_hotplug_callback_handle hotplug_handle_;
+    bool hotplug_enabled_ = false;
+
+    void handle_device_arrived(libusb_device *device);
+    void handle_device_left(const std::string &busid);
+
+    static int LIBUSB_CALL hotplug_callback(
+        libusb_context *ctx,
+        libusb_device *device,
+        libusb_hotplug_event event,
+        void *user_data);
 };
 }

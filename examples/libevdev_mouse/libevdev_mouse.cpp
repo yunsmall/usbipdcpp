@@ -169,7 +169,7 @@ X/Y轴相对移动量
 };
 
 void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    session = &current_session;
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
     should_immediately_stop = false;
     last_state = State{};
     current_state = State{};
@@ -242,10 +242,10 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
 }
 
 void LibevdevMouseInterfaceHandler::on_disconnection(error_code &ec) {
-    session = nullptr;
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+    VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void LibevdevMouseInterfaceHandler::reset_relative_data() {

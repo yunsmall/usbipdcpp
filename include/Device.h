@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <variant>
+#include <memory>
 
 #include "Version.h"
 #include "SetupPacket.h"
@@ -103,6 +104,20 @@ struct UsbDevice {
      * @param seqnum
      */
     void handle_unlink_seqnum(std::uint32_t seqnum);
+
+# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+    /**
+     * @brief 检查是否还有传输在进行
+     * @return true 表示还有传输未完成
+     */
+    bool has_pending_transfers() const;
+# endif
+
+    /**
+     * @brief 检查设备是否已被移除
+     * @return true 表示设备已物理拔出
+     */
+    bool is_device_removed() const;
 
     bool operator==(const UsbDevice &other) const {
         return path == other.path &&

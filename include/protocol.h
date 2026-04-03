@@ -11,7 +11,7 @@
 #include <asio/awaitable.hpp>
 
 #include "network.h"
-#include "device.h"
+#include "Device.h"
 
 
 namespace usbipdcpp {

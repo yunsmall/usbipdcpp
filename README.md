@@ -2,8 +2,9 @@
 
 A C++ library for creating usbip servers
 
-> ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)  
+> ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ Virtual HID devices: Create virtual USB devices on any platform without libusb dependency (see `examples/`)
+> ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
 
@@ -48,7 +49,7 @@ architecture using:
 | `Session` | Represents a client connection, handles USBIP protocol |
 | `UsbDevice` | USB device descriptor and configuration |
 | `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
-| `AbstDeviceHandler` | Abstract base class for all device handlers |
+| `AbstDeviceHandler` | Abstract base class for all device handlers. Provides `is_device_removed()`, `on_device_removed()`, and `trigger_session_stop()` for device lifecycle management |
 | `DeviceHandlerBase` | Intermediate base class providing common device handler functionality |
 | `VirtualDeviceHandler` | Base class for implementing virtual USB devices |
 | `LibusbDeviceHandler` | Handler for physical USB devices using libusb |
@@ -193,6 +194,7 @@ There are multiple CMake options to control which parts are compiled:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `USBIPDCPP_USE_COROUTINE` | ON | Use C++20 coroutine-based implementation. |
+| `USBIPDCPP_ENABLE_BUSY_WAIT` | ON | Enable busy-wait mode for lower latency (only effective when USBIPDCPP_USE_COROUTINE is OFF) |
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |

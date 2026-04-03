@@ -37,7 +37,7 @@ struct UsbEndpoint {
 
     static UsbEndpoint get_ep0_in(std::uint16_t max_packet_size) {
         return {
-                .address = 0x00,
+                .address = 0x80,  // IN 端点，方向位为 1
                 .attributes = static_cast<std::uint8_t>(EndpointAttributes::Control),
                 .max_packet_size = max_packet_size,
                 .interval = 0
@@ -50,7 +50,7 @@ struct UsbEndpoint {
 
     static UsbEndpoint get_ep0_out(std::uint16_t max_packet_size) {
         return {
-                .address = 0x80,
+                .address = 0x00,  // OUT 端点，方向位为 0
                 .attributes = static_cast<std::uint8_t>(EndpointAttributes::Control),
                 .max_packet_size = max_packet_size,
                 .interval = 0

@@ -47,6 +47,7 @@ option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 
 option(USBIPDCPP_USE_COROUTINE "Use coroutine-based implementation" ON)
+option(USBIPDCPP_ENABLE_BUSY_WAIT "Enable busy-wait mode for lower latency (only effective when USBIPDCPP_USE_COROUTINE is OFF)" OFF)
 option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
 
 find_package(asio CONFIG REQUIRED)
@@ -61,6 +62,10 @@ if(USBIPDCPP_USE_COROUTINE)
     add_compile_definitions(USBIPDCPP_USE_COROUTINE)
 else()
     message(STATUS "USBIPDCPP: Using non-coroutine implementation")
+    if(USBIPDCPP_ENABLE_BUSY_WAIT)
+        message(STATUS "USBIPDCPP: Busy-wait mode enabled")
+        add_compile_definitions(USBIPDCPP_ENABLE_BUSY_WAIT)
+    endif()
 endif ()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -76,7 +81,6 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     )
 else ()
     add_compile_definitions(
-            USBIPDCPP_TRACK_PACKAGE
             SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
             TRANSFER_DELAY_RECORD
     )

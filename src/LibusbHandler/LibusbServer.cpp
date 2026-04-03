@@ -186,17 +186,6 @@ void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
         libusb_unref_device(dev);
         return;
     }
-    err = libusb_set_auto_detach_kernel_driver(dev_handle, true);
-    if (err == LIBUSB_ERROR_NOT_SUPPORTED) {
-        SPDLOG_TRACE("系统不支持自动卸载内核设备");
-    }
-    else if (err) {
-        SPDLOG_WARN("无法自动卸载内核设备，忽略这个设备：{}", libusb_strerror(err));
-        libusb_free_config_descriptor(active_config_desc);
-        libusb_close(dev_handle);
-        libusb_unref_device(dev);
-        return;
-    }
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
     std::vector<UsbInterface> interfaces;
     for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
@@ -205,16 +194,10 @@ void usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
         //只使用第一个alsetting
         auto &intf_desc = intf.altsetting[0];
 
-        err = libusb_set_auto_detach_kernel_driver(dev_handle, true);
-        if (err == LIBUSB_ERROR_NOT_SUPPORTED) {
-            SPDLOG_TRACE("系统不支持自动卸载内核设备");
-        }
-        else if (err) {
-            SPDLOG_WARN("无法自动卸载内核设备，忽略这个设备：{}", libusb_strerror(err));
-            libusb_free_config_descriptor(active_config_desc);
-            libusb_close(dev_handle);
-            libusb_unref_device(dev);
-            return;
+        // 手动解绑内核驱动
+        err = libusb_detach_kernel_driver(dev_handle, intf_i);
+        if (err && err != LIBUSB_ERROR_NOT_FOUND) {
+            SPDLOG_WARN("无法卸载接口{}的内核驱动：{}", intf_i, libusb_strerror(err));
         }
 
         err = libusb_claim_interface(dev_handle, intf_i);
@@ -292,6 +275,11 @@ void usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
                         err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
                         if (err) {
                             SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
+                        }
+                        // 重新让内核驱动接管
+                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
+                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
                         }
                     }
                     libusb_free_config_descriptor(active_config_desc);
@@ -376,7 +364,127 @@ void usbipdcpp::LibusbServer::refresh_available_devices() {
     libusb_free_device_list(devs, 1);
 }
 
+void usbipdcpp::LibusbServer::start_hotplug_monitor() {
+    if (!libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
+        SPDLOG_WARN("当前 libusb 不支持热插拔");
+        return;
+    }
+
+    int ret = libusb_hotplug_register_callback(
+        nullptr,
+        static_cast<libusb_hotplug_event>(
+            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
+        ),
+        LIBUSB_HOTPLUG_NO_FLAGS,
+        LIBUSB_HOTPLUG_MATCH_ANY,
+        LIBUSB_HOTPLUG_MATCH_ANY,
+        LIBUSB_HOTPLUG_MATCH_ANY,
+        hotplug_callback,
+        this,
+        &hotplug_handle_
+    );
+
+    if (ret == 0) {
+        hotplug_enabled_ = true;
+        SPDLOG_INFO("热插拔监控已启动");
+    } else {
+        SPDLOG_ERROR("注册热插拔回调失败: {}", libusb_strerror(ret));
+    }
+}
+
+void usbipdcpp::LibusbServer::stop_hotplug_monitor() {
+    if (hotplug_enabled_) {
+        libusb_hotplug_deregister_callback(nullptr, hotplug_handle_);
+        hotplug_enabled_ = false;
+        SPDLOG_INFO("热插拔监控已停止");
+    }
+}
+
+int LIBUSB_CALL usbipdcpp::LibusbServer::hotplug_callback(
+    libusb_context *ctx,
+    libusb_device *device,
+    libusb_hotplug_event event,
+    void *user_data)
+{
+    auto *server = static_cast<LibusbServer*>(user_data);
+
+    if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
+        server->handle_device_arrived(device);
+    } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
+        auto busid = get_device_busid(device);
+        server->handle_device_left(busid);
+    }
+
+    return 0;
+}
+
+void usbipdcpp::LibusbServer::handle_device_arrived(libusb_device *device) {
+    auto busid = get_device_busid(device);
+
+    // 检查是否已绑定
+    {
+        std::shared_lock lock(server.get_devices_mutex());
+        for (const auto &dev : server.get_available_devices()) {
+            if (dev->busid == busid) {
+                SPDLOG_DEBUG("设备 {} 已在已绑定列表中", busid);
+                return;
+            }
+        }
+        if (server.get_using_devices().contains(busid)) {
+            SPDLOG_DEBUG("设备 {} 正在使用中", busid);
+            return;
+        }
+    }
+
+    // 打印设备信息
+    SPDLOG_INFO("检测到新设备插入:");
+    print_device(device);
+}
+
+void usbipdcpp::LibusbServer::handle_device_left(const std::string &busid) {
+    SPDLOG_INFO("检测到设备拔出: {}", busid);
+
+    std::lock_guard lock(server.get_devices_mutex());
+    auto &available_devices = server.get_available_devices();
+    auto &using_devices = server.get_using_devices();
+
+    // 1. 从 available_devices 中移除
+    for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
+        if ((*it)->busid == busid) {
+            if (auto handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*it)->handler)) {
+                libusb_close(handler->native_handle);
+            }
+            available_devices.erase(it);
+            SPDLOG_INFO("已从已绑定设备列表移除: {}", busid);
+            return;
+        }
+    }
+
+    // 2. 如果正在使用中，触发断连
+    if (auto it = using_devices.find(busid); it != using_devices.end()) {
+        if (auto handler = it->second->handler) {
+            // 通过 AbstDeviceHandler 接口通知（后端无关）
+            handler->on_device_removed();
+            // 强制关闭 Session
+            SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+            handler->trigger_session_stop();
+        }
+    }
+}
+
 void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
+    start_hotplug_monitor();
+
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
+    // busy-wait 模式：设置回调，不创建独立线程
+    server.set_busy_wait_callback([]() {
+        struct timeval tv = {0, 0};
+        libusb_handle_events_timeout(nullptr, &tv);
+    });
+    SPDLOG_INFO("启用 busy-wait 模式，libusb 事件将在 sender 线程中处理");
+    server.start(ep);
+# else
+    // 原有逻辑：创建独立的 libusb 事件线程
     libusb_event_thread = std::thread([this]() {
         try {
             SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
@@ -402,10 +510,13 @@ void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
         }
     });
     server.start(ep);
+# endif
 }
 
 void usbipdcpp::LibusbServer::stop() {
+    stop_hotplug_monitor();
     server.stop();
+    SPDLOG_INFO("ubsip服务器关闭");
 
     {
         std::shared_lock lock(server.get_devices_mutex());
@@ -420,6 +531,11 @@ void usbipdcpp::LibusbServer::stop() {
                         err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
                         if (err) {
                             SPDLOG_ERROR("释放设备接口{}时出错: {}", intf_i, libusb_strerror(err));
+                        }
+                        // 重新让内核驱动接管
+                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
+                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
                         }
                     }
                     libusb_free_config_descriptor(active_config_desc);
@@ -444,6 +560,11 @@ void usbipdcpp::LibusbServer::stop() {
                         if (err) {
                             SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
                         }
+                        // 重新让内核驱动接管
+                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
+                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
+                        }
                     }
                     libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
@@ -456,11 +577,13 @@ void usbipdcpp::LibusbServer::stop() {
         }
     }
 
+# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     should_exit_libusb_event_thread = true;
     libusb_interrupt_event_handler(nullptr);
     spdlog::info("等待libusb事件线程结束");
     libusb_event_thread.join();
     spdlog::info("libusb事件线程结束");
+# endif
 }
 
 // void usbipcpp::LibusbServer::add_device(std::shared_ptr<UsbDevice> &&device) {

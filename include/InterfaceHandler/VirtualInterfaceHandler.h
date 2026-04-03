@@ -43,14 +43,19 @@ public:
      * @brief 新的客户端连接时会调这个函数
      * @param current_session
      * @param ec 发生的ec
-     * @note 子类重写时必须调用父类实现，父类会设置session指针
+     * @note 子类重写时必须调用父类实现，在函数开头调用，父类会设置session指针
      */
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(Session &current_session, error_code &ec) override {
+        session = &current_session;
+    }
+
     /**
-     * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
-     * @note 子类重写时应该调用父类实现，父类会清理session指针
+     * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息。
+     * @note 子类重写时必须调用父类实现，在函数末尾调用，父类会清理session指针
      */
-    void on_disconnection(error_code &ec) override;
+    void on_disconnection(error_code &ec) override {
+        session = nullptr;
+    }
 
     virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
     virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
@@ -100,7 +105,7 @@ public:
     }
 
 protected:
-    Session * session = nullptr;
+    Session *session = nullptr;
 
     std::uint8_t string_interface;
 

@@ -1,4 +1,4 @@
-#include "device.h"
+#include "Device.h"
 
 #include <ranges>
 
@@ -129,4 +129,14 @@ void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
     else {
         SPDLOG_ERROR("设备没注册handler");
     }
+}
+
+#if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+bool UsbDevice::has_pending_transfers() const {
+    return handler && handler->has_pending_transfers();
+}
+#endif
+
+bool UsbDevice::is_device_removed() const {
+    return handler && handler->is_device_removed();
 }

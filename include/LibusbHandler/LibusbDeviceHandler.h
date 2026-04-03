@@ -24,6 +24,20 @@ public:
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t seqnum) override;
 
+# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+    bool has_pending_transfers() const override {
+        return transfer_tracker_.concurrent_count() > 0;
+    }
+# endif
+
+    bool is_device_removed() const override {
+        return device_removed;
+    }
+
+    void on_device_removed() override {
+        device_removed = true;
+    }
+
 protected:
     void handle_control_urb(
             std::uint32_t seqnum, const UsbEndpoint &ep,

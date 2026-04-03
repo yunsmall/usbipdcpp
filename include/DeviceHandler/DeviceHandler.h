@@ -4,9 +4,10 @@
 #include <cstdint>
 #include <optional>
 #include <system_error>
+#include <mutex>
 #include <spdlog/spdlog.h>
 
-#include "device.h"
+#include "Device.h"
 #include "type.h"
 #include "protocol.h"
 
@@ -38,17 +39,52 @@ public:
             );
 
     /**
-     * @brief 新的客户端连接时会调这个函数，可以阻塞
+     * @brief 新的客户端连接时会调这个函数，可以阻塞。子类实现时请在函数开头调用这个函数
      * @param current_session 请自行储存通信用的session
      * @param ec 发生的ec
      */
-    virtual void on_new_connection(Session &current_session, error_code &ec);
+    virtual void on_new_connection(Session &current_session, error_code &ec) {
+        std::lock_guard lock(session_mutex_);
+        session = &current_session;
+    }
 
     /**
      * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后禁止再提交消息和使用Session对象\n
-     * 可以阻塞，处理所有需要处理的事务
+     * 可以阻塞，处理所有需要处理的事务。子类实现时请在函数末尾调用这个函数
      */
-    virtual void on_disconnection(error_code &ec);
+    virtual void on_disconnection(error_code &ec) {
+        std::lock_guard lock(session_mutex_);
+        session = nullptr;
+    }
+
+# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+    /**
+     * @brief 检查是否还有传输在进行
+     * @return true 表示还有传输未完成
+     */
+    virtual bool has_pending_transfers() const {
+        return false;  // 默认实现
+    }
+# endif
+
+    /**
+     * @brief 检查设备是否已被移除
+     * @return true 表示设备已物理拔出
+     */
+    virtual bool is_device_removed() const {
+        return false;  // 默认实现
+    }
+
+    /**
+     * @brief 设备被物理移除时调用
+     */
+    virtual void on_device_removed() {}
+
+    /**
+     * @brief 线程安全地停止 Session
+     */
+    void trigger_session_stop();
+
     /**
      * @brief 处理unlink。传入想要取消的序号。默认是空实现，就当全部发得太快了来不及取消了
      * @param seqnum 包序号
@@ -110,7 +146,8 @@ protected:
 
 protected:
     UsbDevice &handle_device;
-    Session * session = nullptr;
+    Session *session = nullptr;
+    mutable std::mutex session_mutex_;
 };
 
 class DeviceHandlerBase : public AbstDeviceHandler {

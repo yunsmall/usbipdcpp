@@ -28,7 +28,7 @@ class Server;
  * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
  * 请确保Session存活的时候Server未被析构，不然是未定义行为
  */
-class Session : public std::enable_shared_from_this<Session> {
+class Session final : public std::enable_shared_from_this<Session> {
     friend class Server;
 
 public:
@@ -81,6 +81,11 @@ public:
      */
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
+    /**
+     * @brief 置停止标志位，并且关闭socket。只能由Server和AbstDeviceHandler::trigger_session_stop调用。
+     * 内部不会关闭线程，只会通知线程关闭
+     */
+    void immediately_stop();
 
     ~Session();
 
@@ -112,19 +117,13 @@ private:
     void parse_op();
 #endif
 
-    /**
-     * @brief 置停止标志位，并且关闭socket。只能由Server调用。
-     * 内部不会关闭线程，只会通知线程关闭
-     */
-    void immediately_stop();
-
 #ifdef USBIPDCPP_USE_COROUTINE
     using transfer_channel_type = asio::experimental::channel<void(asio::error_code, UsbIpResponse::RetVariant)>;
     static constexpr std::size_t transfer_channel_size = 100;
     std::unique_ptr<transfer_channel_type> transfer_channel = nullptr;
 #else
     //用于非协程发送数据
-    std::deque<UsbIpResponse::RetVariant> send_data;
+    std::deque<UsbIpResponse::RetVariant> send_data_deque;
     std::mutex send_data_mutex;
     std::condition_variable send_data_cv;
 #endif

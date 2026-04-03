@@ -4,7 +4,7 @@
 #include <format>
 #include <spdlog/spdlog.h>
 
-#include "endpoint.h"
+#include "Endpoint.h"
 #include "constant.h"
 
 std::shared_ptr<usbipdcpp::UsbDevice>

@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "device.h"
+#include "Device.h"
 #include "utils/StringPool.h"
 
 /**
