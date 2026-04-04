@@ -90,8 +90,8 @@ protected:
 
     static void transfer_callback(libusb_transfer *trx);
 
-    // 对象池：初始16个，最多64个
-    using CallbackArgsPool = ObjectPool<libusb_callback_args, 16, 64>;
+    // 对象池：64个
+    using CallbackArgsPool = ObjectPool<libusb_callback_args, 64, true>;
     CallbackArgsPool callback_args_pool_;
 
     // 用于等待所有传输完成

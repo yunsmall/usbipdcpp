@@ -1,77 +1,59 @@
 #pragma once
 
-#include <vector>
 #include <mutex>
 #include <type_traits>
+#include <algorithm>
+#include <utility>
 
 namespace usbipdcpp {
 
 /**
- * @brief 对象池，支持有上限的动态扩容
+ * @brief 固定大小的对象池
  *
  * 特点：
- * - 预分配初始数量对象，避免频繁内存分配
- * - 支持动态扩容，有上限保证内存可控
+ * - 预分配所有对象，避免运行时内存分配
+ * - 可验证指针归属，防止重复 free
+ * - alloc O(1)，free O(log n)
  * - 可选线程安全
  *
  * @tparam T 对象类型
- * @tparam InitialSize 初始大小
- * @tparam MaxSize 最大容量（默认等于 InitialSize，不扩容）
+ * @tparam PoolSize 池大小
  * @tparam ThreadSafe 是否线程安全（默认 false）
  */
-template<typename T, size_t InitialSize, size_t MaxSize = InitialSize, bool ThreadSafe = false>
+template<typename T, size_t PoolSize, bool ThreadSafe = false>
 class ObjectPool {
-    static_assert(InitialSize > 0, "InitialSize must be greater than 0");
-    static_assert(MaxSize >= InitialSize, "MaxSize must be >= InitialSize");
+    static_assert(PoolSize > 0, "PoolSize must be greater than 0");
 
 public:
     ObjectPool() {
-        // 预分配初始对象
-        for (size_t i = 0; i < InitialSize; ++i) {
-            pool_.push_back(new T{});
+        // 创建对象
+        for (size_t i = 0; i < PoolSize; ++i) {
+            pool_[i] = {new T{}, false};
         }
-        available_ = InitialSize;
-        capacity_ = InitialSize;
+        // 按指针排序，用于二分查找
+        std::sort(pool_, pool_ + PoolSize, [](const auto &a, const auto &b) {
+            return a.first < b.first;
+        });
+        // 初始化空闲索引栈
+        for (size_t i = 0; i < PoolSize; ++i) {
+            free_stack_[i] = i;
+        }
+        free_top_ = PoolSize;
     }
 
     ~ObjectPool() {
         clear();
     }
 
-    // 禁止拷贝
+    // 禁止拷贝和移动
     ObjectPool(const ObjectPool &) = delete;
     ObjectPool &operator=(const ObjectPool &) = delete;
-
-    // 允许移动
-    ObjectPool(ObjectPool &&other) noexcept {
-        if constexpr (ThreadSafe) {
-            std::lock_guard<std::mutex> lock(other.mutex_);
-        }
-        pool_ = std::move(other.pool_);
-        available_ = other.available_;
-        capacity_ = other.capacity_;
-        other.available_ = 0;
-        other.capacity_ = 0;
-    }
-
-    ObjectPool &operator=(ObjectPool &&other) noexcept {
-        if (this != &other) {
-            clear();
-            if constexpr (ThreadSafe) {
-                std::lock_guard<std::mutex> lock(other.mutex_);
-            }
-            pool_ = std::move(other.pool_);
-            available_ = other.available_;
-            capacity_ = other.capacity_;
-            other.available_ = 0;
-            other.capacity_ = 0;
-        }
-        return *this;
-    }
+    ObjectPool(ObjectPool &&) = delete;
+    ObjectPool &operator=(ObjectPool &&) = delete;
 
     /**
      * @brief 分配对象
-     * @return 对象指针，池空且达上限时返回 nullptr
+     * @return 对象指针，池空时返回 nullptr
      */
     T *alloc() {
         if constexpr (ThreadSafe) {
@@ -86,11 +68,12 @@ public:
     /**
      * @brief 归还对象
      * @param obj 对象指针
-     * @return true 成功归还，false 池满（对象未归还）
+     * @return true 成功归还，false 指针不属于本池或重复 free
      */
     bool free(T *obj) {
-        if (!obj)
+        if (!obj) {
             return false;
+        }
 
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -107,24 +90,18 @@ public:
     size_t available() const {
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
-            return available_;
+            return free_top_;
         }
         else {
-            return available_;
+            return free_top_;
         }
     }
 
     /**
      * @brief 获取池总容量
      */
-    size_t capacity() const {
-        if constexpr (ThreadSafe) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            return capacity_;
-        }
-        else {
-            return capacity_;
-        }
+    constexpr size_t capacity() const {
+        return PoolSize;
     }
 
     /**
@@ -141,47 +118,45 @@ public:
     }
 
 private:
-    static constexpr size_t CHUNK_SIZE = 16; // 每次扩容数量
-
-    std::vector<T *> pool_;
-    size_t available_ = 0;
-    size_t capacity_ = 0;
+    std::pair<T *, bool> pool_[PoolSize] = {};
+    size_t free_stack_[PoolSize] = {};
+    size_t free_top_ = 0;
     mutable std::conditional_t<ThreadSafe, std::mutex, char> mutex_{};
 
     T *alloc_impl() {
-        if (available_ > 0) {
-            return pool_[--available_];
+        if (free_top_ == 0) {
+            return nullptr;
         }
-
-        // 池空，尝试扩容
-        if (capacity_ < MaxSize) {
-            size_t grow = std::min(CHUNK_SIZE, MaxSize - capacity_);
-            for (size_t i = 0; i < grow; ++i) {
-                pool_.push_back(new T{});
-            }
-            available_ += grow;
-            capacity_ += grow;
-            return pool_[--available_];
-        }
-
-        return nullptr; // 达到上限
+        size_t index = free_stack_[--free_top_];
+        pool_[index].second = true;
+        return pool_[index].first;
     }
 
     bool free_impl(T *obj) {
-        if (available_ >= capacity_) {
-            return false; // 池满
+        // 二分查找指针
+        auto it = std::lower_bound(pool_, pool_ + PoolSize, obj,
+                                   [](const auto &elem, T *val) {
+                                       return elem.first < val;
+                                   });
+        if (it == pool_ + PoolSize || it->first != obj) {
+            return false; // 不是本池的对象
         }
-        pool_[available_++] = obj;
+        if (!it->second) {
+            return false; // 重复 free
+        }
+        it->second = false;
+        // 计算索引并压回栈
+        size_t index = it - pool_;
+        free_stack_[free_top_++] = index;
         return true;
     }
 
     void clear_impl() {
-        for (auto *ptr: pool_) {
-            delete ptr;
+        for (size_t i = 0; i < PoolSize; ++i) {
+            delete pool_[i].first;
+            pool_[i] = {nullptr, false};
         }
-        pool_.clear();
-        available_ = 0;
-        capacity_ = 0;
+        free_top_ = 0;
     }
 };
 

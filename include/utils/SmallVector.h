@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstddef>
 #include <iterator>
+#include <stdexcept>
 
 namespace usbipdcpp {
 
@@ -186,11 +187,17 @@ public:
     }
 
     [[nodiscard]] reference at(size_type pos) {
-        return on_heap_ ? heap_storage_.at(pos) : stack_storage_.at(pos);
+        if (pos >= size_) {
+            throw std::out_of_range("SmallVector::at");
+        }
+        return (*this)[pos];
     }
 
     [[nodiscard]] const_reference at(size_type pos) const {
-        return on_heap_ ? heap_storage_.at(pos) : stack_storage_.at(pos);
+        if (pos >= size_) {
+            throw std::out_of_range("SmallVector::at");
+        }
+        return (*this)[pos];
     }
 
     [[nodiscard]] reference front() { return (*this)[0]; }

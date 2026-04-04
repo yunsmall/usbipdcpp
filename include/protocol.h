@@ -333,7 +333,7 @@ namespace UsbIpResponse {
         struct SendConfig {
             std::uint32_t data_offset = 0; // 数据偏移量 (控制传输为8，其他为0)
             bool operator==(const SendConfig &other) const = default;
-        } send_config;
+        } send_config{};
 
         [[nodiscard]] data_type to_bytes() const;
         [[nodiscard]] asio::awaitable<void> to_socket_co(asio::ip::tcp::socket &sock, error_code &ec) const;
@@ -350,7 +350,7 @@ namespace UsbIpResponse {
                 std::uint32_t start_frame,
                 std::uint32_t number_of_packets,
                 std::vector<std::uint8_t> &&transfer_buffer,
-                std::vector<UsbIpIsoPacketDescriptor>&& iso_packet_descriptor
+                std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptor
                 );
         static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum);
         static UsbIpRetSubmit create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status);

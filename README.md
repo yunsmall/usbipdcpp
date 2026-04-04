@@ -62,7 +62,7 @@ architecture using:
 
 | Class | Description |
 |-------|-------------|
-| `ObjectPool<T, InitialSize, MaxSize, ThreadSafe>` | Templated object pool for memory-efficient allocation. Supports initial fixed size with optional dynamic growth up to a maximum. Designed for embedded platforms (ESP32). |
+| `ObjectPool<T, PoolSize, ThreadSafe>` | Fixed-size object pool for memory-efficient allocation. Supports pointer validation and duplicate-free detection. alloc O(1), free O(log n). |
 | `ConcurrentTransferTracker<TransferPtr, SegmentCount>` | Sharded lock-based transfer tracker for efficient concurrent transfer management. Uses atomic counters for fast-path operations. |
 
 ### Class Hierarchy
