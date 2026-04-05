@@ -46,7 +46,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applic
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 
-option(USBIPDCPP_USE_COROUTINE "Use coroutine-based implementation" ON)
+option(USBIPDCPP_USE_COROUTINE "Use coroutine-based implementation" OFF)
 option(USBIPDCPP_ENABLE_BUSY_WAIT "Enable busy-wait mode for lower latency (only effective when USBIPDCPP_USE_COROUTINE is OFF)" OFF)
 option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
 
@@ -218,7 +218,12 @@ if (IS_TOP_LEVEL)
             FILE ${PROJECT_NAME}Targets.cmake
     )
 
-    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
+        install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    else()
+        install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+                PATTERN "LibusbHandler" EXCLUDE)
+    endif()
 
 
     install(EXPORT ${PROJECT_NAME}Targets

@@ -626,6 +626,11 @@ asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket_co(as
                                                    number_of_packets,
                                                    interval);
     co_await setup.from_socket_co(sock);
+
+    // 检查缓冲区大小，防止恶意大内存分配
+    if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE)[[unlikely]] {
+        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
+    }
     data.resize(transfer_buffer_length);
 
     if (header.direction == UsbIpDirection::In) {
@@ -674,6 +679,11 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
                                        number_of_packets,
                                        interval);
     setup.from_socket(sock);
+
+    // 检查缓冲区大小，防止恶意大内存分配
+    if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE)[[unlikely]] {
+        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
+    }
     data.resize(transfer_buffer_length);
 
     if (header.direction == UsbIpDirection::In) {

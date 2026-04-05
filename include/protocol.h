@@ -13,6 +13,10 @@
 #include "network.h"
 #include "Device.h"
 
+// 最大传输缓冲区大小（用于防止恶意大内存分配）
+#ifndef USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE
+#define USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE (16 * 1024 * 1024) // 16MB
+#endif
 
 namespace usbipdcpp {
 constexpr std::uint16_t USBIP_VERSION = 0x0111;
@@ -326,8 +330,8 @@ namespace UsbIpResponse {
         std::uint32_t start_frame;
         std::uint32_t number_of_packets;
         std::uint32_t error_count;
-        data_type transfer_buffer;
-        std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor;
+        data_type transfer_buffer{};
+        std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptor{};
 
         // 发送配置，用于控制发送时的行为
         struct SendConfig {

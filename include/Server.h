@@ -45,6 +45,7 @@ public:
     friend class Session;
 
     Server() = default;
+    explicit Server(const ServerNetworkConfig &network_config);
     explicit Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config = {});
     Server(const Server &) = delete;
     Server(Server &&) = delete;

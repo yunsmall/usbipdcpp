@@ -98,6 +98,7 @@ void usbipdcpp::UsbDevice::handle_urb(
     }
     else {
         SPDLOG_ERROR("设备没注册handler");
+        ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
 }
 
@@ -108,6 +109,7 @@ void UsbDevice::on_new_connection(Session &session, error_code &ec) {
     }
     else {
         SPDLOG_ERROR("设备没注册handler");
+        ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
 }
 
@@ -118,6 +120,7 @@ void usbipdcpp::UsbDevice::on_disconnection(error_code &ec) {
     }
     else {
         SPDLOG_ERROR("设备没注册handler");
+        ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
 }
 

@@ -149,7 +149,6 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
                 delete callback_args;
             }
             libusb_free_transfer(transfer);
-            // ec = make_error_code(ErrorType::TRANSFER_ERROR);
             session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
             if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {

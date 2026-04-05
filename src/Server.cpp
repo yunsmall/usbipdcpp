@@ -13,6 +13,10 @@
 #include "type.h"
 #include "Session.h"
 
+usbipdcpp::Server::Server(const ServerNetworkConfig &network_config) :
+    network_config(std::move(network_config)) {
+}
+
 usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig network_config) :
     network_config(std::move(network_config)) {
     available_devices.reserve(devices.size());
