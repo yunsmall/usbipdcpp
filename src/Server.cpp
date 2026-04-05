@@ -29,7 +29,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     if (before_thread_create_callback) {
         before_thread_create_callback(ThreadPurpose::NetworkIO);
     }
-    network_io_thread = std::thread([&,this]() {
+    network_io_thread = std::thread([this, ep]() {
         try {
             asio::ip::tcp::acceptor acceptor(asio_io_context);
             acceptor.open(ep.protocol());
