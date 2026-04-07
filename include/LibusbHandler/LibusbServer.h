@@ -7,6 +7,20 @@
 #include "Server.h"
 
 namespace usbipdcpp {
+
+/**
+ * @brief Result of device bind/unbind operations.
+ */
+enum class DeviceOperationResult {
+    Success,                ///< Operation completed successfully
+    DeviceNotFound,         ///< Device was not found in the device list
+    DeviceInUse,            ///< Device is currently in use and cannot be modified
+    DeviceOpenFailed,       ///< Failed to open the device
+    GetDescriptorFailed,    ///< Failed to get device descriptor
+    GetConfigFailed,        ///< Failed to get configuration descriptor
+    ClaimInterfaceFailed    ///< Failed to claim interface
+};
+
 class LibusbServer {
 public:
     LibusbServer();
@@ -24,9 +38,9 @@ public:
      *                   libusb_wrap_sys_device().
      * @param exist_handle An existing device handle to use when use_handle is true.
      *                     Must not be nullptr when use_handle is true.
-     * @return true if the device was successfully bound, false otherwise.
+     * @return DeviceOperationResult::Success on success, or an appropriate error code.
      */
-    bool bind_host_device(libusb_device *dev, bool use_handle = false,
+    DeviceOperationResult bind_host_device(libusb_device *dev, bool use_handle = false,
                           libusb_device_handle *exist_handle = nullptr);
 
     /**
@@ -37,10 +51,11 @@ public:
      * will be released.
      *
      * @param device The libusb device to unbind. The function takes ownership of this reference.
-     * @return true if the device was successfully unbound, false if the device was not found
-     *         in the available devices list or is currently in use.
+     * @return DeviceOperationResult::Success on success,
+     *         DeviceOperationResult::DeviceNotFound if not in available devices,
+     *         DeviceOperationResult::DeviceInUse if currently in use.
      */
-    bool unbind_host_device(libusb_device *device);
+    DeviceOperationResult unbind_host_device(libusb_device *device);
 
     /**
      * @brief Remove a dead device from the device lists.
@@ -49,9 +64,10 @@ public:
      * It only removes libusb devices, not other device types.
      *
      * @param busid The bus ID of the device to remove.
-     * @return true if the device was found and removed, false otherwise.
+     * @return DeviceOperationResult::Success if found and removed,
+     *         DeviceOperationResult::DeviceNotFound if not found.
      */
-    bool try_remove_dead_device(const std::string &busid);
+    DeviceOperationResult try_remove_dead_device(const std::string &busid);
 
     /**
      * @brief Refresh the list of available devices.

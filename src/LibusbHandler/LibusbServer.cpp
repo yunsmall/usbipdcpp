@@ -6,7 +6,9 @@
 #include "LibusbHandler/LibusbDeviceHandler.h"
 #include "LibusbHandler/tools.h"
 
-usbipdcpp::LibusbServer::LibusbServer() {
+using namespace usbipdcpp;
+
+LibusbServer::LibusbServer() {
     server.register_session_exit_callback([this]() {
         std::lock_guard lock(server.get_devices_mutex());
         auto &server_available_devices = server.get_available_devices();
@@ -25,7 +27,7 @@ usbipdcpp::LibusbServer::LibusbServer() {
     });
 }
 
-std::pair<std::string, std::string> usbipdcpp::LibusbServer::get_device_names(libusb_device *device) {
+std::pair<std::string, std::string> LibusbServer::get_device_names(libusb_device *device) {
     libusb_device_handle *handle = nullptr;
     libusb_device_descriptor desc;
     int ret = libusb_get_device_descriptor(device, &desc);
@@ -57,7 +59,7 @@ std::pair<std::string, std::string> usbipdcpp::LibusbServer::get_device_names(li
     };
 }
 
-void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
+void LibusbServer::print_device(libusb_device *dev) {
     libusb_device_descriptor desc{};
     // 获取设备描述符
     auto err = libusb_get_device_descriptor(dev, &desc);
@@ -115,7 +117,7 @@ void usbipdcpp::LibusbServer::print_device(libusb_device *dev) {
     std::cout << std::endl;
 }
 
-void usbipdcpp::LibusbServer::list_host_devices() {
+void LibusbServer::list_host_devices() {
     libusb_device **devs;
     auto dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
@@ -125,7 +127,7 @@ void usbipdcpp::LibusbServer::list_host_devices() {
     libusb_free_device_list(devs, 1);
 }
 
-libusb_device *usbipdcpp::LibusbServer::find_by_busid(const std::string &busid) {
+libusb_device *LibusbServer::find_by_busid(const std::string &busid) {
     libusb_device **devs;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
@@ -140,7 +142,7 @@ libusb_device *usbipdcpp::LibusbServer::find_by_busid(const std::string &busid) 
     return nullptr;
 }
 
-bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_handle,
+DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev, bool use_handle,
                                                libusb_device_handle *exist_handle) {
     libusb_device_handle *dev_handle;
     int err;
@@ -150,7 +152,7 @@ bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
         if (err) {
             spdlog::warn("无法打开一个设备，忽略这个设备：{}", libusb_strerror(err));
             libusb_unref_device(dev);
-            return false;
+            return DeviceOperationResult::DeviceOpenFailed;
         }
     }
     else {
@@ -175,7 +177,7 @@ bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
         spdlog::warn("无法获取设备述符，忽略这个设备：{}", libusb_strerror(err));
         libusb_close(dev_handle);
         libusb_unref_device(dev);
-        return false;
+        return DeviceOperationResult::GetDescriptorFailed;
     }
 
     struct libusb_config_descriptor *active_config_desc;
@@ -184,7 +186,7 @@ bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
         spdlog::warn("无法获取设备当前的配置描述符，忽略这个设备：{}", libusb_strerror(err));
         libusb_close(dev_handle);
         libusb_unref_device(dev);
-        return false;
+        return DeviceOperationResult::GetConfigFailed;
     }
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
     std::vector<UsbInterface> interfaces;
@@ -206,7 +208,7 @@ bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
             libusb_free_config_descriptor(active_config_desc);
             libusb_close(dev_handle);
             libusb_unref_device(dev);
-            return false;
+            return DeviceOperationResult::ClaimInterfaceFailed;
         }
 
         std::vector<UsbEndpoint> endpoints;
@@ -257,10 +259,10 @@ bool usbipdcpp::LibusbServer::bind_host_device(libusb_device *dev, bool use_hand
     }
     libusb_free_config_descriptor(active_config_desc);
     libusb_unref_device(dev);
-    return true;
+    return DeviceOperationResult::Success;
 }
 
-bool usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
+DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
     auto target_busid = get_device_busid(device);
     {
         std::lock_guard lock(server.get_devices_mutex());
@@ -289,20 +291,22 @@ bool usbipdcpp::LibusbServer::unbind_host_device(libusb_device *device) {
                 server_available_devices.erase(i);
                 libusb_unref_device(device);
                 spdlog::info("成功取消绑定");
-                return true;
+                return DeviceOperationResult::Success;
             }
         }
         SPDLOG_WARN("可使用的设备中无目标设备");
 
         if (server_using_devices.contains(target_busid)) {
             SPDLOG_WARN("正在使用的设备不支持解绑");
+            libusb_unref_device(device);
+            return DeviceOperationResult::DeviceInUse;
         }
     }
     libusb_unref_device(device);
-    return false;
+    return DeviceOperationResult::DeviceNotFound;
 }
 
-bool usbipdcpp::LibusbServer::try_remove_dead_device(const std::string &busid) {
+DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &busid) {
     std::lock_guard lock(server.get_devices_mutex());
     auto &server_using_devices = server.get_using_devices();
     auto &server_available_devices = server.get_available_devices();
@@ -312,7 +316,7 @@ bool usbipdcpp::LibusbServer::try_remove_dead_device(const std::string &busid) {
                 libusb_close(libusb_device_handler->native_handle);
                 server_available_devices.erase(i);
                 spdlog::info("删除可用设备中的{}", busid);
-                return true;
+                return DeviceOperationResult::Success;
             }
         }
     }
@@ -322,14 +326,14 @@ bool usbipdcpp::LibusbServer::try_remove_dead_device(const std::string &busid) {
             libusb_close(libusb_device_handler->native_handle);
             server_using_devices.erase(device);
             spdlog::info("删除正在使用设备中的{}", busid);
-            return true;
+            return DeviceOperationResult::Success;
         }
     }
     SPDLOG_WARN("无法找到busid为{}的设备", busid);
-    return false;
+    return DeviceOperationResult::DeviceNotFound;
 }
 
-void usbipdcpp::LibusbServer::refresh_available_devices() {
+void LibusbServer::refresh_available_devices() {
     libusb_device **devs;
     auto get_ret = libusb_get_device_list(nullptr, &devs);
     if (get_ret < 0) {
@@ -367,7 +371,7 @@ void usbipdcpp::LibusbServer::refresh_available_devices() {
     libusb_free_device_list(devs, 1);
 }
 
-void usbipdcpp::LibusbServer::start_hotplug_monitor() {
+void LibusbServer::start_hotplug_monitor() {
     if (!hotplug_enabled_by_user_) {
         SPDLOG_DEBUG("热插拔监控已被用户禁用");
         return;
@@ -400,7 +404,7 @@ void usbipdcpp::LibusbServer::start_hotplug_monitor() {
     }
 }
 
-void usbipdcpp::LibusbServer::stop_hotplug_monitor() {
+void LibusbServer::stop_hotplug_monitor() {
     if (hotplug_enabled_) {
         libusb_hotplug_deregister_callback(nullptr, hotplug_handle_);
         hotplug_enabled_ = false;
@@ -408,7 +412,7 @@ void usbipdcpp::LibusbServer::stop_hotplug_monitor() {
     }
 }
 
-int LIBUSB_CALL usbipdcpp::LibusbServer::hotplug_callback(
+int LIBUSB_CALL LibusbServer::hotplug_callback(
     libusb_context *ctx,
     libusb_device *device,
     libusb_hotplug_event event,
@@ -426,7 +430,7 @@ int LIBUSB_CALL usbipdcpp::LibusbServer::hotplug_callback(
     return 0;
 }
 
-void usbipdcpp::LibusbServer::handle_device_arrived(libusb_device *device) {
+void LibusbServer::handle_device_arrived(libusb_device *device) {
     auto busid = get_device_busid(device);
 
     // 检查是否已绑定
@@ -449,7 +453,7 @@ void usbipdcpp::LibusbServer::handle_device_arrived(libusb_device *device) {
     print_device(device);
 }
 
-void usbipdcpp::LibusbServer::handle_device_left(const std::string &busid) {
+void LibusbServer::handle_device_left(const std::string &busid) {
     SPDLOG_INFO("检测到设备拔出: {}", busid);
 
     std::lock_guard lock(server.get_devices_mutex());
@@ -480,7 +484,7 @@ void usbipdcpp::LibusbServer::handle_device_left(const std::string &busid) {
     }
 }
 
-void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
+void LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     start_hotplug_monitor();
 
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
@@ -525,7 +529,7 @@ void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
 # endif
 }
 
-void usbipdcpp::LibusbServer::stop() {
+void LibusbServer::stop() {
     stop_hotplug_monitor();
     server.stop();
     SPDLOG_INFO("usbip服务器关闭");
@@ -610,5 +614,5 @@ void usbipdcpp::LibusbServer::stop() {
 //     return Server::remove_device(busid);
 // }
 
-usbipdcpp::LibusbServer::~LibusbServer() {
+LibusbServer::~LibusbServer() {
 }
