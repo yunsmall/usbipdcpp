@@ -12,58 +12,133 @@ public:
     LibusbServer();
 
     /**
-     * @brief If dev has value, then this function will own the value.
-     * @param dev target device
-     * @param use_handle use already exit dev handle to bind a host device, most time it's for Android
-     * @param exist_handle an existing handle
+     * @brief Bind a physical USB device to make it available for export.
+     *
+     * This function opens the device, claims all its interfaces, and adds it to the
+     * available devices list. The device reference will be owned by this function.
+     *
+     * @param dev The libusb device to bind. If use_handle is false, this must not be nullptr.
+     *            The function takes ownership of the device reference.
+     * @param use_handle If true, use an existing device handle instead of opening a new one.
+     *                   This is typically used on Android where the handle is obtained via
+     *                   libusb_wrap_sys_device().
+     * @param exist_handle An existing device handle to use when use_handle is true.
+     *                     Must not be nullptr when use_handle is true.
+     * @return true if the device was successfully bound, false otherwise.
      */
-    void bind_host_device(libusb_device *dev, bool use_handle = false,
+    bool bind_host_device(libusb_device *dev, bool use_handle = false,
                           libusb_device_handle *exist_handle = nullptr);
-    /**
-     * @brief this function will also own the device argument.
-     * @param device target device
-     */
-    void unbind_host_device(libusb_device *device);
 
     /**
-     * @brief 禁止传入仍然可用的busid，只会删除libusb的设备，其他设备不处理
-     * @param busid
+     * @brief Unbind a previously bound physical USB device.
+     *
+     * Releases all interfaces, reattaches kernel drivers, closes the device handle,
+     * and removes the device from the available devices list. The device reference
+     * will be released.
+     *
+     * @param device The libusb device to unbind. The function takes ownership of this reference.
+     * @return true if the device was successfully unbound, false if the device was not found
+     *         in the available devices list or is currently in use.
      */
-    void try_remove_dead_device(const std::string &busid);
+    bool unbind_host_device(libusb_device *device);
+
+    /**
+     * @brief Remove a dead device from the device lists.
+     *
+     * This function should not be called with a busid that is still in use.
+     * It only removes libusb devices, not other device types.
+     *
+     * @param busid The bus ID of the device to remove.
+     * @return true if the device was found and removed, false otherwise.
+     */
+    bool try_remove_dead_device(const std::string &busid);
+
+    /**
+     * @brief Refresh the list of available devices.
+     *
+     * Removes devices from the available list that are no longer present in the system.
+     */
     void refresh_available_devices();
+
+    /**
+     * @brief Start the server listening on the specified endpoint.
+     *
+     * Also starts the hotplug monitor if enabled and supported.
+     *
+     * @param ep The TCP endpoint to listen on.
+     */
     void start(asio::ip::tcp::endpoint &ep);
+
+    /**
+     * @brief Stop the server.
+     *
+     * Stops the hotplug monitor, closes all device handles, releases interfaces,
+     * and reattaches kernel drivers.
+     */
     void stop();
-    // void add_device(std::shared_ptr<UsbDevice> &&device) override;
-    // bool remove_device(const std::string &busid) override;
+
     ~LibusbServer();
 
+    /**
+     * @brief Print detailed information about a USB device to stdout.
+     *
+     * Displays device name, bus ID, VID/PID, USB version, device class, and speed.
+     * Also shows whether the device is exported, available, or unbound.
+     *
+     * @param dev The libusb device to print information about.
+     */
     void print_device(libusb_device *dev);
+
+    /**
+     * @brief List all USB devices connected to the host.
+     *
+     * Prints detailed information about each device to stdout.
+     */
     void list_host_devices();
 
+    /**
+     * @brief Get the underlying Server instance.
+     *
+     * @return Reference to the internal Server object.
+     */
     Server &get_server() {
         return server;
     }
 
+    /**
+     * @brief Get the manufacturer and product names of a USB device.
+     *
+     * @param device The libusb device to get names from.
+     * @return A pair containing {manufacturer, product} names. Returns "Unknown Manufacturer"
+     *         or "Unknown Product" if the corresponding string descriptor is not available.
+     */
     static std::pair<std::string, std::string> get_device_names(libusb_device *device);
 
     /**
-     * @brief return a libusb_device pointer which you need to call libusb_unref_device after using.
-     * @param busid
-     * @return nullptr is not found else found
+     * @brief Find a libusb device by its bus ID.
+     *
+     * @param busid The bus ID to search for (e.g., "1-2.3").
+     * @return A libusb_device pointer if found, nullptr otherwise. The caller must call
+     *         libusb_unref_device() when done with the device.
      */
     static libusb_device *find_by_busid(const std::string &busid);
 
     /**
-     * @brief 设置是否启用热插拔监控（默认启用）
-     * @param enabled true 启用，false 禁用
-     * @note Android 无 root 权限时不支持热插拔，需要禁用
+     * @brief Set whether hotplug monitoring is enabled.
+     *
+     * Hotplug monitoring is enabled by default. On Android without root privileges,
+     * hotplug is not supported and should be disabled before starting the server.
+     *
+     * @param enabled true to enable hotplug monitoring, false to disable.
      */
     void set_hotplug_enabled(bool enabled) {
         hotplug_enabled_by_user_ = enabled;
     }
 
     /**
-     * @brief 获取热插拔是否启用
+     * @brief Check if hotplug monitoring is enabled.
+     *
+     * @return true if hotplug monitoring is enabled, false otherwise.
      */
     bool is_hotplug_enabled() const {
         return hotplug_enabled_by_user_;
