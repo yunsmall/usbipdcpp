@@ -51,6 +51,7 @@ int main(int argc, char **argv) {
     }
 
     LibusbServer server;
+    server.set_hotplug_enabled(false);  // Android 无 root 权限不支持热插拔
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), listen_port);
 
     libusb_device_handle *dev_handle;

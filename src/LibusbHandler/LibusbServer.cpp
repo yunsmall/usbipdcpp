@@ -365,6 +365,11 @@ void usbipdcpp::LibusbServer::refresh_available_devices() {
 }
 
 void usbipdcpp::LibusbServer::start_hotplug_monitor() {
+    if (!hotplug_enabled_by_user_) {
+        SPDLOG_DEBUG("热插拔监控已被用户禁用");
+        return;
+    }
+
     if (!libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
         SPDLOG_WARN("当前 libusb 不支持热插拔");
         return;

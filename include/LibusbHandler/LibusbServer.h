@@ -53,8 +53,21 @@ public:
      */
     static libusb_device *find_by_busid(const std::string &busid);
 
-    void start_hotplug_monitor();
-    void stop_hotplug_monitor();
+    /**
+     * @brief 设置是否启用热插拔监控（默认启用）
+     * @param enabled true 启用，false 禁用
+     * @note Android 无 root 权限时不支持热插拔，需要禁用
+     */
+    void set_hotplug_enabled(bool enabled) {
+        hotplug_enabled_by_user_ = enabled;
+    }
+
+    /**
+     * @brief 获取热插拔是否启用
+     */
+    bool is_hotplug_enabled() const {
+        return hotplug_enabled_by_user_;
+    }
 
 protected:
     Server server;
@@ -71,6 +84,10 @@ protected:
     // 热插拔相关
     libusb_hotplug_callback_handle hotplug_handle_;
     bool hotplug_enabled_ = false;
+    bool hotplug_enabled_by_user_ = true;  // 用户设置的开关，默认启用
+
+    void start_hotplug_monitor();
+    void stop_hotplug_monitor();
 
     void handle_device_arrived(libusb_device *device);
     void handle_device_left(const std::string &busid);

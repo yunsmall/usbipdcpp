@@ -11,7 +11,7 @@ find_dependency(spdlog REQUIRED)
 
 if (libusb IN_LIST usbipdcpp_FIND_COMPONENTS)
     if(TARGET usbipdcpp::usbipdcpp_libusb)
-        find_package(PkgConfig REQUIRED)
+        find_dependency(PkgConfig REQUIRED)
         pkg_check_modules(libusb REQUIRED IMPORTED_TARGET libusb-1.0)
         add_library(usbipdcpp::libusb ALIAS usbipdcpp::usbipdcpp_libusb)
         set(usbipdcpp_libusb_FOUND TRUE)
