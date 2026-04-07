@@ -480,6 +480,10 @@ void usbipdcpp::LibusbServer::handle_device_left(const std::string &busid) {
 void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     start_hotplug_monitor();
 
+# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
+    should_exit_libusb_event_thread = false;
+# endif
+
 # ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     // busy-wait 模式：设置回调，不创建独立线程
     server.set_busy_wait_callback([]() {
@@ -521,10 +525,10 @@ void usbipdcpp::LibusbServer::start(asio::ip::tcp::endpoint &ep) {
 void usbipdcpp::LibusbServer::stop() {
     stop_hotplug_monitor();
     server.stop();
-    SPDLOG_INFO("ubsip服务器关闭");
+    SPDLOG_INFO("usbip服务器关闭");
 
     {
-        std::shared_lock lock(server.get_devices_mutex());
+        std::lock_guard lock(server.get_devices_mutex());
         auto &server_using_devices = server.get_using_devices();
         auto &server_available_devices = server.get_available_devices();
         for (auto i = server_available_devices.begin(); i != server_available_devices.end(); ++i) {
@@ -532,18 +536,20 @@ void usbipdcpp::LibusbServer::stop() {
                 if (auto device = libusb_get_device(libusb_device_handler->native_handle)) {
                     struct libusb_config_descriptor *active_config_desc;
                     auto err = libusb_get_active_config_descriptor(device, &active_config_desc);
-                    for (int intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
-                        err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
-                        if (err) {
-                            SPDLOG_ERROR("释放设备接口{}时出错: {}", intf_i, libusb_strerror(err));
+                    if (err == 0) {
+                        for (int intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
+                            err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
+                            if (err) {
+                                SPDLOG_ERROR("释放设备接口{}时出错: {}", intf_i, libusb_strerror(err));
+                            }
+                            // 重新让内核驱动接管
+                            err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
+                            if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+                                SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
+                            }
                         }
-                        // 重新让内核驱动接管
-                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
-                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
-                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
-                        }
+                        libusb_free_config_descriptor(active_config_desc);
                     }
-                    libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
                 }
                 else {
@@ -551,7 +557,7 @@ void usbipdcpp::LibusbServer::stop() {
                 }
             }
         }
-
+        server_available_devices.clear();
 
         for (auto using_dev_i = server_using_devices.begin(); using_dev_i != server_using_devices.end(); ++
              using_dev_i) {
@@ -560,26 +566,28 @@ void usbipdcpp::LibusbServer::stop() {
                 if (auto device = libusb_get_device(libusb_device_handler->native_handle)) {
                     struct libusb_config_descriptor *active_config_desc;
                     auto err = libusb_get_active_config_descriptor(device, &active_config_desc);
-                    for (int intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
-                        err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
-                        if (err) {
-                            SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
+                    if (err == 0) {
+                        for (int intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
+                            err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
+                            if (err) {
+                                SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
+                            }
+                            // 重新让内核驱动接管
+                            err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
+                            if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+                                SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
+                            }
                         }
-                        // 重新让内核驱动接管
-                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
-                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
-                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
-                        }
+                        libusb_free_config_descriptor(active_config_desc);
                     }
-                    libusb_free_config_descriptor(active_config_desc);
                     libusb_close(libusb_device_handler->native_handle);
                 }
                 else {
                     SPDLOG_ERROR("无法获取device的handle");
                 }
             }
-
         }
+        server_using_devices.clear();
     }
 
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT

@@ -79,10 +79,8 @@ protected:
     std::thread libusb_event_thread;
 # endif
 
-    std::vector<libusb_device *> host_devices;
-
     // 热插拔相关
-    libusb_hotplug_callback_handle hotplug_handle_;
+    libusb_hotplug_callback_handle hotplug_handle_ = 0;
     bool hotplug_enabled_ = false;
     bool hotplug_enabled_by_user_ = true;  // 用户设置的开关，默认启用
 

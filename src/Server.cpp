@@ -26,6 +26,11 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig 
 }
 
 void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
+    should_stop = false;
+    if (asio_io_context.stopped()) {
+        asio_io_context.restart();
+    }
+
     if (before_thread_create_callback) {
         before_thread_create_callback(ThreadPurpose::NetworkIO);
     }
