@@ -18,17 +18,26 @@ class LibusbDeviceHandler : public DeviceHandlerBase {
 
 public:
     /**
-     * @brief Construct a device handler with lazy binding.
+     * @brief 普通模式构造函数（延迟绑定）
      *
-     * The device is not opened until a client connects (on_new_connection).
+     * 设备在客户端连接时（on_new_connection）才打开。
      *
      * @param handle_device The UsbDevice this handler is attached to.
      * @param native_device The libusb device (not yet opened). The handler takes ownership of this reference.
-     * @param use_handle If true, use an existing handle (Android mode).
-     * @param exist_handle The existing device handle (for Android mode). Can be nullptr if use_handle is false.
      */
-    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
-                                  bool use_handle, libusb_device_handle *exist_handle);
+    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device);
+
+    /**
+     * @brief Android 模式构造函数
+     *
+     * 使用系统设备文件描述符。每次客户端连接时会调用 libusb_wrap_sys_device 包装 fd。
+     * 断连时会关闭 handle，下次连接时重新 wrap，支持重连。
+     *
+     * @param handle_device The UsbDevice this handler is attached to.
+     * @param fd A valid file descriptor opened on the device node.
+     *           The fd must remain valid until the handler is destroyed.
+     */
+    explicit LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd);
 
     ~LibusbDeviceHandler() override;
     void on_new_connection(Session &current_session, error_code &ec) override;
@@ -116,27 +125,37 @@ protected:
     // 分段锁传输追踪器
     ConcurrentTransferTracker<libusb_transfer *> transfer_tracker_;
 
-    // 设备句柄（在 on_new_connection 时赋值）
+    // 设备句柄
+    // - 普通模式：在 on_new_connection 时赋值
+    // - Android 模式：在 on_new_connection 时通过 libusb_wrap_sys_device 创建
     libusb_device_handle *native_handle = nullptr;
 
-    // 设备引用（延迟绑定）
-    libusb_device *native_device_ = nullptr;       // libusb 设备引用
-    bool interfaces_claimed_ = false;               // 接口是否已声明
-    bool use_handle_ = false;                       // Android 模式：使用已有 handle
-    libusb_device_handle *exist_handle_ = nullptr;  // Android 模式：已有的 handle
-    int num_interfaces_ = 0;                        // 接口数量（用于释放时遍历）
+    // 设备引用（仅普通模式使用）
+    // 通过判断 native_device_ != nullptr 来区分普通模式和 Android 模式
+    libusb_device *native_device_ = nullptr;
+
+    // Android 模式：系统设备文件描述符
+    intptr_t wrapped_fd_ = -1;
+
+    bool interfaces_claimed_ = false;  // 接口是否已声明
 
     /**
-     * @brief Open device and claim interfaces.
+     * @brief Open device and claim interfaces (普通模式).
      * Called on client connection.
      * @return true on success, false on failure.
      */
     bool open_and_claim_device();
 
     /**
+     * @brief Wrap fd and claim interfaces (Android 模式).
+     * Called on client connection.
+     * @return true on success, false on failure.
+     */
+    bool wrap_fd_and_claim_interfaces();
+
+    /**
      * @brief Release interfaces and close device.
      * Called on client disconnection.
-     * For Android mode (use_handle_), only releases interfaces without closing the handle.
      */
     void release_and_close_device();
 

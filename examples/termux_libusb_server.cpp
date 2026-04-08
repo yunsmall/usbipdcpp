@@ -35,8 +35,8 @@ int main(int argc, char **argv) {
         SPDLOG_ERROR("You must pass an fd argument");
         return -1;
     }
-    int fd;
-    if (sscanf(argv[1], "%d", &fd) != 1) {
+    intptr_t fd;
+    if (sscanf(argv[1], "%td", &fd) != 1) {
         SPDLOG_ERROR("Parse fd failed");
         return -1;
     }
@@ -54,15 +54,15 @@ int main(int argc, char **argv) {
     server.set_hotplug_enabled(false);  // Android 无 root 权限不支持热插拔
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), listen_port);
 
-    libusb_device_handle *dev_handle;
-    err = libusb_wrap_sys_device(nullptr, (intptr_t) fd, &dev_handle);
-    if (err) {
-        SPDLOG_ERROR("libusb_wrap_sys_device failed: {}", libusb_strerror(err));
+    // Android 模式：直接传入 fd，bind 时会临时 wrap 获取设备信息
+    // 每次客户端连接时会重新 wrap fd
+    auto result = server.bind_host_device_with_wrapped_fd(fd);
+    if (result != DeviceOperationResult::Success) {
+        SPDLOG_ERROR("bind_host_device_with_wrapped_fd failed");
         libusb_exit(nullptr);
         return -1;
     }
 
-    server.bind_host_device(nullptr, true, dev_handle);
     server.start(endpoint);
     spdlog::info("enter any thing to stop the server");
 

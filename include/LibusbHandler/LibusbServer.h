@@ -21,29 +21,40 @@ enum class DeviceOperationResult {
     ClaimInterfaceFailed    ///< Failed to claim interface
 };
 
+/**
+ * @brief 基于 libusb 的 USB/IP 服务器
+ *
+ * @note 所有对 LibusbServer 的公共方法调用（如 start、stop、bind_host_device 等）
+ *       必须在同一个线程中进行，不支持跨线程调用。
+ */
 class LibusbServer {
 public:
     LibusbServer();
 
     /**
-     * @brief Bind a physical USB device to make it available for export.
+     * @brief Bind a physical USB device to make it available for export (普通模式).
      *
      * This function retrieves device information and adds it to the available devices list.
      * The device is not opened until a client connects (lazy binding).
-     * The device reference will be owned by this function.
      *
-     * @param dev The libusb device to bind. If use_handle is false, this must not be nullptr.
+     * @param dev The libusb device to bind. Must not be nullptr.
      *            The function takes ownership of the device reference.
-     * @param use_handle If true, use an existing device handle instead of opening a new one.
-     *                   This is typically used on Android where the handle is obtained via
-     *                   libusb_wrap_sys_device(). The handle is stored but interfaces are
-     *                   claimed only when a client connects.
-     * @param exist_handle An existing device handle to use when use_handle is true.
-     *                     Must not be nullptr when use_handle is true.
      * @return DeviceOperationResult::Success on success, or an appropriate error code.
      */
-    DeviceOperationResult bind_host_device(libusb_device *dev, bool use_handle = false,
-                          libusb_device_handle *exist_handle = nullptr);
+    DeviceOperationResult bind_host_device(libusb_device *dev);
+
+    /**
+     * @brief Bind a physical USB device with a system file descriptor (Android 模式).
+     *
+     * This is for Android where the device is accessed via a file descriptor obtained
+     * from UsbManager.openDevice(). The fd is wrapped via libusb_wrap_sys_device()
+     * on each client connection, supporting reconnection after disconnection.
+     *
+     * @param fd A valid file descriptor opened on the device node.
+     *           The fd must remain valid until the device is unbound or the server is stopped.
+     * @return DeviceOperationResult::Success on success, or an appropriate error code.
+     */
+    DeviceOperationResult bind_host_device_with_wrapped_fd(intptr_t fd);
 
     /**
      * @brief Unbind a previously bound physical USB device.
@@ -60,6 +71,18 @@ public:
     DeviceOperationResult unbind_host_device(libusb_device *device);
 
     /**
+     * @brief Unbind a previously bound device by its file descriptor (Android 模式).
+     *
+     * Finds and removes the device that was bound with the specified fd.
+     *
+     * @param fd The file descriptor used when binding the device.
+     * @return DeviceOperationResult::Success on success,
+     *         DeviceOperationResult::DeviceNotFound if not in available devices,
+     *         DeviceOperationResult::DeviceInUse if currently in use.
+     */
+    DeviceOperationResult unbind_host_device_by_fd(intptr_t fd);
+
+    /**
      * @brief Remove a dead device from the device lists.
      *
      * This function should not be called with a busid that is still in use.
@@ -72,11 +95,16 @@ public:
     DeviceOperationResult try_remove_dead_device(const std::string &busid);
 
     /**
-     * @brief Refresh the list of available devices.
+     * @brief Notify that a device has been physically removed (Android 模式).
      *
-     * Removes devices from the available list that are no longer present in the system.
+     * This should be called when the system detects a USB device has been detached.
+     * If the device is currently in use, it will trigger disconnection and stop the session.
+     *
+     * @param busid The bus ID of the removed device.
+     * @return DeviceOperationResult::Success if found and handled,
+     *         DeviceOperationResult::DeviceNotFound if not found.
      */
-    void refresh_available_devices();
+    DeviceOperationResult notify_device_removed(const std::string &busid);
 
     /**
      * @brief Start the server listening on the specified endpoint.

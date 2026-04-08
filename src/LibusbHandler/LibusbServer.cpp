@@ -142,54 +142,27 @@ libusb_device *LibusbServer::find_by_busid(const std::string &busid) {
     return nullptr;
 }
 
-DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev, bool use_handle,
-                                               libusb_device_handle *exist_handle) {
-    int err;
-
-    // 确保 dev 有效
-    if (!use_handle && dev == nullptr) {
+DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
+    if (dev == nullptr) {
         SPDLOG_ERROR("dev 不能为空");
         return DeviceOperationResult::DeviceNotFound;
     }
 
-    // 获取设备引用
-    libusb_device *device_ref = nullptr;
-    if (!use_handle) {
-        device_ref = libusb_ref_device(dev);
-        if (!device_ref) {
-            SPDLOG_ERROR("无法获取设备引用");
-            return DeviceOperationResult::DeviceNotFound;
-        }
-    } else {
-        // Android 模式：从 exist_handle 获取设备
-        assert(exist_handle != nullptr && "exist_handle can't be nullptr");
-        device_ref = libusb_get_device(exist_handle);
-        if (!device_ref) {
-            SPDLOG_ERROR("libusb_get_device returns nullptr");
-            return DeviceOperationResult::DeviceNotFound;
-        }
-        device_ref = libusb_ref_device(device_ref);
-        if (!device_ref) {
-            SPDLOG_ERROR("libusb_ref_device returns nullptr");
-            return DeviceOperationResult::DeviceNotFound;
-        }
-    }
-
     // 获取设备描述符
     libusb_device_descriptor device_descriptor{};
-    err = libusb_get_device_descriptor(device_ref, &device_descriptor);
+    int err = libusb_get_device_descriptor(dev, &device_descriptor);
     if (err) {
         SPDLOG_WARN("无法获取设备描述符：{}", libusb_strerror(err));
-        libusb_unref_device(device_ref);
+        libusb_unref_device(dev);
         return DeviceOperationResult::GetDescriptorFailed;
     }
 
     // 获取配置描述符
     struct libusb_config_descriptor *active_config_desc;
-    err = libusb_get_active_config_descriptor(device_ref, &active_config_desc);
+    err = libusb_get_active_config_descriptor(dev, &active_config_desc);
     if (err) {
         SPDLOG_WARN("无法获取设备当前的配置描述符：{}", libusb_strerror(err));
-        libusb_unref_device(device_ref);
+        libusb_unref_device(dev);
         return DeviceOperationResult::GetConfigFailed;
     }
 
@@ -225,12 +198,12 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev, bool us
     {
         std::lock_guard lock(server.get_devices_mutex());
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
-                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(device_ref),
-                                    libusb_get_device_address(device_ref), libusb_get_port_number(device_ref)),
-                .busid = get_device_busid(device_ref),
-                .bus_num = libusb_get_bus_number(device_ref),
-                .dev_num = libusb_get_port_number(device_ref),
-                .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(device_ref)),
+                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
+                                    libusb_get_device_address(dev), libusb_get_port_number(dev)),
+                .busid = get_device_busid(dev),
+                .bus_num = libusb_get_bus_number(dev),
+                .dev_num = libusb_get_port_number(dev),
+                .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
                 .vendor_id = device_descriptor.idVendor,
                 .product_id = device_descriptor.idProduct,
                 .device_bcd = device_descriptor.bcdDevice,
@@ -244,13 +217,124 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev, bool us
                 .ep0_out = UsbEndpoint::get_ep0_out(device_descriptor.bMaxPacketSize0),
         });
 
-        current_device->with_handler<LibusbDeviceHandler>(device_ref, use_handle, exist_handle);
+        // 普通模式：传入设备引用（handler 持有引用所有权）
+        current_device->with_handler<LibusbDeviceHandler>(dev);
         server.get_available_devices().emplace_back(std::move(current_device));
     }
 
     libusb_free_config_descriptor(active_config_desc);
-    // 注意：这里不释放 device_ref，因为它被 LibusbDeviceHandler 持有
-    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(device_ref));
+    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(dev));
+    return DeviceOperationResult::Success;
+}
+
+DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd) {
+    if (fd < 0) {
+        SPDLOG_ERROR("fd 无效");
+        return DeviceOperationResult::DeviceNotFound;
+    }
+
+    // Android 模式：临时 wrap fd 获取设备信息，然后关闭
+    libusb_device_handle *temp_handle = nullptr;
+    int err = libusb_wrap_sys_device(nullptr, fd, &temp_handle);
+    if (err) {
+        SPDLOG_ERROR("libusb_wrap_sys_device 失败: {}", libusb_strerror(err));
+        return DeviceOperationResult::DeviceOpenFailed;
+    }
+
+    // 从临时 handle 获取设备信息
+    libusb_device *device_for_info = libusb_get_device(temp_handle);
+    if (!device_for_info) {
+        SPDLOG_ERROR("libusb_get_device returns nullptr");
+        libusb_close(temp_handle);
+        return DeviceOperationResult::DeviceNotFound;
+    }
+
+    // 获取设备描述符
+    libusb_device_descriptor device_descriptor{};
+    err = libusb_get_device_descriptor(device_for_info, &device_descriptor);
+    if (err) {
+        SPDLOG_WARN("无法获取设备描述符：{}", libusb_strerror(err));
+        libusb_close(temp_handle);
+        return DeviceOperationResult::GetDescriptorFailed;
+    }
+
+    // 获取配置描述符
+    struct libusb_config_descriptor *active_config_desc;
+    err = libusb_get_active_config_descriptor(device_for_info, &active_config_desc);
+    if (err) {
+        SPDLOG_WARN("无法获取设备当前的配置描述符：{}", libusb_strerror(err));
+        libusb_close(temp_handle);
+        return DeviceOperationResult::GetConfigFailed;
+    }
+
+    // 构建接口信息
+    SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
+    std::vector<UsbInterface> interfaces;
+    for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
+        auto &intf = active_config_desc->interface[intf_i];
+        SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
+        auto &intf_desc = intf.altsetting[0];
+
+        std::vector<UsbEndpoint> endpoints;
+        endpoints.reserve(intf_desc.bNumEndpoints);
+        for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
+            endpoints.emplace_back(
+                    intf_desc.endpoint[ep_i].bEndpointAddress,
+                    intf_desc.endpoint[ep_i].bmAttributes,
+                    intf_desc.endpoint[ep_i].wMaxPacketSize,
+                    intf_desc.endpoint[ep_i].bInterval
+            );
+        }
+        interfaces.emplace_back(
+                UsbInterface{
+                        intf_desc.bInterfaceClass,
+                        intf_desc.bInterfaceSubClass,
+                        intf_desc.bInterfaceProtocol,
+                        std::move(endpoints)
+                }
+        );
+    }
+
+    // 保存设备信息
+    auto busid = get_device_busid(device_for_info);
+    auto bus_num = libusb_get_bus_number(device_for_info);
+    auto dev_addr = libusb_get_device_address(device_for_info);
+    auto dev_num = libusb_get_port_number(device_for_info);
+    auto speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(device_for_info));
+    auto configuration_value = active_config_desc->bConfigurationValue;
+
+    // 关闭临时 handle
+    libusb_free_config_descriptor(active_config_desc);
+    libusb_close(temp_handle);
+
+    // 创建 UsbDevice 和 LibusbDeviceHandler
+    {
+        std::lock_guard lock(server.get_devices_mutex());
+        auto current_device = std::make_shared<UsbDevice>(UsbDevice{
+                .path = std::format("/sys/bus/{}/{}/{}", bus_num, dev_addr, dev_num),
+                .busid = busid,
+                .bus_num = bus_num,
+                .dev_num = dev_num,
+                .speed = speed,
+                .vendor_id = device_descriptor.idVendor,
+                .product_id = device_descriptor.idProduct,
+                .device_bcd = device_descriptor.bcdDevice,
+                .device_class = device_descriptor.bDeviceClass,
+                .device_subclass = device_descriptor.bDeviceSubClass,
+                .device_protocol = device_descriptor.bDeviceProtocol,
+                .configuration_value = configuration_value,
+                .num_configurations = device_descriptor.bNumConfigurations,
+                .interfaces = std::move(interfaces),
+                .ep0_in = UsbEndpoint::get_ep0_in(device_descriptor.bMaxPacketSize0),
+                .ep0_out = UsbEndpoint::get_ep0_out(device_descriptor.bMaxPacketSize0),
+        });
+
+        // Android 模式：传入 fd（每次连接时重新 wrap）
+        current_device->with_handler<LibusbDeviceHandler>(fd);
+        server.get_available_devices().emplace_back(std::move(current_device));
+    }
+
+    SPDLOG_INFO("设备 {} 已添加到可用列表 (fd={})", busid, fd);
     return DeviceOperationResult::Success;
 }
 
@@ -289,6 +373,43 @@ DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
         }
     }
     libusb_unref_device(device);
+    return DeviceOperationResult::DeviceNotFound;
+}
+
+DeviceOperationResult LibusbServer::unbind_host_device_by_fd(intptr_t fd) {
+    std::lock_guard lock(server.get_devices_mutex());
+    auto &server_using_devices = server.get_using_devices();
+    auto &server_available_devices = server.get_available_devices();
+
+    // 先检查 available_devices
+    for (auto i = server_available_devices.begin(); i != server_available_devices.end(); ++i) {
+        if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler)) {
+            if (libusb_device_handler->wrapped_fd_ == fd) {
+                // 如果接口已声明，需要释放
+                if (libusb_device_handler->interfaces_claimed_) {
+                    libusb_device_handler->release_and_close_device();
+                }
+                // Android 模式没有 native_device_，无需释放
+
+                auto busid = (*i)->busid;
+                server_available_devices.erase(i);
+                SPDLOG_INFO("成功取消绑定设备 {} (fd={})", busid, fd);
+                return DeviceOperationResult::Success;
+            }
+        }
+    }
+
+    // 再检查 using_devices（设备正在使用中）
+    for (auto it = server_using_devices.begin(); it != server_using_devices.end(); ++it) {
+        if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>(it->second->handler)) {
+            if (libusb_device_handler->wrapped_fd_ == fd) {
+                SPDLOG_WARN("设备正在使用中，不支持解绑 (fd={})", fd);
+                return DeviceOperationResult::DeviceInUse;
+            }
+        }
+    }
+
+    SPDLOG_WARN("未找到 fd={} 的设备", fd);
     return DeviceOperationResult::DeviceNotFound;
 }
 
@@ -335,46 +456,44 @@ DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &bu
     return DeviceOperationResult::DeviceNotFound;
 }
 
-void LibusbServer::refresh_available_devices() {
-    libusb_device **devs;
-    auto get_ret = libusb_get_device_list(nullptr, &devs);
-    if (get_ret < 0) {
-        SPDLOG_WARN("libusb_get_device_list error: {}", libusb_strerror(get_ret));
-        return;
-    }
-    size_t dev_nums = get_ret;
+DeviceOperationResult LibusbServer::notify_device_removed(const std::string &busid) {
+    SPDLOG_INFO("设备被拔出: {}", busid);
 
-    {
-        std::lock_guard lock(server.get_devices_mutex());
-        auto &server_available_devices = server.get_available_devices();
-        for (auto i = server_available_devices.begin(); i != server_available_devices.end();) {
-            auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler);
-            bool removed = false;
-            if (libusb_device_handler) {
-                // 使用 native_device_ 检查设备是否存在
-                libusb_device *device = libusb_device_handler->native_device_;
+    std::lock_guard lock(server.get_devices_mutex());
+    auto &available_devices = server.get_available_devices();
+    auto &using_devices = server.get_using_devices();
 
-                bool found = false;
-                if (device) {
-                    for (size_t device_i = 0; device_i < dev_nums; device_i++) {
-                        if (device == devs[device_i]) {
-                            found = true;
-                            break;
-                        }
-                    }
+    // 1. 从 available_devices 中移除
+    for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
+        if ((*it)->busid == busid) {
+            if (auto handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*it)->handler)) {
+                if (handler->native_handle) {
+                    libusb_close(handler->native_handle);
+                    handler->native_handle = nullptr;
                 }
-                if (!found) {
-                    i = server_available_devices.erase(i);
-                    removed = true;
+                if (handler->native_device_) {
+                    libusb_unref_device(handler->native_device_);
+                    handler->native_device_ = nullptr;
                 }
             }
-
-            if (!removed)
-                ++i;
+            available_devices.erase(it);
+            SPDLOG_INFO("已从已绑定设备列表移除: {}", busid);
+            return DeviceOperationResult::Success;
         }
     }
 
-    libusb_free_device_list(devs, 1);
+    // 2. 如果正在使用中，触发断连
+    if (auto it = using_devices.find(busid); it != using_devices.end()) {
+        if (auto handler = it->second->handler) {
+            handler->on_device_removed();
+            SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+            handler->trigger_session_stop();
+        }
+        return DeviceOperationResult::Success;
+    }
+
+    SPDLOG_WARN("未找到设备: {}", busid);
+    return DeviceOperationResult::DeviceNotFound;
 }
 
 void LibusbServer::start_hotplug_monitor() {
@@ -554,24 +673,12 @@ void LibusbServer::stop() {
         auto &server_available_devices = server.get_available_devices();
         for (auto i = server_available_devices.begin(); i != server_available_devices.end(); ++i) {
             if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*i)->handler)) {
-                if (libusb_device_handler->interfaces_claimed_ && libusb_device_handler->native_handle) {
-                    // 释放接口
-                    for (int intf_i = 0; intf_i < libusb_device_handler->num_interfaces_; intf_i++) {
-                        int err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
-                        if (err) {
-                            SPDLOG_ERROR("释放设备接口{}时出错: {}", intf_i, libusb_strerror(err));
-                        }
-                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
-                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
-                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
-                        }
-                    }
-                }
-                if (libusb_device_handler->native_handle && !libusb_device_handler->use_handle_) {
-                    libusb_close(libusb_device_handler->native_handle);
+                if (libusb_device_handler->interfaces_claimed_) {
+                    libusb_device_handler->release_and_close_device();
                 }
                 if (libusb_device_handler->native_device_) {
                     libusb_unref_device(libusb_device_handler->native_device_);
+                    libusb_device_handler->native_device_ = nullptr;
                 }
             }
         }
@@ -581,23 +688,12 @@ void LibusbServer::stop() {
              using_dev_i) {
             if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>(
                     using_dev_i->second->handler)) {
-                if (libusb_device_handler->interfaces_claimed_ && libusb_device_handler->native_handle) {
-                    for (int intf_i = 0; intf_i < libusb_device_handler->num_interfaces_; intf_i++) {
-                        int err = libusb_release_interface(libusb_device_handler->native_handle, intf_i);
-                        if (err) {
-                            SPDLOG_ERROR("释放设备接口时出错: {}", libusb_strerror(err));
-                        }
-                        err = libusb_attach_kernel_driver(libusb_device_handler->native_handle, intf_i);
-                        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
-                            SPDLOG_WARN("重新绑定内核驱动失败: {}", libusb_strerror(err));
-                        }
-                    }
-                }
-                if (libusb_device_handler->native_handle && !libusb_device_handler->use_handle_) {
-                    libusb_close(libusb_device_handler->native_handle);
+                if (libusb_device_handler->interfaces_claimed_) {
+                    libusb_device_handler->release_and_close_device();
                 }
                 if (libusb_device_handler->native_device_) {
                     libusb_unref_device(libusb_device_handler->native_device_);
+                    libusb_device_handler->native_device_ = nullptr;
                 }
             }
         }
