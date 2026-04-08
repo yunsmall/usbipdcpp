@@ -176,6 +176,7 @@ asio::awaitable<void> usbipdcpp::Session::parse_op_co() {
             SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
 
             bool target_device_is_using = false;
+            bool open_device_failed = false;
             //已经在使用的不支持导出
             if (server.is_device_using(wanted_busid)) {
                 spdlog::warn("正在使用的设备不支持导出");
@@ -186,18 +187,29 @@ asio::awaitable<void> usbipdcpp::Session::parse_op_co() {
             }
             else {
                 if (auto using_device = server.try_moving_device_to_using(wanted_busid)) {
-                    //从这里开始会一直占用锁
                     std::lock_guard lock(current_import_device_data_mutex);
                     spdlog::info("成功将设备放入正在使用的设备中");
                     current_import_device_id = wanted_busid;
                     //将当前使用的设备指向这个设备
                     current_import_device = using_device;
                     spdlog::info("成功缓存正在使用的设备");
+
+                    // 在发送 OpRepImport 之前尝试打开设备
+                    usbipdcpp::error_code open_ec;
+                    current_import_device->on_new_connection(*this, open_ec);
+                    if (open_ec) {
+                        SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
+                        open_device_failed = true;
+                        // 将设备移回可用列表
+                        server.try_moving_device_to_available(wanted_busid);
+                        current_import_device.reset();
+                        current_import_device_id.reset();
+                    }
                 }
             }
 
-            std::shared_lock lock(current_import_device_data_mutex);
-            if (!target_device_is_using) {
+            if (!target_device_is_using && !open_device_failed) {
+                std::shared_lock lock(current_import_device_data_mutex);
                 if (current_import_device) {
                     spdlog::info("找到目标设备，可以导入");
                     op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
@@ -208,12 +220,17 @@ asio::awaitable<void> usbipdcpp::Session::parse_op_co() {
                     op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
                             static_cast<std::uint32_t>(OperationStatuType::NoDev));
                 }
-                auto to_be_sent = op_rep_import.to_bytes();
-                [[maybe_unused]] auto size = co_await asio::async_write(socket, asio::buffer(to_be_sent),
-                                                                        asio::use_awaitable);
-                SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
-                SPDLOG_TRACE("成功发送 OpRepImport 包", size);
             }
+            else if (open_device_failed) {
+                op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                        static_cast<std::uint32_t>(OperationStatuType::NA));
+            }
+
+            auto to_be_sent = op_rep_import.to_bytes();
+            [[maybe_unused]] auto size = co_await asio::async_write(socket, asio::buffer(to_be_sent),
+                                                                    asio::use_awaitable);
+            SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
+            SPDLOG_TRACE("成功发送 OpRepImport 包", size);
 
             if (cmd_transferring) {
                 usbipdcpp::error_code transferring_ec;
@@ -224,6 +241,8 @@ asio::awaitable<void> usbipdcpp::Session::parse_op_co() {
                     SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
                     ec = transferring_ec;
                 }
+
+                // on_disconnection 和设备清理已在 receiver_co 中处理
             }
         }
         else {
@@ -281,6 +300,7 @@ void usbipdcpp::Session::parse_op() {
             SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
 
             bool target_device_is_using = false;
+            bool open_device_failed = false;
             //已经在使用的不支持导出
             if (server.is_device_using(wanted_busid)) {
                 spdlog::warn("正在使用的设备不支持导出");
@@ -291,18 +311,29 @@ void usbipdcpp::Session::parse_op() {
             }
             else {
                 if (auto using_device = server.try_moving_device_to_using(wanted_busid)) {
-                    //从这里开始会一直占用锁
                     std::lock_guard lock(current_import_device_data_mutex);
                     spdlog::info("成功将设备放入正在使用的设备中");
                     current_import_device_id = wanted_busid;
                     //将当前使用的设备指向这个设备
                     current_import_device = using_device;
                     spdlog::info("成功缓存正在使用的设备");
+
+                    // 在发送 OpRepImport 之前尝试打开设备
+                    usbipdcpp::error_code open_ec;
+                    current_import_device->on_new_connection(*this, open_ec);
+                    if (open_ec) {
+                        SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
+                        open_device_failed = true;
+                        // 将设备移回可用列表
+                        server.try_moving_device_to_available(wanted_busid);
+                        current_import_device.reset();
+                        current_import_device_id.reset();
+                    }
                 }
             }
 
-            std::shared_lock lock(current_import_device_data_mutex);
-            if (!target_device_is_using) {
+            if (!target_device_is_using && !open_device_failed) {
+                std::shared_lock lock(current_import_device_data_mutex);
                 if (current_import_device) {
                     spdlog::info("找到目标设备，可以导入");
                     op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
@@ -313,14 +344,19 @@ void usbipdcpp::Session::parse_op() {
                     op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
                             static_cast<std::uint32_t>(OperationStatuType::NoDev));
                 }
-                auto to_be_sent = op_rep_import.to_bytes();
-                SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
-                [[maybe_unused]] auto size = asio::write(socket, asio::buffer(to_be_sent), ec);
-                if (!ec)[[likely]]
-                        SPDLOG_TRACE("成功发送 OpRepImport 包", size);
-                else
-                    SPDLOG_TRACE("发送 OpRepImport 包出错{}", ec.message());
             }
+            else if (open_device_failed) {
+                op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                        static_cast<std::uint32_t>(OperationStatuType::NA));
+            }
+
+            auto to_be_sent = op_rep_import.to_bytes();
+            SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
+            [[maybe_unused]] auto size = asio::write(socket, asio::buffer(to_be_sent), ec);
+            if (!ec)[[likely]]
+                    SPDLOG_TRACE("成功发送 OpRepImport 包", size);
+            else
+                SPDLOG_TRACE("发送 OpRepImport 包出错{}", ec.message());
 
             if (cmd_transferring) {
                 usbipdcpp::error_code transferring_ec;
@@ -330,6 +366,8 @@ void usbipdcpp::Session::parse_op() {
                     SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
                     ec = transferring_ec;
                 }
+
+                // on_disconnection 和设备清理已在 receiver 中处理
             }
         }
         else {
@@ -374,9 +412,7 @@ void usbipdcpp::Session::immediately_stop() {
 
 #ifdef USBIPDCPP_USE_COROUTINE
 asio::awaitable<void> usbipdcpp::Session::transfer_loop_co(usbipdcpp::error_code &transferring_ec) {
-    current_import_device->on_new_connection(*this, transferring_ec);
-    if (transferring_ec)
-        co_return;
+    // on_new_connection 已在 parse_op_co 中调用，此处不再调用
 
     error_code receiver_ec;
     error_code sender_ec;
@@ -565,9 +601,7 @@ asio::awaitable<void> usbipdcpp::Session::sender_co(usbipdcpp::error_code &ec) {
 
 #else
 void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
-    current_import_device->on_new_connection(*this, transferring_ec);
-    if (transferring_ec)
-        return;
+    // on_new_connection 已在 parse_op 中调用，此处不再调用
 
     error_code receiver_ec;
     error_code sender_ec;

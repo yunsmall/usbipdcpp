@@ -28,14 +28,16 @@ public:
     /**
      * @brief Bind a physical USB device to make it available for export.
      *
-     * This function opens the device, claims all its interfaces, and adds it to the
-     * available devices list. The device reference will be owned by this function.
+     * This function retrieves device information and adds it to the available devices list.
+     * The device is not opened until a client connects (lazy binding).
+     * The device reference will be owned by this function.
      *
      * @param dev The libusb device to bind. If use_handle is false, this must not be nullptr.
      *            The function takes ownership of the device reference.
      * @param use_handle If true, use an existing device handle instead of opening a new one.
      *                   This is typically used on Android where the handle is obtained via
-     *                   libusb_wrap_sys_device().
+     *                   libusb_wrap_sys_device(). The handle is stored but interfaces are
+     *                   claimed only when a client connects.
      * @param exist_handle An existing device handle to use when use_handle is true.
      *                     Must not be nullptr when use_handle is true.
      * @return DeviceOperationResult::Success on success, or an appropriate error code.

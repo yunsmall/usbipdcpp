@@ -7,14 +7,73 @@
 #include "constant.h"
 #include "Endpoint.h"
 
-usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle) :
-    DeviceHandlerBase(handle_device), native_handle(native_handle) {
+usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
+                                                      bool use_handle, libusb_device_handle *exist_handle) :
+    DeviceHandlerBase(handle_device), native_device_(native_device),
+    use_handle_(use_handle), exist_handle_(exist_handle) {
+    // 设备尚未打开，将在 on_new_connection 时打开
+    if (use_handle && exist_handle) {
+        // Android 模式：已有 handle，但接口尚未声明
+        native_handle = exist_handle;
+    }
+    // num_interfaces_ 将在 open_and_claim_device 中设置
 }
 
-usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() = default;
+usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
+    if (native_device_) {
+        libusb_unref_device(native_device_);
+        native_device_ = nullptr;
+    }
+}
 
 void usbipdcpp::LibusbDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
     DeviceHandlerBase::on_new_connection(current_session, ec);
+
+    // 在客户端连接时打开设备并声明接口
+    if (!native_handle) {
+        // 普通模式：需要打开设备
+        if (!open_and_claim_device()) {
+            SPDLOG_ERROR("打开设备失败");
+            ec = make_error_code(ErrorType::NO_DEVICE);
+            return;
+        }
+    }
+    else if (!interfaces_claimed_) {
+        // Android 模式：handle 已存在，但接口未声明
+        struct libusb_config_descriptor *active_config_desc = nullptr;
+        auto device = libusb_get_device(native_handle);
+        if (!device) {
+            SPDLOG_ERROR("无法获取 libusb device");
+            ec = make_error_code(ErrorType::NO_DEVICE);
+            return;
+        }
+        auto err = libusb_get_active_config_descriptor(device, &active_config_desc);
+        if (err) {
+            SPDLOG_ERROR("无法获取配置描述符: {}", libusb_strerror(err));
+            ec = make_error_code(ErrorType::NO_DEVICE);
+            return;
+        }
+
+        num_interfaces_ = active_config_desc->bNumInterfaces;
+        for (int intf_i = 0; intf_i < num_interfaces_; intf_i++) {
+            err = libusb_detach_kernel_driver(native_handle, intf_i);
+            if (err && err != LIBUSB_ERROR_NOT_FOUND) {
+                SPDLOG_WARN("无法卸载接口 {} 的内核驱动: {}", intf_i, libusb_strerror(err));
+            }
+
+            err = libusb_claim_interface(native_handle, intf_i);
+            if (err) {
+                SPDLOG_ERROR("无法声明接口 {}: {}", intf_i, libusb_strerror(err));
+                libusb_free_config_descriptor(active_config_desc);
+                ec = make_error_code(ErrorType::NO_DEVICE);
+                return;
+            }
+        }
+        interfaces_claimed_ = true;
+        libusb_free_config_descriptor(active_config_desc);
+        SPDLOG_INFO("Android 模式：成功声明 {} 个接口", num_interfaces_);
+    }
+
     //标记客户端连接
     client_disconnection = false;
 }
@@ -42,6 +101,11 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
 
     //为下次连接做准备，清空自身状态
     callback_args_pool_.clear();
+
+    // 断开连接时释放接口并关闭设备
+    if (interfaces_claimed_) {
+        release_and_close_device();
+    }
 
     DeviceHandlerBase::on_disconnection(ec);
 }
@@ -662,4 +726,98 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
         delete &callback_arg;
     }
     libusb_free_transfer(trx);
+}
+
+bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
+    if (!native_device_) {
+        SPDLOG_ERROR("native_device_ 为空，无法打开设备");
+        return false;
+    }
+
+    int err;
+    if (use_handle_ && exist_handle_) {
+        // Android 模式：handle 已存在，只需声明接口
+        native_handle = exist_handle_;
+    } else {
+        // 正常模式：打开设备
+        err = libusb_open(native_device_, &native_handle);
+        if (err) {
+            SPDLOG_ERROR("无法打开设备: {}", libusb_strerror(err));
+            return false;
+        }
+    }
+
+    // 获取配置描述符
+    struct libusb_config_descriptor *active_config_desc = nullptr;
+    err = libusb_get_active_config_descriptor(native_device_, &active_config_desc);
+    if (err) {
+        SPDLOG_ERROR("无法获取配置描述符: {}", libusb_strerror(err));
+        if (!use_handle_) {
+            libusb_close(native_handle);
+        }
+        native_handle = nullptr;
+        return false;
+    }
+
+    num_interfaces_ = active_config_desc->bNumInterfaces;
+    SPDLOG_DEBUG("设备有 {} 个接口", num_interfaces_);
+
+    // 解绑内核驱动并声明所有接口
+    for (int intf_i = 0; intf_i < num_interfaces_; intf_i++) {
+        err = libusb_detach_kernel_driver(native_handle, intf_i);
+        if (err && err != LIBUSB_ERROR_NOT_FOUND) {
+            SPDLOG_WARN("无法卸载接口 {} 的内核驱动: {}", intf_i, libusb_strerror(err));
+        }
+
+        err = libusb_claim_interface(native_handle, intf_i);
+        if (err) {
+            SPDLOG_ERROR("无法声明接口 {}: {}", intf_i, libusb_strerror(err));
+            // 回滚已声明的接口
+            for (int j = 0; j < intf_i; j++) {
+                libusb_release_interface(native_handle, j);
+                libusb_attach_kernel_driver(native_handle, j);
+            }
+            libusb_free_config_descriptor(active_config_desc);
+            if (!use_handle_) {
+                libusb_close(native_handle);
+            }
+            native_handle = nullptr;
+            return false;
+        }
+    }
+
+    libusb_free_config_descriptor(active_config_desc);
+    interfaces_claimed_ = true;
+    SPDLOG_INFO("成功打开设备并声明 {} 个接口", num_interfaces_);
+    return true;
+}
+
+void usbipdcpp::LibusbDeviceHandler::release_and_close_device() {
+    if (!native_handle) {
+        return;
+    }
+
+    // 释放所有接口
+    for (int intf_i = 0; intf_i < num_interfaces_; intf_i++) {
+        int err = libusb_release_interface(native_handle, intf_i);
+        if (err) {
+            SPDLOG_ERROR("释放接口 {} 时出错: {}", intf_i, libusb_strerror(err));
+        }
+
+        // 重新绑定内核驱动
+        err = libusb_attach_kernel_driver(native_handle, intf_i);
+        if (err && err != LIBUSB_ERROR_NOT_FOUND && err != LIBUSB_ERROR_NOT_SUPPORTED) {
+            SPDLOG_WARN("重新绑定内核驱动失败 (接口 {}): {}", intf_i, libusb_strerror(err));
+        }
+    }
+
+    interfaces_claimed_ = false;
+
+    // Android 模式不关闭 handle
+    if (!use_handle_) {
+        libusb_close(native_handle);
+        native_handle = nullptr;
+    }
+
+    SPDLOG_INFO("已释放设备接口");
 }

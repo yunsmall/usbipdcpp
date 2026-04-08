@@ -17,7 +17,18 @@ class LibusbDeviceHandler : public DeviceHandlerBase {
     friend class LibusbServer;
 
 public:
-    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device_handle *native_handle);
+    /**
+     * @brief Construct a device handler with lazy binding.
+     *
+     * The device is not opened until a client connects (on_new_connection).
+     *
+     * @param handle_device The UsbDevice this handler is attached to.
+     * @param native_device The libusb device (not yet opened). The handler takes ownership of this reference.
+     * @param use_handle If true, use an existing handle (Android mode).
+     * @param exist_handle The existing device handle (for Android mode). Can be nullptr if use_handle is false.
+     */
+    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
+                                  bool use_handle, libusb_device_handle *exist_handle);
 
     ~LibusbDeviceHandler() override;
     void on_new_connection(Session &current_session, error_code &ec) override;
@@ -105,7 +116,29 @@ protected:
     // 分段锁传输追踪器
     ConcurrentTransferTracker<libusb_transfer *> transfer_tracker_;
 
-    libusb_device_handle *const native_handle;
+    // 设备句柄（在 on_new_connection 时赋值）
+    libusb_device_handle *native_handle = nullptr;
+
+    // 设备引用（延迟绑定）
+    libusb_device *native_device_ = nullptr;       // libusb 设备引用
+    bool interfaces_claimed_ = false;               // 接口是否已声明
+    bool use_handle_ = false;                       // Android 模式：使用已有 handle
+    libusb_device_handle *exist_handle_ = nullptr;  // Android 模式：已有的 handle
+    int num_interfaces_ = 0;                        // 接口数量（用于释放时遍历）
+
+    /**
+     * @brief Open device and claim interfaces.
+     * Called on client connection.
+     * @return true on success, false on failure.
+     */
+    bool open_and_claim_device();
+
+    /**
+     * @brief Release interfaces and close device.
+     * Called on client disconnection.
+     * For Android mode (use_handle_), only releases interfaces without closing the handle.
+     */
+    void release_and_close_device();
 
     //不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
     //发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交
