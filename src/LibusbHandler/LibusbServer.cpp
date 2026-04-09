@@ -296,7 +296,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     }
 
     // 保存设备信息
-    auto busid = get_device_busid(device_for_info);
+    auto busid = get_device_busid(device_for_info, true);
     auto bus_num = libusb_get_bus_number(device_for_info);
     auto dev_addr = libusb_get_device_address(device_for_info);
     auto dev_num = libusb_get_port_number(device_for_info);

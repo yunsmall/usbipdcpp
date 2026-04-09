@@ -186,7 +186,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
             libusb_free_transfer(transfer);
             session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-            if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
+            if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO)[[unlikely]] {
                 device_removed = true;
                 ec = make_error_code(ErrorType::NO_DEVICE);
             }
@@ -247,7 +247,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
             delete callback_args;
         }
         libusb_free_transfer(transfer);
-        if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
+        if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO)[[unlikely]] {
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
@@ -306,7 +306,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_interrupt_transfer(std::uint32_t seq
             delete callback_args;
         }
         libusb_free_transfer(transfer);
-        if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
+        if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO)[[unlikely]] {
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
@@ -375,7 +375,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_isochronous_transfer(
             delete callback_args;
         }
         libusb_free_transfer(transfer);
-        if (err == LIBUSB_ERROR_NO_DEVICE)[[unlikely]] {
+        if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO)[[unlikely]] {
             device_removed = true;
             ec = make_error_code(ErrorType::NO_DEVICE);
         }
