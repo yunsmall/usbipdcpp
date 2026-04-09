@@ -1,6 +1,6 @@
 #pragma once
 
-#include "InterfaceHandler/VirtualInterfaceHandler.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
 #include "CdcAcmConstants.h"

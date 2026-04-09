@@ -46,6 +46,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applic
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_EMPTY_SERVER "Build example empty server applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_VIRTUAL_DEVICE "Build virtual device component" ON)
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 
@@ -92,14 +93,23 @@ endif ()
 file(GLOB BASE_SRC_FILES src/*.cpp)
 file(GLOB DEVICE_HANDLER_SRC_FILES src/DeviceHandler/*.cpp)
 file(GLOB INTERFACE_HANDLER_SRC_FILES src/InterfaceHandler/*.cpp)
+file(GLOB VIRTUAL_DEVICE_SRC_FILES src/virtual_device/*.cpp)
 file(GLOB LIBUSB_SRC_FILES src/LibusbHandler/*.cpp)
 
+# 核心库（不含虚拟设备）
 add_library(${PROJECT_NAME} STATIC ${BASE_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES} ${INTERFACE_HANDLER_SRC_FILES})
 target_link_libraries(${PROJECT_NAME} PUBLIC asio::asio)
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
 target_include_directories(${PROJECT_NAME} PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>")
 if(USBIPDCPP_FORCE_TRACK_PACKAGE)
     target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_FORCE_TRACK_PACKAGE)
+endif()
+
+# 虚拟设备库
+if(USBIPDCPP_BUILD_VIRTUAL_DEVICE)
+    add_library(${PROJECT_NAME}_virtual_device STATIC ${VIRTUAL_DEVICE_SRC_FILES})
+    target_link_libraries(${PROJECT_NAME}_virtual_device PUBLIC ${PROJECT_NAME})
+    target_include_directories(${PROJECT_NAME}_virtual_device PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 endif()
 
 if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
@@ -119,7 +129,7 @@ if (USBIPDCPP_BUILD_EXAMPLES)
 
             file(GLOB_RECURSE LIBEVDEV_MOUSE_SRC examples/libevdev_mouse/*.cpp)
             add_executable(libevdev_mouse ${LIBEVDEV_MOUSE_SRC})
-            target_link_libraries(libevdev_mouse PUBLIC ${PROJECT_NAME})
+            target_link_libraries(libevdev_mouse PUBLIC ${PROJECT_NAME}_virtual_device)
             target_link_libraries(libevdev_mouse PUBLIC PkgConfig::libevdev)
             target_include_directories(libevdev_mouse PRIVATE examples/libevdev_mouse/include examples/libevdev_mouse)
         else ()
@@ -130,21 +140,21 @@ if (USBIPDCPP_BUILD_EXAMPLES)
     if (USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE)
         file(GLOB_RECURSE MOCK_MOUSE_SRC examples/mock_mouse/*.cpp)
         add_executable(mock_mouse ${MOCK_MOUSE_SRC})
-        target_link_libraries(mock_mouse ${PROJECT_NAME})
+        target_link_libraries(mock_mouse ${PROJECT_NAME}_virtual_device)
         target_include_directories(mock_mouse PRIVATE examples/mock_mouse)
     endif ()
 
     if (USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD)
         file(GLOB_RECURSE MOCK_KEYBOARD_SRC examples/mock_keyboard/*.cpp)
         add_executable(mock_keyboard ${MOCK_KEYBOARD_SRC})
-        target_link_libraries(mock_keyboard ${PROJECT_NAME})
+        target_link_libraries(mock_keyboard ${PROJECT_NAME}_virtual_device)
         target_include_directories(mock_keyboard PRIVATE examples/mock_keyboard)
     endif ()
 
     if (USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM)
         file(GLOB_RECURSE MOCK_CDC_ACM_SRC examples/mock_cdc_acm/*.cpp)
         add_executable(mock_cdc_acm ${MOCK_CDC_ACM_SRC})
-        target_link_libraries(mock_cdc_acm ${PROJECT_NAME})
+        target_link_libraries(mock_cdc_acm ${PROJECT_NAME}_virtual_device)
         target_include_directories(mock_cdc_acm PRIVATE examples/mock_cdc_acm)
     endif ()
 
@@ -156,7 +166,7 @@ if (USBIPDCPP_BUILD_EXAMPLES)
     if (USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES)
         file(GLOB_RECURSE MULTI_DEVICES_SRC examples/multi_devices/*.cpp)
         add_executable(multi_devices ${MULTI_DEVICES_SRC})
-        target_link_libraries(multi_devices ${PROJECT_NAME})
+        target_link_libraries(multi_devices ${PROJECT_NAME}_virtual_device)
         target_include_directories(multi_devices PRIVATE examples/multi_devices)
     endif ()
 
@@ -217,6 +227,9 @@ endif ()
 
 if (IS_TOP_LEVEL)
     set(EXPORT_TARGETS ${PROJECT_NAME})
+    if (TARGET ${PROJECT_NAME}_virtual_device)
+        list(APPEND EXPORT_TARGETS ${PROJECT_NAME}_virtual_device)
+    endif ()
     if (TARGET ${PROJECT_NAME}_libusb)
         list(APPEND EXPORT_TARGETS ${PROJECT_NAME}_libusb)
     endif ()
@@ -226,11 +239,23 @@ if (IS_TOP_LEVEL)
             FILE ${PROJECT_NAME}Targets.cmake
     )
 
-    if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
-        install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME})
+    # 安装头文件
+    if(USBIPDCPP_BUILD_VIRTUAL_DEVICE)
+        if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
+            install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME})
+        else()
+            install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
+                    PATTERN "LibusbHandler" EXCLUDE)
+        endif()
     else()
-        install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
-                PATTERN "LibusbHandler" EXCLUDE)
+        if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
+            install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
+                    PATTERN "virtual_device" EXCLUDE)
+        else()
+            install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
+                    PATTERN "virtual_device" EXCLUDE
+                    PATTERN "LibusbHandler" EXCLUDE)
+        endif()
     endif()
 
 
@@ -247,6 +272,15 @@ if (IS_TOP_LEVEL)
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
             INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
     )
+    if (USBIPDCPP_BUILD_VIRTUAL_DEVICE)
+        install(TARGETS ${PROJECT_NAME}_virtual_device
+                EXPORT ${PROJECT_NAME}Targets
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
+        )
+    endif ()
     if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
         install(TARGETS ${PROJECT_NAME}_libusb
                 EXPORT ${PROJECT_NAME}Targets

@@ -1,6 +1,6 @@
-#include "DeviceHandler/VirtualDeviceHandler.h"
+#include "virtual_device/VirtualDeviceHandler.h"
 
-#include "InterfaceHandler/VirtualInterfaceHandler.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 #include "Session.h"
 #include "protocol.h"
 

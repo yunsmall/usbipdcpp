@@ -1,6 +1,4 @@
 #include <iostream>
-#include <thread>
-#include <chrono>
 
 #include "device_factory.h"
 #include "Server.h"
@@ -35,18 +33,12 @@ int main() {
     SPDLOG_INFO("Server started on port 54324 with {} devices", devices.size());
     SPDLOG_INFO("Use 'usbip list -r localhost --tcp-port 54324' to list devices");
     SPDLOG_INFO("Use 'usbip attach -r localhost --tcp-port 54324 -b 1-X' to attach a device");
+    SPDLOG_INFO("Press Enter to exit...");
 
     // 打印所有绑定的设备
     server.print_bound_devices();
 
-    // 运行服务器30秒
-    SPDLOG_INFO("Server will run for 60 seconds...");
-    for (int i = 0; i < 60; ++i) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (i % 10 == 0 && i > 0) {
-            SPDLOG_INFO("Server running... {} seconds elapsed", i);
-        }
-    }
+    std::cin.get();
 
     SPDLOG_INFO("Stopping server...");
     server.stop();

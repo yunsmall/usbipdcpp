@@ -2,8 +2,8 @@
 
 #include <cstdint>
 
-#include "DeviceHandler/SimpleVirtualDeviceHandler.h"
-#include "InterfaceHandler/HidVirtualInterfaceHandler.h"
+#include "virtual_device/SimpleVirtualDeviceHandler.h"
+#include "virtual_device/HidVirtualInterfaceHandler.h"
 #include "Server.h"
 #include "Session.h"
 

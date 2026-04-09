@@ -1,6 +1,6 @@
-#include "DeviceHandler/SimpleVirtualDeviceHandler.h"
+#include "virtual_device/SimpleVirtualDeviceHandler.h"
 #include "Session.h"
-#include "InterfaceHandler/VirtualInterfaceHandler.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 
 
 using namespace usbipdcpp;

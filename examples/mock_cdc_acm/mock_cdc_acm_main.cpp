@@ -1,5 +1,4 @@
 #include <iostream>
-#include <thread>
 
 #include "mock_cdc_acm.h"
 
@@ -96,9 +95,9 @@ int main() {
     SPDLOG_INFO("This is an echo serial port - data sent will be echoed back");
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-3");
     SPDLOG_INFO("Then use: screen /dev/ttyACMx or minicom");
+    SPDLOG_INFO("Press Enter to exit...");
 
-    // 运行 5 分钟
-    std::this_thread::sleep_for(std::chrono::minutes(5));
+    std::cin.get();
 
     SPDLOG_INFO("Stopping server...");
     server.stop();

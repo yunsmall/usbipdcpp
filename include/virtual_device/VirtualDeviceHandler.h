@@ -1,7 +1,7 @@
 #pragma once
 
 #include "utils/StringPool.h"
-#include "DeviceHandler.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 namespace usbipdcpp {
 

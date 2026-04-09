@@ -5,8 +5,8 @@
 #include <condition_variable>
 #include <atomic>
 
-#include "DeviceHandler/SimpleVirtualDeviceHandler.h"
-#include "InterfaceHandler/CdcAcmVirtualInterfaceHandler.h"
+#include "virtual_device/SimpleVirtualDeviceHandler.h"
+#include "virtual_device/CdcAcmVirtualInterfaceHandler.h"
 #include "Server.h"
 #include "Session.h"
 

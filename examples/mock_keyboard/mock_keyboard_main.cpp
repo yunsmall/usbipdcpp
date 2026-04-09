@@ -64,33 +64,37 @@ int main() {
     SPDLOG_INFO("Port: 54325");
     SPDLOG_INFO("Busid: 1-2");
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-2");
-    SPDLOG_INFO("Simulating key press: A key every second");
+    SPDLOG_INFO("Press Enter to exit...");
 
-    // 模拟按下A键
-    // A键的HID usage code是0x04
+    // 后台线程模拟按键
     constexpr std::uint8_t KEY_A = 0x04;
+    std::atomic<bool> running{true};
+    std::thread key_thread([&]() {
+        while (running) {
+            // 按下A键
+            {
+                std::unique_lock lock(keyboard_interface_handler.state_mutex);
+                keyboard_interface_handler.current_state.keys[0] = KEY_A;
+                keyboard_interface_handler.state_cv.notify_one();
+            }
+            SPDLOG_INFO("Key A pressed");
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    std::chrono::seconds run_time{30};
-    for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {
-        // 按下A键
-        {
-            std::unique_lock lock(keyboard_interface_handler.state_mutex);
-            keyboard_interface_handler.current_state.keys[0] = KEY_A;
-            keyboard_interface_handler.state_cv.notify_one();
+            // 释放A键
+            {
+                std::unique_lock lock(keyboard_interface_handler.state_mutex);
+                keyboard_interface_handler.current_state.keys[0] = 0;
+                keyboard_interface_handler.state_cv.notify_one();
+            }
+            SPDLOG_INFO("Key A released");
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
-        SPDLOG_INFO("Key A pressed");
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    });
 
-        // 释放A键
-        {
-            std::unique_lock lock(keyboard_interface_handler.state_mutex);
-            keyboard_interface_handler.current_state.keys[0] = 0;
-            keyboard_interface_handler.state_cv.notify_one();
-        }
-        SPDLOG_INFO("Key A released");
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
+    std::cin.get();
 
+    running = false;
+    key_thread.join();
     server.stop();
 
     return 0;

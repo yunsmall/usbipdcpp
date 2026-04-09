@@ -9,6 +9,13 @@ include(CMakeFindDependencyMacro)
 find_dependency(asio REQUIRED)
 find_dependency(spdlog REQUIRED)
 
+if (virtual_device IN_LIST usbipdcpp_FIND_COMPONENTS)
+    if(TARGET usbipdcpp::usbipdcpp_virtual_device)
+        add_library(usbipdcpp::virtual_device ALIAS usbipdcpp::usbipdcpp_virtual_device)
+        set(usbipdcpp_virtual_device_FOUND TRUE)
+    endif()
+endif ()
+
 if (libusb IN_LIST usbipdcpp_FIND_COMPONENTS)
     if(TARGET usbipdcpp::usbipdcpp_libusb)
         find_dependency(PkgConfig REQUIRED)

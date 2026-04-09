@@ -1,5 +1,6 @@
 #include <iostream>
 #include <thread>
+#include <atomic>
 
 #include "mock_mouse.h"
 
@@ -66,21 +67,26 @@ int main() {
     SPDLOG_INFO("Port: 54324");
     SPDLOG_INFO("Busid: 1-1");
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
+    SPDLOG_INFO("Press Enter to exit...");
 
-    std::chrono::seconds run_time{30};
-    SPDLOG_INFO("Start turning over left button");
-    for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {
-        {
-            std::unique_lock lock(mouse_interface_handler.state_mutex);
-            mouse_interface_handler.current_state.left_pressed = !mouse_interface_handler.current_state.left_pressed;
-            mouse_interface_handler.state_cv.notify_one();
+    // 后台线程模拟鼠标点击
+    std::atomic<bool> running{true};
+    std::thread mouse_thread([&]() {
+        while (running) {
+            {
+                std::unique_lock lock(mouse_interface_handler.state_mutex);
+                mouse_interface_handler.current_state.left_pressed = !mouse_interface_handler.current_state.left_pressed;
+                mouse_interface_handler.state_cv.notify_one();
+            }
+            SPDLOG_INFO("Toggle left button");
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        SPDLOG_INFO("Turn over left button");
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+    });
 
-    // system("pause");
+    std::cin.get();
 
+    running = false;
+    mouse_thread.join();
     server.stop();
 
     return 0;

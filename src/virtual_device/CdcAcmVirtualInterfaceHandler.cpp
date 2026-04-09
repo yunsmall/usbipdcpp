@@ -1,4 +1,4 @@
-#include "InterfaceHandler/CdcAcmVirtualInterfaceHandler.h"
+#include "virtual_device/CdcAcmVirtualInterfaceHandler.h"
 
 #include "Session.h"
 
