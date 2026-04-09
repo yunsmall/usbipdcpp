@@ -5,6 +5,7 @@
 #include "InterfaceHandler/VirtualInterfaceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
+#include "HidConstants.h"
 
 
 namespace usbipdcpp {

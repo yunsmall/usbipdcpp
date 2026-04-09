@@ -62,6 +62,11 @@ int main() {
 
     server.start(endpoint);
 
+    SPDLOG_INFO("Mock mouse started");
+    SPDLOG_INFO("Port: 54324");
+    SPDLOG_INFO("Busid: 1-1");
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
+
     std::chrono::seconds run_time{30};
     SPDLOG_INFO("Start turning over left button");
     for (int i = 0; i < std::chrono::duration_cast<std::chrono::seconds>(run_time).count(); i++) {

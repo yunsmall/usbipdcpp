@@ -67,26 +67,6 @@ enum class StandardRequest {
     SynchFrame = 12,
 };
 
-enum class HIDRequest {
-    GetReport = 0x01,
-    GetIdle = 0x02,
-    GetProtocol = 0x03,
-    SetReport = 0x09,
-    SetIdle = 0x0A,
-    SetProtocol = 0x0B,
-};
-
-enum class HIDReportType {
-    Output = 0x01,
-    Input = 0x02,
-    Feature = 0x03,
-};
-
-enum class HIDProtocolType {
-    Boot = 0x00,
-    Report = 0x01,
-};
-
 enum class RequestRecipient {
     Device = 0,
     Interface,
@@ -107,12 +87,6 @@ enum class DescriptorType {
     Debug = 0xA,
     InterfaceAssociation = 0xB,
     BOS = 0xF,
-};
-
-enum HidDescriptorType {
-    Hid = 0x21,
-    Report = 0x22,
-    Physical = 0x23,
 };
 
 enum class PortFeat {
@@ -143,11 +117,12 @@ enum class RequestType {
 
 enum class TransferFlag {
     URB_SHORT_NOT_OK = 0x0001,        /* report short reads as errors */
-    URB_ISO_ASAP = 0x0002,            /* iso-only; use the first unexpired  slot in the schedule */
+    URB_ISO_ASAP = 0x0002,            /* iso-only; use the first unexpired slot in the schedule */
     URB_NO_TRANSFER_DMA_MAP = 0x0004, /* urb->transfer_dma valid on submit */
     URB_NO_FSBR = 0x0020,             /* UHCI-specific */
     URB_ZERO_PACKET = 0x0040,         /* Finish bulk OUT with short packet */
     URB_NO_INTERRUPT = 0x0080,        /* HINT: no non-error interrupt needed */
     URB_FREE_BUFFER = 0x0100,
 };
+
 }

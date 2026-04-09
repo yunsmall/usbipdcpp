@@ -53,6 +53,11 @@ int main() {
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54321);
     server.start(endpoint);
 
+    SPDLOG_INFO("Empty server started");
+    SPDLOG_INFO("Port: 54321");
+    SPDLOG_INFO("Busid: 1-1");
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
+
     std::cout << "press enter to exit" << std::endl;
     std::cin.get();
 

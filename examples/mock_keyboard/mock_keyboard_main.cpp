@@ -60,7 +60,10 @@ int main() {
 
     server.start(endpoint);
 
-    SPDLOG_INFO("Mock keyboard started on port 54325");
+    SPDLOG_INFO("Mock keyboard started");
+    SPDLOG_INFO("Port: 54325");
+    SPDLOG_INFO("Busid: 1-2");
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-2");
     SPDLOG_INFO("Simulating key press: A key every second");
 
     // 模拟按下A键
