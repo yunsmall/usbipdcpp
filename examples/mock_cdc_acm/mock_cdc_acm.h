@@ -61,7 +61,7 @@ public:
                                       std::uint32_t *p_status) override;
 
     // 接收到数据时，回显
-    void on_data_received(const usbipdcpp::data_type &data) override;
+    void on_data_received(usbipdcpp::data_type &&data) override;
 
     std::atomic_bool should_immediately_stop = false;
 };

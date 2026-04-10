@@ -132,12 +132,12 @@ void MockCdcAcmDataInterfaceHandler::request_endpoint_set_feature(
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
-void MockCdcAcmDataInterfaceHandler::on_data_received(const data_type &data) {
+void MockCdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
     if (should_immediately_stop) {
         return;
     }
 
     // 回显：将接收到的数据原样发回
     SPDLOG_DEBUG("Echo {} bytes", data.size());
-    send_data(data);
+    send_data(std::move(data));
 }

@@ -60,7 +60,7 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
 
                     if (!should_immediately_stop) {
                         session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, ret)
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(ret))
                                 );
                     }
                 }
@@ -97,7 +97,7 @@ void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqn
                                                               const UsbEndpoint &ep,
                                                               std::uint32_t transfer_flags,
                                                               std::uint32_t transfer_buffer_length,
-                                                              const data_type &out_data,
+                                                              data_type &&out_data,
                                                               std::error_code &ec) {
     if (ep.is_in()) {
         //往队列里添加东西

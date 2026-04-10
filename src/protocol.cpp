@@ -454,11 +454,36 @@ create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t sta
     return ret;
 }
 
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
+create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status, data_type &&transfer_buffer) {
+    auto ret = UsbIpRetSubmit{
+            .header = UsbIpHeaderBasic::get_server_header(
+                    USBIP_RET_SUBMIT,
+                    seqnum
+                    ),
+            .status = status,
+            .actual_length = static_cast<std::uint32_t>(transfer_buffer.size()),
+            .start_frame = 0,
+            .number_of_packets = 0,
+            .error_count = 0,
+            .transfer_buffer = std::move(transfer_buffer),
+            .iso_packet_descriptor = {}
+    };
+    return ret;
+}
+
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
         std::uint32_t seqnum,
         const data_type &transfer_buffer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
                                                     transfer_buffer);
+}
+
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
+        std::uint32_t seqnum,
+        data_type &&transfer_buffer) {
+    return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
+                                                    std::move(transfer_buffer));
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
@@ -483,6 +508,12 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
         std::uint32_t seqnum, const data_type &transfer_buffer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                                                     transfer_buffer);
+}
+
+usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+        std::uint32_t seqnum, data_type &&transfer_buffer) {
+    return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
+                                                    std::move(transfer_buffer));
 }
 
 array_data_type<

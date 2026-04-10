@@ -108,7 +108,7 @@ public:
 
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   const data_type &out_data, std::error_code &ec) override;
+                                   data_type &&out_data, std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -167,7 +167,7 @@ public:
 
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              const data_type &out_data, std::error_code &ec) override;
+                              data_type &&out_data, std::error_code &ec) override;
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                        std::uint32_t transfer_flags,
@@ -190,7 +190,7 @@ public:
                                       std::uint32_t *p_status) override;
 
     // 数据收发回调，子类可重写
-    virtual void on_data_received(const data_type &data);
+    virtual void on_data_received(data_type &&data);
     virtual data_type on_data_requested(std::uint16_t length);
 
     // 发送数据到主机

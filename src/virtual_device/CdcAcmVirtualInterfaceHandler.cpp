@@ -42,7 +42,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
             }
             session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                    seqnum, status, result));
+                    seqnum, status, std::move(result)));
         }
         else {
             // OUT 请求
@@ -90,7 +90,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
 void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
         std::uint32_t seqnum, const UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const data_type &out_data, std::error_code &ec) {
+        data_type &&out_data, std::error_code &ec) {
 
     if (ep.is_in()) {
         // 中断 IN：主机请求状态通知
@@ -101,7 +101,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
             auto data = std::move(pending_notification_);
             pending_notification_.clear();
             session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
         }
         else {
             // 没有待发送的通知，加入队列等待
@@ -247,7 +247,7 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
         auto data = std::move(pending_notification_);
         pending_notification_.clear();
         session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
     }
 }
 
@@ -261,7 +261,7 @@ CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(
 void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
         std::uint32_t seqnum, const UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const data_type &out_data, std::error_code &ec) {
+        data_type &&out_data, std::error_code &ec) {
 
     if (ep.is_in()) {
         // Bulk IN：主机请求数据
@@ -278,7 +278,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
             }
 
             session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
         }
         else {
             // 尝试从回调获取数据
@@ -288,7 +288,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
                     data.resize(transfer_buffer_length);
                 }
                 session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
             }
             else {
                 // 没有数据可发送，加入队列等待
@@ -299,12 +299,11 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
     }
     else {
         // Bulk OUT：接收主机发来的数据
-        data_type received_data = out_data;
-        if (received_data.size() > transfer_buffer_length) {
-            received_data.resize(transfer_buffer_length);
+        if (out_data.size() > transfer_buffer_length) {
+            out_data.resize(transfer_buffer_length);
         }
 
-        on_data_received(received_data);
+        on_data_received(std::move(out_data));
 
         session->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum));
@@ -330,7 +329,7 @@ data_type CdcAcmDataInterfaceHandler::get_class_specific_descriptor() {
     return {};
 }
 
-void CdcAcmDataInterfaceHandler::on_data_received(const data_type &data) {
+void CdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
     // 默认空实现，子类可重写
 }
 
@@ -359,7 +358,7 @@ void CdcAcmDataInterfaceHandler::send_data(const data_type &data) {
         auto send_data = std::move(pending_tx_data_.front());
         pending_tx_data_.pop_front();
         session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, send_data));
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(send_data)));
     }
 }
 
@@ -383,7 +382,7 @@ void CdcAcmDataInterfaceHandler::send_data(data_type &&data) {
         auto send_data = std::move(pending_tx_data_.front());
         pending_tx_data_.pop_front();
         session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, send_data));
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(send_data)));
     }
 }
 

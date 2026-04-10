@@ -24,7 +24,7 @@ SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &ha
 void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
-                                                          const usbipdcpp::data_type &out_data,
+                                                          usbipdcpp::data_type &&out_data,
                                                           std::error_code &ec) {
     SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_interrupt_transfer on ep 0x{:02x}", ep.address);
 
@@ -32,7 +32,7 @@ void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
         // 返回一个简单的数据
         usbipdcpp::data_type data = {0x00};
         session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data));
+                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
     }
     else {
         session->submit_ret_submit(

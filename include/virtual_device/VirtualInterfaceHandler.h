@@ -14,15 +14,15 @@ public:
 
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              const data_type &out_data,
+                              data_type &&out_data,
                               error_code &ec) override;
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   const data_type &out_data,
+                                   data_type &&out_data,
                                    std::error_code &ec) override;
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                      std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                     const data_type &out_data,
+                                     data_type &&out_data,
                                      const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
                                      std::error_code &ec) override;
 

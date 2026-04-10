@@ -23,17 +23,17 @@ public:
 
     virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                       std::uint32_t transfer_flags,
-                                      std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                      std::uint32_t transfer_buffer_length, data_type &&out_data,
                                       std::error_code &ec) =0;
     virtual void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                            std::uint32_t transfer_flags,
-                                           std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                           std::uint32_t transfer_buffer_length, data_type &&out_data,
                                            std::error_code &ec) =0;
 
     virtual void handle_isochronous_transfer(std::uint32_t seqnum,
                                              const UsbEndpoint &ep,
                                              std::uint32_t transfer_flags,
-                                             std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                             std::uint32_t transfer_buffer_length, data_type &&out_data,
                                              const std::vector<UsbIpIsoPacketDescriptor> &
                                              iso_packet_descriptors, std::error_code &ec) =0;
 

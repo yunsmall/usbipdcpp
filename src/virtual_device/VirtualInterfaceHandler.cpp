@@ -6,7 +6,7 @@ using namespace usbipdcpp;
 
 void VirtualInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                                   const data_type &out_data,
+                                                   data_type &&out_data,
                                                    std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}默认实现的块传输实现", ep.address);
     session->submit_ret_submit(
@@ -18,7 +18,7 @@ void VirtualInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const U
 
 void VirtualInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                         std::uint32_t transfer_flags,
-                                                        std::uint32_t transfer_buffer_length, const data_type &out_data,
+                                                        std::uint32_t transfer_buffer_length, data_type &&out_data,
                                                         std::error_code &ec) {
     SPDLOG_WARN("虚拟接口在端口{:04x}默认实现的中断传输实现", ep.address);
     session->submit_ret_submit(
@@ -31,7 +31,7 @@ void VirtualInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, co
 void VirtualInterfaceHandler::handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
-                                                          const data_type &out_data,
+                                                          data_type &&out_data,
                                                           const std::vector<UsbIpIsoPacketDescriptor> &
                                                           iso_packet_descriptors,
                                                           std::error_code &ec) {

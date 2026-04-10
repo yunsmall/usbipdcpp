@@ -443,7 +443,7 @@ void VirtualDeviceHandler::handle_bulk_transfer(
                     ep,
                     transfer_flags,
                     transfer_buffer_length,
-                    out_data,
+                    std::move(out_data),
                     ec
                     );
         }
@@ -480,7 +480,7 @@ void VirtualDeviceHandler::handle_interrupt_transfer(
                     ep,
                     transfer_flags,
                     transfer_buffer_length,
-                    out_data,
+                    std::move(out_data),
                     ec
                     );
         }
@@ -518,7 +518,7 @@ void VirtualDeviceHandler::handle_isochronous_transfer(
                     ep,
                     transfer_flags,
                     transfer_buffer_length,
-                    req,
+                    std::move(req),
                     iso_packet_descriptors,
                     ec
                     );

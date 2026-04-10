@@ -16,7 +16,7 @@ public:
 
     void handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   const usbipdcpp::data_type &out_data,
+                                   usbipdcpp::data_type &&out_data,
                                    std::error_code &ec) override;
     void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override;
     void on_disconnection(usbipdcpp::error_code &ec) override;
