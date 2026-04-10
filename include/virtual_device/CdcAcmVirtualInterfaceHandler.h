@@ -112,17 +112,17 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
-    // 纯虚函数，子类必须实现
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override = 0;
+    // 标准请求处理（已提供默认实现，子类可选择性重写）
+    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override = 0;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override = 0;
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override = 0;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override = 0;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override = 0;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override = 0;
+                                        std::uint32_t *p_status) override;
+    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
+    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
+    std::uint16_t request_get_status(std::uint32_t *p_status) override;
+    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
+    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override = 0;
+                                      std::uint32_t *p_status) override;
 
     // CDC ACM 特有的虚拟函数，子类可重写
     virtual void on_set_line_coding(const LineCoding &coding);
@@ -177,17 +177,17 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
-    // 纯虚函数
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override = 0;
+    // 标准请求处理（已提供默认实现，子类可选择性重写）
+    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override = 0;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override = 0;
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override = 0;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override = 0;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override = 0;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override = 0;
+                                        std::uint32_t *p_status) override;
+    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
+    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
+    std::uint16_t request_get_status(std::uint32_t *p_status) override;
+    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
+    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override = 0;
+                                      std::uint32_t *p_status) override;
 
     // 数据收发回调，子类可重写
     virtual void on_data_received(const data_type &data);
@@ -196,6 +196,7 @@ public:
     // 发送数据到主机
     void send_data(const data_type &data);
     void send_data(data_type &&data);
+    void send_data(std::string_view data);
 
 protected:
     // 批量 IN 传输队列

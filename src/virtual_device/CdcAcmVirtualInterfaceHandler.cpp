@@ -182,6 +182,48 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_cdc_request_type_control_ur
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE), {}));
 }
 
+// ==================== CdcAcmCommunicationInterfaceHandler 默认实现 ====================
+
+void CdcAcmCommunicationInterfaceHandler::request_clear_feature(
+        std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+void CdcAcmCommunicationInterfaceHandler::request_endpoint_clear_feature(
+        std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+std::uint8_t CdcAcmCommunicationInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
+    return 0;
+}
+
+void CdcAcmCommunicationInterfaceHandler::request_set_interface(
+        std::uint16_t alternate_setting, std::uint32_t *p_status) {
+    if (alternate_setting != 0) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    }
+}
+
+std::uint16_t CdcAcmCommunicationInterfaceHandler::request_get_status(std::uint32_t *p_status) {
+    return 0;
+}
+
+std::uint16_t CdcAcmCommunicationInterfaceHandler::request_endpoint_get_status(
+        std::uint8_t ep_address, std::uint32_t *p_status) {
+    return 0;
+}
+
+void CdcAcmCommunicationInterfaceHandler::request_set_feature(
+        std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+void CdcAcmCommunicationInterfaceHandler::request_endpoint_set_feature(
+        std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
 void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::uint16_t state_bits) {
     SerialStateNotification notification;
     notification.data = state_bits;
@@ -343,6 +385,52 @@ void CdcAcmDataInterfaceHandler::send_data(data_type &&data) {
         session->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, send_data));
     }
+}
+
+void CdcAcmDataInterfaceHandler::send_data(std::string_view data) {
+    send_data(data_type(data.begin(), data.end()));
+}
+
+// ==================== CdcAcmDataInterfaceHandler 默认实现 ====================
+
+void CdcAcmDataInterfaceHandler::request_clear_feature(
+        std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+void CdcAcmDataInterfaceHandler::request_endpoint_clear_feature(
+        std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+std::uint8_t CdcAcmDataInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
+    return 0;
+}
+
+void CdcAcmDataInterfaceHandler::request_set_interface(
+        std::uint16_t alternate_setting, std::uint32_t *p_status) {
+    if (alternate_setting != 0) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    }
+}
+
+std::uint16_t CdcAcmDataInterfaceHandler::request_get_status(std::uint32_t *p_status) {
+    return 0;
+}
+
+std::uint16_t CdcAcmDataInterfaceHandler::request_endpoint_get_status(
+        std::uint8_t ep_address, std::uint32_t *p_status) {
+    return 0;
+}
+
+void CdcAcmDataInterfaceHandler::request_set_feature(
+        std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+void CdcAcmDataInterfaceHandler::request_endpoint_set_feature(
+        std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 }

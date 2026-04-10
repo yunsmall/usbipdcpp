@@ -84,7 +84,7 @@ void usbipdcpp::Server::stop() {
 
 void usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
     std::lock_guard lock(devices_mutex);
-    available_devices.emplace_back(device);
+    available_devices.emplace_back(std::move(device));
 }
 
 
