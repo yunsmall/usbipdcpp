@@ -267,33 +267,53 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
         // Bulk IN：主机请求数据
         std::lock_guard lock(tx_data_mutex_);
 
+        SPDLOG_INFO("bulk in transfer_buffer_length:{}",transfer_buffer_length);
+
         if (!pending_tx_data_.empty()) {
-            // 有待发送的数据
-            auto data = std::move(pending_tx_data_.front());
-            pending_tx_data_.pop_front();
+            // 有待发送的数据，支持部分发送避免截断丢失
+            auto &pending = pending_tx_data_.front();
+            std::uint32_t send_len = std::min(pending.remaining(), transfer_buffer_length);
 
-            // 截断到请求长度
-            if (data.size() > transfer_buffer_length) {
-                data.resize(transfer_buffer_length);
+            // 如果剩余数据全部发送，可以直接移动避免拷贝
+            if (send_len == pending.remaining()) {
+                session->submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                        seqnum, std::move(pending.data)));
+                pending_tx_data_.pop_front();
             }
-
-            session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
+            else {
+                // 部分发送，需要拷贝
+                data_type to_send(pending.data.begin() + pending.offset,
+                                  pending.data.begin() + pending.offset + send_len);
+                pending.offset += send_len;
+                session->submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(to_send)));
+            }
         }
         else {
             // 尝试从回调获取数据
             auto data = on_data_requested(transfer_buffer_length);
             if (!data.empty()) {
-                if (data.size() > transfer_buffer_length) {
-                    data.resize(transfer_buffer_length);
+                // 回调返回的数据可能也需要部分发送
+                if (data.size() <= transfer_buffer_length) {
+                    session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
                 }
-                session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
+                else {
+                    // 数据大于请求长度，部分发送后剩余入队列
+                    data_type to_send(data.begin(), data.begin() + transfer_buffer_length);
+                    PendingData remaining;
+                    remaining.data = data_type(data.begin() + transfer_buffer_length, data.end());
+                    remaining.offset = 0;
+                    session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(to_send)));
+                    pending_tx_data_.push_front(std::move(remaining));
+                }
             }
             else {
                 // 没有数据可发送，加入队列等待
                 std::lock_guard queue_lock(bulk_in_req_queue_mutex_);
-                bulk_in_req_queue_.push_back(seqnum);
+                bulk_in_req_queue_.push_back({seqnum, transfer_buffer_length});
             }
         }
     }
@@ -340,49 +360,79 @@ data_type CdcAcmDataInterfaceHandler::on_data_requested(std::uint16_t length) {
 
 void CdcAcmDataInterfaceHandler::send_data(const data_type &data) {
     std::lock_guard lock(tx_data_mutex_);
-    pending_tx_data_.push_back(data);
+    PendingData pending;
+    pending.data = data;
+    pending.offset = 0;
+    pending_tx_data_.push_back(std::move(pending));
 
     // 如果有等待的 Bulk IN 请求，立即响应
-    std::uint32_t seqnum = 0;
+    BulkInRequest request{};
     bool has_pending = false;
     {
         std::lock_guard queue_lock(bulk_in_req_queue_mutex_);
         if (!bulk_in_req_queue_.empty()) {
-            seqnum = bulk_in_req_queue_.front();
+            request = bulk_in_req_queue_.front();
             bulk_in_req_queue_.pop_front();
             has_pending = true;
         }
     }
 
     if (has_pending) {
-        auto send_data = std::move(pending_tx_data_.front());
-        pending_tx_data_.pop_front();
+        auto &front = pending_tx_data_.front();
+        std::uint32_t send_len = std::min(front.remaining(), request.length);
+
+        // const 引用版本必须拷贝
+        data_type to_send(front.data.begin() + front.offset,
+                          front.data.begin() + front.offset + send_len);
+
+        front.offset += send_len;
+        if (front.offset >= front.data.size()) {
+            pending_tx_data_.pop_front();
+        }
+
         session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(send_data)));
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(request.seqnum, std::move(to_send)));
     }
 }
 
 void CdcAcmDataInterfaceHandler::send_data(data_type &&data) {
     std::lock_guard lock(tx_data_mutex_);
-    pending_tx_data_.push_back(std::move(data));
+    PendingData pending;
+    pending.data = std::move(data);
+    pending.offset = 0;
+    pending_tx_data_.push_back(std::move(pending));
 
     // 如果有等待的 Bulk IN 请求，立即响应
-    std::uint32_t seqnum = 0;
+    BulkInRequest request{};
     bool has_pending = false;
     {
         std::lock_guard queue_lock(bulk_in_req_queue_mutex_);
         if (!bulk_in_req_queue_.empty()) {
-            seqnum = bulk_in_req_queue_.front();
+            request = bulk_in_req_queue_.front();
             bulk_in_req_queue_.pop_front();
             has_pending = true;
         }
     }
 
     if (has_pending) {
-        auto send_data = std::move(pending_tx_data_.front());
-        pending_tx_data_.pop_front();
-        session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(send_data)));
+        auto &front = pending_tx_data_.front();
+        std::uint32_t send_len = std::min(front.remaining(), request.length);
+
+        // 如果数据全部发送，直接移动避免拷贝
+        if (send_len == front.remaining()) {
+            session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                    request.seqnum, std::move(front.data)));
+            pending_tx_data_.pop_front();
+        }
+        else {
+            // 部分发送，需要拷贝
+            data_type to_send(front.data.begin() + front.offset,
+                              front.data.begin() + front.offset + send_len);
+            front.offset += send_len;
+            session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(request.seqnum, std::move(to_send)));
+        }
     }
 }
 

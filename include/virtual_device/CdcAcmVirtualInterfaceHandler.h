@@ -190,7 +190,17 @@ public:
                                       std::uint32_t *p_status) override;
 
     // 数据收发回调，子类可重写
+    /**
+     * @brief 收到主机发送的数据时回调
+     * @param data 接收到的数据（已移动语义）
+     */
     virtual void on_data_received(data_type &&data);
+
+    /**
+     * @brief 主机请求数据时回调，用于按需生成数据
+     * @param length 主机请求的数据长度
+     * @return 返回要发送的数据，如果返回空则等待 send_data 调用
+     */
     virtual data_type on_data_requested(std::uint16_t length);
 
     // 发送数据到主机
@@ -199,12 +209,32 @@ public:
     void send_data(std::string_view data);
 
 protected:
-    // 批量 IN 传输队列
-    std::deque<std::uint32_t> bulk_in_req_queue_;
+    /**
+     * @brief 待发送的数据块，支持部分发送避免截断丢失
+     */
+    struct PendingData {
+        data_type data;           ///< 数据内容
+        std::uint32_t offset = 0; ///< 已发送的偏移量
+        /// 剩余未发送的数据长度
+        [[nodiscard]] std::uint32_t remaining() const { return static_cast<std::uint32_t>(data.size()) - offset; }
+    };
+
+    /**
+     * @brief 批量 IN 传输请求，存储主机请求的信息
+     */
+    struct BulkInRequest {
+        std::uint32_t seqnum; ///< 请求序号
+        std::uint32_t length; ///< 主机请求的缓冲区长度
+    };
+
+    /// 等待响应的批量 IN 请求队列
+    std::deque<BulkInRequest> bulk_in_req_queue_;
+    /// 保护 bulk_in_req_queue_ 的读写锁
     std::shared_mutex bulk_in_req_queue_mutex_;
 
-    // 待发送的数据
-    std::deque<data_type> pending_tx_data_;
+    /// 待发送的数据队列（支持部分发送）
+    std::deque<PendingData> pending_tx_data_;
+    /// 保护 pending_tx_data_ 的互斥锁
     std::mutex tx_data_mutex_;
 };
 
