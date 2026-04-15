@@ -342,12 +342,41 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     }
 }
 
+void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) {
+    {
+        std::lock_guard lock(notification_mutex_);
+        pending_notification_.clear();
+    }
+    {
+        std::lock_guard lock(interrupt_req_queue_mutex_);
+        interrupt_req_queue_.clear();
+    }
+    VirtualInterfaceHandler::on_disconnection(ec);
+}
+
 // ==================== CdcAcmDataInterfaceHandler ====================
 
 CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(
     UsbInterface &handle_interface, StringPool &string_pool) :
     VirtualInterfaceHandler(handle_interface, string_pool),
     tx_buffer_(64 * 1024) {
+}
+
+void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    std::lock_guard lock(tx_mutex_);
+    disconnected_ = false;
+}
+
+void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
+    {
+        std::lock_guard lock(tx_mutex_);
+        disconnected_ = true;
+        tx_buffer_.clear();
+        bulk_in_req_queue_.clear();
+    }
+    tx_cv_.notify_all();
+    VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
@@ -489,30 +518,45 @@ std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const std::uint8_t *d
     std::size_t offset = 0;
 
     while (offset < size) {
+        // 检查是否已断开连接
+        if (disconnected_) {
+            return total_written;
+        }
+
         // 等待缓冲区有空间
         if (tx_buffer_.available() == 0) {
             // 没有空间，尝试触发发送
             try_send_pending_locked();
+
+            // 再次检查断开连接
+            if (disconnected_) {
+                return total_written;
+            }
 
             // 仍然没有空间，等待条件变量
             if (tx_buffer_.available() == 0) {
                 if (timeout_ms == 0) {
                     // 无限等待
                     tx_cv_.wait(lock, [this]() {
-                        return tx_buffer_.available() > 0;
+                        return tx_buffer_.available() > 0 || disconnected_;
                     });
                 }
                 else {
                     // 带超时等待
                     auto result = tx_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                                                   [this]() {
-                                                      return tx_buffer_.available() > 0;
+                                                      return tx_buffer_.available() > 0 || disconnected_;
                                                   });
                     if (!result) {
                         // 超时，返回已写入量
                         return total_written;
                     }
                 }
+            }
+
+            // 被唤醒后检查是否断开
+            if (disconnected_) {
+                return total_written;
             }
         }
 

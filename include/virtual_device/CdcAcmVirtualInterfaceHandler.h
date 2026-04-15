@@ -154,6 +154,9 @@ public:
     void set_data_handler(CdcAcmDataInterfaceHandler *handler) { data_handler_ = handler; }
     CdcAcmDataInterfaceHandler* get_data_handler() const { return data_handler_; }
 
+    // 连接生命周期管理
+    void on_disconnection(std::error_code &ec) override;
+
 protected:
     LineCoding line_coding_;
     ControlSignalState control_signal_state_;
@@ -383,6 +386,10 @@ public:
      */
     void set_comm_handler(CdcAcmCommunicationInterfaceHandler *handler);
 
+    // 连接生命周期管理
+    void on_new_connection(Session &current_session, std::error_code &ec) override;
+    void on_disconnection(std::error_code &ec) override;
+
 protected:
     /**
      * @brief TX 缓冲区（设备→主机）
@@ -411,6 +418,11 @@ protected:
      * @brief 条件变量，用于阻塞发送时等待缓冲区有空间
      */
     std::condition_variable tx_cv_;
+
+    /**
+     * @brief 断开连接标志，用于让阻塞发送提前返回
+     */
+    bool disconnected_ = true;
 
     /**
      * @brief 关联的通信接口处理器
