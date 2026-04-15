@@ -53,6 +53,7 @@ enum class CdcAcmSerialState : std::uint16_t {
     FramingError = 0x10, // Framing error
     ParityError = 0x20,  // Parity error
     OverrunError = 0x40, // Overrun error
+    CTS = 0x80,          // Clear To Send
 };
 
 }

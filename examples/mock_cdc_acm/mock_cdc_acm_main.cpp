@@ -1,5 +1,6 @@
 #include <iostream>
 
+#include "usbipdcpp.h"
 #include "mock_cdc_acm.h"
 
 using namespace usbipdcpp;
@@ -80,7 +81,8 @@ int main() {
         mock_cdc_acm->interfaces[0].handler);
     auto &data_handler = *std::dynamic_pointer_cast<MockCdcAcmDataInterfaceHandler>(
         mock_cdc_acm->interfaces[1].handler);
-    comm_handler.data_handler = &data_handler;
+    comm_handler.set_data_handler(&data_handler);
+    data_handler.set_comm_handler(&comm_handler);
 
     Server server;
     server.add_device(std::move(mock_cdc_acm));

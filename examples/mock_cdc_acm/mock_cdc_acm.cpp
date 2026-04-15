@@ -9,51 +9,6 @@ MockCdcAcmCommunicationInterfaceHandler::MockCdcAcmCommunicationInterfaceHandler
     CdcAcmCommunicationInterfaceHandler(handle_interface, string_pool) {
 }
 
-void MockCdcAcmCommunicationInterfaceHandler::request_clear_feature(
-    std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockCdcAcmCommunicationInterfaceHandler::request_endpoint_clear_feature(
-    std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-std::uint8_t MockCdcAcmCommunicationInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockCdcAcmCommunicationInterfaceHandler::request_set_interface(
-    std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    if (alternate_setting != 0) {
-        SPDLOG_WARN("unhandled request_set_interface");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    }
-}
-
-std::uint16_t MockCdcAcmCommunicationInterfaceHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-
-std::uint16_t MockCdcAcmCommunicationInterfaceHandler::request_endpoint_get_status(
-    std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockCdcAcmCommunicationInterfaceHandler::request_set_feature(
-    std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockCdcAcmCommunicationInterfaceHandler::request_endpoint_set_feature(
-    std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
 void MockCdcAcmCommunicationInterfaceHandler::on_set_line_coding(const LineCoding &coding) {
     SPDLOG_INFO("Line coding set: baud={}, data_bits={}, stop_bits={}, parity={}",
                 coding.dwDTERate, coding.bDataBits, coding.bCharFormat, coding.bParityType);
@@ -63,7 +18,7 @@ void MockCdcAcmCommunicationInterfaceHandler::on_set_control_line_state(const Co
     SPDLOG_INFO("Control line state: DTR={}, RTS={}", state.dtr, state.rts);
 
     // 当 DTR 变为高时，发送 DCD 和 DSR 信号
-    if (state.dtr && data_handler) {
+    if (state.dtr && get_data_handler()) {
         // 发送状态通知：DCD 和 DSR 有效
         send_serial_state_notification(static_cast<std::uint16_t>(CdcAcmSerialState::DCD) |
                                        static_cast<std::uint16_t>(CdcAcmSerialState::DSR));
@@ -87,57 +42,12 @@ void MockCdcAcmDataInterfaceHandler::on_disconnection(error_code &ec) {
     CdcAcmDataInterfaceHandler::on_disconnection(ec);
 }
 
-void MockCdcAcmDataInterfaceHandler::request_clear_feature(
-    std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockCdcAcmDataInterfaceHandler::request_endpoint_clear_feature(
-    std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-std::uint8_t MockCdcAcmDataInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockCdcAcmDataInterfaceHandler::request_set_interface(
-    std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    if (alternate_setting != 0) {
-        SPDLOG_WARN("unhandled request_set_interface");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    }
-}
-
-std::uint16_t MockCdcAcmDataInterfaceHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-
-std::uint16_t MockCdcAcmDataInterfaceHandler::request_endpoint_get_status(
-    std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockCdcAcmDataInterfaceHandler::request_set_feature(
-    std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockCdcAcmDataInterfaceHandler::request_endpoint_set_feature(
-    std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
 void MockCdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
     if (should_immediately_stop) {
         return;
     }
 
-    // 回显：将接收到的数据原样发回
+    // 回显：将接收到的数据原样发回，使用阻塞发送确保不丢数据
     SPDLOG_DEBUG("Echo {} bytes", data.size());
-    send_data(std::move(data));
+    send_data_blocking(std::move(data));
 }
