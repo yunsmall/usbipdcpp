@@ -224,6 +224,25 @@ if (USBIPDCPP_BUILD_TESTS)
     target_link_libraries(test_usbip_response PRIVATE ${PROJECT_NAME})
     target_link_libraries(test_usbip_response PRIVATE GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_usbip_response)
+
+    # 工具类测试
+    add_executable(test_concurrent_tracker tests/test_concurrent_tracker.cpp)
+    target_include_directories(test_concurrent_tracker PRIVATE tests)
+    target_link_libraries(test_concurrent_tracker PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_concurrent_tracker PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_concurrent_tracker)
+
+    add_executable(test_object_pool tests/test_object_pool.cpp)
+    target_include_directories(test_object_pool PRIVATE tests)
+    target_link_libraries(test_object_pool PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_object_pool PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_object_pool)
+
+    add_executable(test_small_vector tests/test_small_vector.cpp)
+    target_include_directories(test_small_vector PRIVATE tests)
+    target_link_libraries(test_small_vector PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_small_vector PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_small_vector)
 endif ()
 
 if (IS_TOP_LEVEL)

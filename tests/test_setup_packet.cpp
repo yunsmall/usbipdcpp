@@ -134,3 +134,93 @@ TEST(TestSetupPacket, IsOut) {
     };
     EXPECT_FALSE(in_packet.is_out());
 }
+
+// ============== 极端情况测试 ==============
+
+TEST(TestSetupPacket, AllZeros) {
+    std::array<std::uint8_t, 8> data = {0, 0, 0, 0, 0, 0, 0, 0};
+    SetupPacket packet = SetupPacket::parse(data);
+
+    EXPECT_EQ(packet.request_type, 0);
+    EXPECT_EQ(packet.request, 0);
+    EXPECT_EQ(packet.value, 0);
+    EXPECT_EQ(packet.index, 0);
+    EXPECT_EQ(packet.length, 0);
+}
+
+TEST(TestSetupPacket, AllOnes) {
+    std::array<std::uint8_t, 8> data = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    SetupPacket packet = SetupPacket::parse(data);
+
+    EXPECT_EQ(packet.request_type, 0xFF);
+    EXPECT_EQ(packet.request, 0xFF);
+    EXPECT_EQ(packet.value, 0xFFFF);
+    EXPECT_EQ(packet.index, 0xFFFF);
+    EXPECT_EQ(packet.length, 0xFFFF);
+}
+
+TEST(TestSetupPacket, MaxValues) {
+    SetupPacket packet{
+            .request_type = 0xFF,
+            .request = 0xFF,
+            .value = 0xFFFF,
+            .index = 0xFFFF,
+            .length = 0xFFFF
+    };
+
+    auto bytes = packet.to_bytes();
+    auto parsed = SetupPacket::parse(bytes);
+
+    EXPECT_EQ(packet, parsed);
+}
+
+TEST(TestSetupPacket, RoundTripAllDirections) {
+    // 测试所有方向组合
+    for (int dir = 0; dir <= 0x80; dir += 0x80) {
+        SetupPacket original{
+                .request_type = static_cast<std::uint8_t>(dir | 0x01), // Device/Interface
+                .request = 0x06,
+                .value = 0x0100,
+                .index = 0x0000,
+                .length = 0x0012
+        };
+
+        auto bytes = original.to_bytes();
+        auto parsed = SetupPacket::parse(bytes);
+        EXPECT_EQ(original, parsed);
+    }
+}
+
+TEST(TestSetupPacket, IsIn) {
+    SetupPacket in_packet{
+            .request_type = 0x80,
+            .request = 0x06,
+            .value = 0,
+            .index = 0,
+            .length = 64
+    };
+    EXPECT_TRUE(in_packet.is_in());
+
+    SetupPacket out_packet{
+            .request_type = 0x00,
+            .request = 0x09,
+            .value = 0,
+            .index = 0,
+            .length = 0
+    };
+    EXPECT_FALSE(out_packet.is_in());
+}
+
+TEST(TestSetupPacket, DifferentRequestTypes) {
+    // Device-to-host, Standard, Device (IN direction with non-zero length)
+    SetupPacket std_device{.request_type = 0x80, .request = 0x06, .value = 0, .index = 0, .length = 64};
+    EXPECT_TRUE(std_device.is_in());
+
+    // Device-to-host, Class, Interface (IN direction with non-zero length)
+    SetupPacket class_interface{.request_type = 0xA1, .request = 0x01, .value = 0, .index = 0, .length = 64};
+    EXPECT_TRUE(class_interface.is_in());
+
+    // Host-to-device, Vendor, Endpoint (OUT direction)
+    SetupPacket vendor_endpoint{.request_type = 0x42, .request = 0xFF, .value = 0, .index = 0, .length = 0};
+    EXPECT_FALSE(vendor_endpoint.is_in());
+}

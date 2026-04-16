@@ -24,15 +24,10 @@ usbipdcpp::Session::Session(Server &server) :
 }
 
 std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
-    std::shared_lock lock(unlink_map_mutex);
-    if (unlink_map.contains(seqnum)) {
-        return {true, unlink_map[seqnum]};
-    }
-    return {false, 0};
+    return unlink_map.get(seqnum);
 }
 
 void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
-    std::lock_guard lock(unlink_map_mutex);
     unlink_map.erase(seqnum);
 }
 
@@ -50,25 +45,28 @@ void usbipdcpp::Session::submit_ret_unlink_co(UsbIpResponse::UsbIpRetUnlink &&un
 }
 #else
 void usbipdcpp::Session::submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    std::unique_lock lock(send_data_mutex);
-    send_data_deque.emplace_back(std::move(submit));
+    // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
+    std::lock_guard lock(swap_mutex);
+    write_buffer.emplace_back(std::move(submit));
+    has_data.store(true, std::memory_order_release);
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-    send_data_cv.notify_one();
+    data_available_cv.notify_one();
 # endif
 }
 
 void usbipdcpp::Session::submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    std::unique_lock lock(send_data_mutex);
-    send_data_deque.emplace_back(std::move(unlink));
+    // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
+    std::lock_guard lock(swap_mutex);
+    write_buffer.emplace_back(std::move(unlink));
+    has_data.store(true, std::memory_order_release);
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-    send_data_cv.notify_one();
+    data_available_cv.notify_one();
 # endif
 }
 #endif
 
 void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
                                                                          std::uint32_t seqnum) {
-    std::lock_guard lock(unlink_map_mutex);
 #ifdef USBIPDCPP_USE_COROUTINE
     submit_ret_unlink_co(std::move(unlink));
 #else
@@ -516,10 +514,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                 UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
                 SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                {
-                    std::lock_guard lock(unlink_map_mutex);
-                    unlink_map[cmd2.unlink_seqnum] = cmd2.header.seqnum;
-                }
+                unlink_map.insert(cmd2.unlink_seqnum, cmd2.header.seqnum);
                 current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
@@ -635,16 +630,23 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
 }
 
 std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
-    std::unique_lock lock(send_data_mutex);
+    // 如果 read_buffer 为空，尝试交换
+    if (read_buffer.empty())[[likely]] {
+        std::unique_lock lock(swap_mutex);
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-    // 非 busy-wait: 使用条件变量等待
-    send_data_cv.wait(lock, [this]() {
-        return !send_data_deque.empty() || should_immediately_stop;
-    });
+        // 非 busy-wait: 使用条件变量等待数据
+        data_available_cv.wait(lock, [this]() {
+            return has_data.load(std::memory_order_acquire) || should_immediately_stop;
+        });
 # endif
-    if (!send_data_deque.empty())[[likely]] {
-        usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(send_data_deque.front());
-        send_data_deque.pop_front();
+        if (!write_buffer.empty()) {
+            read_buffer.swap(write_buffer);
+            has_data.store(false, std::memory_order_release);
+        }
+    }
+    if (!read_buffer.empty())[[likely]] {
+        usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(read_buffer.front());
+        read_buffer.pop_front();
         return ret_v;
     }
     else {
@@ -732,10 +734,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                 UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
                 SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                {
-                    std::lock_guard lock(unlink_map_mutex);
-                    unlink_map[cmd2.unlink_seqnum] = cmd2.header.seqnum;
-                }
+                unlink_map.insert(cmd2.unlink_seqnum, cmd2.header.seqnum);
                 current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
@@ -754,7 +753,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     //然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
     should_immediately_stop = true;
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-    send_data_cv.notify_one();
+    data_available_cv.notify_one();
 # endif
 
     /* 这里先标记为可用是可行的
@@ -784,14 +783,19 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             server.busy_wait_callback();
         }
 
-        // 批量获取所有待发送数据
+        // 批量获取所有待发送数据（双缓冲交换）
         SmallVector<UsbIpResponse::RetVariant, 32> batch;
         {
-            std::unique_lock lock(send_data_mutex);
-            while (!send_data_deque.empty()) {
-                batch.emplace_back(std::move(send_data_deque.front()));
-                send_data_deque.pop_front();
+            std::lock_guard lock(swap_mutex);
+            if (!write_buffer.empty()) {
+                read_buffer.swap(write_buffer);
+                has_data.store(false, std::memory_order_release);
             }
+        }
+        // 从 read_buffer 批量获取数据
+        while (!read_buffer.empty()) {
+            batch.emplace_back(std::move(read_buffer.front()));
+            read_buffer.pop_front();
         }
 
         // 发送所有数据，每发送一个就处理一次事件以捕获新完成的 transfer

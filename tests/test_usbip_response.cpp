@@ -148,3 +148,141 @@ TEST(TestOpRepDevlist, EmptyDeviceList) {
     EXPECT_EQ(ret.device_count, 0);
     EXPECT_TRUE(ret.devices.empty());
 }
+
+// ============== 极端情况测试 ==============
+
+TEST(TestUsbIpRetSubmit, LargeData) {
+    // 大数据量
+    data_type large_data(65536, 0xAB);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, large_data);
+
+    EXPECT_EQ(ret.actual_length, large_data.size());
+    EXPECT_EQ(ret.transfer_buffer.size(), large_data.size());
+}
+
+TEST(TestUsbIpRetSubmit, ZeroLengthData) {
+    data_type empty_data;
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, empty_data);
+
+    EXPECT_EQ(ret.actual_length, 0);
+    EXPECT_TRUE(ret.transfer_buffer.empty());
+}
+
+TEST(TestUsbIpRetSubmit, WithIsoPacketDescriptors) {
+    // 带等时包描述符
+    std::vector<UsbIpIsoPacketDescriptor> iso_descs = {
+            {.offset = 0, .length = 1024, .actual_length = 1024, .status = 0},
+            {.offset = 1024, .length = 1024, .actual_length = 512, .status = 0},
+    };
+
+    UsbIpResponse::UsbIpRetSubmit ret{
+            .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
+            .status = 0,
+            .actual_length = 1536,
+            .start_frame = 0,
+            .number_of_packets = static_cast<std::uint32_t>(iso_descs.size()),
+            .error_count = 0,
+            .transfer_buffer = data_type(1536, 0xCD),
+            .iso_packet_descriptor = std::move(iso_descs)
+    };
+
+    EXPECT_EQ(ret.number_of_packets, 2);
+    EXPECT_EQ(ret.iso_packet_descriptor.size(), 2);
+}
+
+TEST(TestUsbIpRetSubmit, VariousErrorStatus) {
+    // 测试各种错误状态
+    auto ret_epipe = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(0x1234);
+    EXPECT_EQ(ret_epipe.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // create_ret_submit 直接接受 errno 并存储，内部不转换
+    auto ret_enoent = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(0x1234, ENOENT, 0, 0, {}, {});
+    EXPECT_EQ(ret_enoent.status, static_cast<std::uint32_t>(ENOENT));
+}
+
+TEST(TestUsbIpRetUnlink, UnlinkError) {
+    // create_ret_unlink 直接接受 errno 并存储，内部不转换
+    auto ret = UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(0x1234, EPIPE);
+    EXPECT_EQ(ret.status, static_cast<std::uint32_t>(EPIPE));
+}
+
+TEST(TestOpRepImport, DeviceWithMultipleInterfaces) {
+    std::vector<UsbInterface> interfaces = {
+            UsbInterface{
+                    .interface_class = static_cast<std::uint8_t>(ClassCode::CDC),
+                    .interface_subclass = 0x02,
+                    .interface_protocol = 0x01,
+                    .endpoints = {
+                            UsbEndpoint{.address = 0x83, .attributes = 0x03, .max_packet_size = 16, .interval = 255}
+                    },
+                    .handler = nullptr
+            },
+            UsbInterface{
+                    .interface_class = static_cast<std::uint8_t>(ClassCode::CDCData),
+                    .interface_subclass = 0x00,
+                    .interface_protocol = 0x00,
+                    .endpoints = {
+                            UsbEndpoint{.address = 0x81, .attributes = 0x02, .max_packet_size = 64, .interval = 0},
+                            UsbEndpoint{.address = 0x02, .attributes = 0x02, .max_packet_size = 64, .interval = 0}
+                    },
+                    .handler = nullptr
+            }
+    };
+
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+            .path = "/test/cdc_device",
+            .busid = "1-2",
+            .bus_num = 1,
+            .dev_num = 2,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x2345,
+            .product_id = 0x6789,
+            .device_bcd = 0x0100,
+            .device_class = 0x02, // CDC
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_default_ep0_in(),
+            .ep0_out = UsbEndpoint::get_default_ep0_out()
+    });
+
+    auto ret = UsbIpResponse::OpRepImport::create_on_success(device);
+
+    EXPECT_EQ(ret.status, 0);
+    EXPECT_TRUE(ret.device);
+    EXPECT_EQ(ret.device->interfaces.size(), 2);
+}
+
+TEST(TestOpRepDevlist, ManyDevices) {
+    std::vector<std::shared_ptr<UsbDevice>> devices;
+
+    // 创建多个设备
+    for (int i = 0; i < 10; ++i) {
+        devices.push_back(std::make_shared<UsbDevice>(UsbDevice{
+                .path = "/test/device" + std::to_string(i),
+                .busid = "1-" + std::to_string(i + 1),
+                .bus_num = 1,
+                .dev_num = static_cast<std::uint8_t>(i + 1),
+                .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+                .vendor_id = static_cast<std::uint16_t>(0x1234 + i),
+                .product_id = static_cast<std::uint16_t>(0x5678 + i),
+                .device_bcd = 0x0100,
+                .device_class = 0x00,
+                .device_subclass = 0x00,
+                .device_protocol = 0x00,
+                .configuration_value = 1,
+                .num_configurations = 1,
+                .interfaces = {},
+                .ep0_in = UsbEndpoint::get_default_ep0_in(),
+                .ep0_out = UsbEndpoint::get_default_ep0_out()
+        }));
+    }
+
+    auto ret = UsbIpResponse::OpRepDevlist::create_from_devices(devices);
+
+    EXPECT_EQ(ret.status, 0);
+    EXPECT_EQ(ret.device_count, 10);
+    EXPECT_EQ(ret.devices.size(), 10);
+}

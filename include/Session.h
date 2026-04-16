@@ -18,6 +18,7 @@
 #endif
 
 #include "utils/LatencyTracker.h"
+#include "utils/ConcurrentUnlinkMap.h"
 #include "protocol.h"
 #include "type.h"
 
@@ -122,10 +123,13 @@ private:
     static constexpr std::size_t transfer_channel_size = 100;
     std::unique_ptr<transfer_channel_type> transfer_channel = nullptr;
 #else
-    //用于非协程发送数据
-    std::deque<UsbIpResponse::RetVariant> send_data_deque;
-    std::mutex send_data_mutex;
-    std::condition_variable send_data_cv;
+    // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
+    // 交换时短暂加锁，大幅减少锁竞争
+    std::deque<UsbIpResponse::RetVariant> write_buffer;
+    std::deque<UsbIpResponse::RetVariant> read_buffer;
+    mutable std::mutex swap_mutex;
+    std::condition_variable data_available_cv;
+    std::atomic_bool has_data{false};
 #endif
     /**
      * @brief 不停地传输urb
@@ -154,9 +158,8 @@ private:
     //上面两个变量的值的锁
     std::shared_mutex current_import_device_data_mutex;
 
-    //从原本的ret_submit的seqnum映射到ret_unlink的seqnum
-    std::unordered_map<std::uint32_t, std::uint32_t> unlink_map;
-    std::shared_mutex unlink_map_mutex;
+    //从原本的ret_submit的seqnum映射到ret_unlink的seqnum（分段锁）
+    ConcurrentUnlinkMap<> unlink_map;
 
     Server &server;
     asio::io_context session_io_context{};

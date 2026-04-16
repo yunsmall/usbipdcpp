@@ -125,6 +125,10 @@ struct SetupPacket {
         return !(request_type & 0x80) || !length;
     }
 
+    bool is_in() const {
+        return !is_out();
+    }
+
     std::uint8_t calc_ep0_address() const {
         if (is_out()) {
             return 0x80;

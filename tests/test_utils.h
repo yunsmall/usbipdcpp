@@ -4,7 +4,7 @@
 
 #include "protocol.h"
 #include "type.h"
-#include "../include/utils/utils.h"
+#include "utils/utils.h"
 
 namespace usbipdcpp {
 namespace test {

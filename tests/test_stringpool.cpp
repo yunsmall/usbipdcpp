@@ -66,3 +66,81 @@ TEST(TestStringPool, MaxIndex) {
         EXPECT_GT(idx, 0);
     }
 }
+
+// ============== 极端情况测试 ==============
+
+TEST(TestStringPool, EmptyString) {
+    StringPool pool;
+
+    auto idx = pool.new_string(L"");
+    EXPECT_GT(idx, 0);
+
+    auto result = pool.get_string(idx);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), L"");
+}
+
+TEST(TestStringPool, LongString) {
+    StringPool pool;
+
+    // 长字符串
+    std::wstring long_str(1000, L'A');
+    auto idx = pool.new_string(long_str);
+    EXPECT_GT(idx, 0);
+
+    auto result = pool.get_string(idx);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), long_str);
+}
+
+TEST(TestStringPool, UnicodeString) {
+    StringPool pool;
+
+    // Unicode 字符
+    std::wstring unicode = L"你好世界🎉";
+    auto idx = pool.new_string(unicode);
+    EXPECT_GT(idx, 0);
+
+    auto result = pool.get_string(idx);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), unicode);
+}
+
+TEST(TestStringPool, RemoveTwice) {
+    StringPool pool;
+
+    auto idx = pool.new_string(L"Test");
+    EXPECT_TRUE(pool.get_string(idx).has_value());
+
+    pool.remove_string(idx);
+    EXPECT_FALSE(pool.get_string(idx).has_value());
+
+    // 再次删除不应崩溃
+    pool.remove_string(idx);
+    EXPECT_FALSE(pool.get_string(idx).has_value());
+}
+
+TEST(TestStringPool, RemoveInvalidIndex) {
+    StringPool pool;
+
+    // 删除无效索引不应崩溃
+    pool.remove_string(0);
+    pool.remove_string(255);
+    pool.remove_string(1000);
+}
+
+TEST(TestStringPool, ReuseAfterRemove) {
+    StringPool pool;
+
+    auto idx1 = pool.new_string(L"First");
+    pool.remove_string(idx1);
+
+    auto idx2 = pool.new_string(L"Second");
+    // 索引应该被复用
+    EXPECT_EQ(idx1, idx2);
+
+    // 新字符串应该正确
+    auto result = pool.get_string(idx2);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), L"Second");
+}
