@@ -127,7 +127,11 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         return;
     }
 
-    // spdlog::debug("控制传输");
+    // 打印控制传输详细信息
+    // spdlog::debug("控制传输 seqnum:{} request_type:0x{:02x} request:0x{:02x} value:0x{:04x} index:0x{:04x} length:{} direction:{}",
+    //              seqnum, setup_packet.request_type, setup_packet.request,
+    //              setup_packet.value, setup_packet.index, setup_packet.length,
+    //              setup_packet.is_out() ? "OUT" : "IN");
 
     auto tweak_ret = tweak_special_requests(setup_packet);
     if (tweak_ret < 0)[[likely]] {
@@ -213,7 +217,15 @@ void usbipdcpp::LibusbDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, 
 
     LATENCY_TRACK(session->latency_tracker,seqnum,"LibusbDeviceHandler::handle_bulk_transfer进来");
 
-    SPDLOG_DEBUG("块传输 {}，ep addr: {:02x}", is_out?"Out":"In", ep.address);
+    // spdlog::debug("块传输 {}，ep addr: {:02x} buffer_length:{} data_size:{}",
+    //              is_out?"Out":"In", ep.address, transfer_buffer_length, transfer_data.size());
+
+    // // BULK OUT: 验证数据长度
+    // if (is_out && transfer_data.size() != transfer_buffer_length) {
+    //     spdlog::warn("BULK OUT 数据长度不匹配: buffer_length={} data_size={}",
+    //                 transfer_buffer_length, transfer_data.size());
+    // }
+
     auto transfer = libusb_alloc_transfer(0);
     data_type transfer_buffer(std::move(transfer_data));
 

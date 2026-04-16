@@ -16,9 +16,11 @@ struct SetupPacket {
     std::uint16_t index;
     std::uint16_t length;
 
+    using array_storage = array_data_type<8>;
+
     //转成小端
-    [[nodiscard]] array_data_type<8> to_bytes() const {
-        array_data_type<8> result;
+    [[nodiscard]] array_storage to_bytes() const {
+        array_storage result;
 
         result[0] = request_type;
         result[1] = request;
@@ -37,13 +39,13 @@ struct SetupPacket {
     }
 
     [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock) {
-        array_data_type<8> setup{};
+        array_storage setup{};
         co_await data_read_from_socket_co(sock, setup);
         *this = parse(setup);
     }
 
     void from_socket(asio::ip::tcp::socket &sock) {
-        array_data_type<8> setup{};
+        array_storage setup{};
         data_read_from_socket(sock, setup);
         *this = parse(setup);
     }
@@ -55,7 +57,7 @@ struct SetupPacket {
      * @param setup 字节数组
      * @return 解析后的setup包
      */
-    static SetupPacket parse(const std::array<std::uint8_t, 8> &setup) {
+    static SetupPacket parse(const array_storage &setup) {
         return {
                 .request_type = setup[0],
                 .request = setup[1],

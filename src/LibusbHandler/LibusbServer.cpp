@@ -69,7 +69,7 @@ void LibusbServer::print_device(libusb_device *dev) {
     }
     // 打印设备信息
     auto device_name = get_device_names(dev);
-    auto busid = get_device_busid(dev);
+    auto busid = get_device_busid(dev, busid_include_address_);
     bool is_used = false;
     bool is_available = false;
     {
@@ -131,8 +131,10 @@ libusb_device *LibusbServer::find_by_busid(const std::string &busid) {
     libusb_device **devs;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
-        auto current_bus = get_device_busid(devs[dev_i]);
-        if (current_bus == busid) {
+        // 尝试两种格式匹配：带地址和不带地址
+        auto current_bus_without_addr = get_device_busid(devs[dev_i], false);
+        auto current_bus_with_addr = get_device_busid(devs[dev_i], true);
+        if (current_bus_without_addr == busid || current_bus_with_addr == busid) {
             auto ret_dev = libusb_ref_device(devs[dev_i]);
             libusb_free_device_list(devs, 1);
             return ret_dev;
@@ -200,7 +202,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
                 .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
                                     libusb_get_device_address(dev), libusb_get_port_number(dev)),
-                .busid = get_device_busid(dev),
+                .busid = get_device_busid(dev, busid_include_address_),
                 .bus_num = libusb_get_bus_number(dev),
                 .dev_num = libusb_get_port_number(dev),
                 .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
@@ -223,7 +225,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
     }
 
     libusb_free_config_descriptor(active_config_desc);
-    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(dev));
+    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(dev, busid_include_address_));
     return DeviceOperationResult::Success;
 }
 
@@ -296,7 +298,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     }
 
     // 保存设备信息
-    auto busid = get_device_busid(device_for_info, true);
+    auto busid = get_device_busid(device_for_info, busid_include_address_);
     auto bus_num = libusb_get_bus_number(device_for_info);
     auto dev_addr = libusb_get_device_address(device_for_info);
     auto dev_num = libusb_get_port_number(device_for_info);
@@ -339,7 +341,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
 }
 
 DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
-    auto target_busid = get_device_busid(device);
+    auto target_busid = get_device_busid(device, busid_include_address_);
     {
         std::lock_guard lock(server.get_devices_mutex());
         auto &server_using_devices = server.get_using_devices();
@@ -548,7 +550,7 @@ int LIBUSB_CALL LibusbServer::hotplug_callback(
     if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
         server->handle_device_arrived(device);
     } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
-        auto busid = get_device_busid(device);
+        auto busid = get_device_busid(device, server->busid_include_address_);
         server->handle_device_left(busid);
     }
 
@@ -556,7 +558,7 @@ int LIBUSB_CALL LibusbServer::hotplug_callback(
 }
 
 void LibusbServer::handle_device_arrived(libusb_device *device) {
-    auto busid = get_device_busid(device);
+    auto busid = get_device_busid(device, busid_include_address_);
 
     // 检查是否已绑定
     {

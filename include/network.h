@@ -317,6 +317,83 @@ inline std::uint8_t read_u8(asio::ip::tcp::socket &sock) {
 }
 
 /**
+ * @brief 从socket中读入整数和数组，会一次性全读入然后赋值。
+ * 整数类型读取后会调用 ntoh，数组类型直接复制。
+ * @tparam padding 尾部 padding 字节数
+ * @tparam Args 参数类型
+ * @param sock 目标socket
+ * @param args 希望读入的数据（整数引用或数组引用）
+ */
+template<std::size_t padding = 0, typename... Args>
+    requires (
+        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
+         is_array_data_type<std::remove_cvref_t<Args>>)
+        && ...)
+void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
+    constexpr auto total_size = calculate_total_size_with_array<Args...>() + padding;
+
+    std::array<std::uint8_t, total_size> buffer;
+    asio::read(sock, asio::buffer(buffer));
+    std::size_t offset = 0;
+
+    auto process = [&](auto &arg) {
+        using RawType = std::remove_reference_t<decltype(arg)>;
+        if constexpr (is_array_data_type<RawType>) {
+            std::memcpy(arg.data(), &buffer[offset], arg.size());
+            offset += arg.size();
+        }
+        else {
+            RawType tmp;
+            std::memcpy(&tmp, &buffer[offset], sizeof(tmp));
+            offset += sizeof(tmp);
+            arg = ntoh(tmp);
+        }
+    };
+
+    (process(args), ...);
+    // padding 数据已读取但被忽略
+}
+
+/**
+ * @brief 从socket中读入整数和数组，会一次性全读入然后赋值。
+ * 整数类型读取后会调用 ntoh，数组类型直接复制。
+ * @tparam padding 尾部 padding 字节数
+ * @tparam Args 参数类型
+ * @param sock 目标socket
+ * @param args 希望读入的数据（整数引用或数组引用）
+ */
+template<std::size_t padding = 0, typename... Args>
+    requires (
+        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
+         is_array_data_type<std::remove_cvref_t<Args>>)
+        && ...)
+[[nodiscard]] asio::awaitable<void> unsigned_integral_and_array_read_from_socket_co(
+        asio::ip::tcp::socket &sock, Args &... args) {
+    constexpr auto total_size = calculate_total_size_with_array<Args...>() + padding;
+
+    std::array<std::uint8_t, total_size> buffer;
+    co_await asio::async_read(sock, asio::buffer(buffer), asio::use_awaitable);
+    std::size_t offset = 0;
+
+    auto process = [&](auto &arg) {
+        using RawType = std::remove_reference_t<decltype(arg)>;
+        if constexpr (is_array_data_type<RawType>) {
+            std::memcpy(arg.data(), &buffer[offset], arg.size());
+            offset += arg.size();
+        }
+        else {
+            RawType tmp;
+            std::memcpy(&tmp, &buffer[offset], sizeof(tmp));
+            offset += sizeof(tmp);
+            arg = ntoh(tmp);
+        }
+    };
+
+    (process(args), ...);
+    // padding 数据已读取但被忽略
+}
+
+/**
  * @brief 给数组添加padding
  * @tparam padding
  * @param array 源数组
@@ -341,7 +418,7 @@ template<serializable_vector T>
     requires is_serializable_can_be_array<typename T::value_type>
 data_type serializable_array_range_to_network_data(const T &vec) {
     constexpr std::size_t serializable_size = decltype(vec.begin()->to_bytes()){}.size();
-    std::size_t total_size = serializable_size + vec.size();
+    std::size_t total_size = serializable_size * vec.size();
     data_type ret(total_size, 0u);
     std::size_t offset = 0;
     for (std::size_t i = 0; i < vec.size(); ++i) {

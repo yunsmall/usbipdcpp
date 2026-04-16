@@ -112,6 +112,7 @@ protected:
 
     virtual void set_descriptor(std::uint16_t configuration_value) =0;
 
+public:
     void change_string_configuration(const std::wstring &new_str) {
         auto ret = string_pool.get_string(string_configuration_value);
         if (ret) {

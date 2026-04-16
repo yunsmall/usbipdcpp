@@ -9,6 +9,13 @@ using namespace usbipdcpp;
 
 int main() {
     spdlog::set_level(spdlog::level::trace);
+
+#ifdef USBIPDCPP_ENABLE_BUSY_WAIT
+    spdlog::info("Busy-wait mode: ENABLED");
+#else
+    spdlog::info("Busy-wait mode: DISABLED");
+#endif
+
     int err;
     // 启用 libusb 调试日志
     // libusb_set_option(nullptr, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_DEBUG);
@@ -20,6 +27,9 @@ int main() {
     }
 
     LibusbServer libusb_server;
+#ifndef __unix__
+    libusb_server.set_busid_include_address(true);
+#endif
 
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), 54322);
     libusb_server.start(endpoint);

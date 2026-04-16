@@ -314,6 +314,8 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
+    // spdlog::debug("RET_SUBMIT seqnum:{} status:{} actual_length:{} buffer_size:{}",
+    //              header.seqnum, status, actual_length, transfer_buffer.size());
     if (!transfer_buffer.empty() && actual_length > 0) {
         if (iso_packet_descriptor.empty())[[likely]] {
             // 非等时传输：header + data
@@ -649,14 +651,20 @@ asio::awaitable<void> UsbIpCommand::UsbIpCmdSubmit::to_socket_co(asio::ip::tcp::
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::from_socket_co(asio::ip::tcp::socket &sock) {
-    co_await header.from_socket_co(sock);
+    // 使用 scatter-gather 一次性读取固定部分
+    // header 字段(16字节) + transfer参数(20字节) + setup(8字节) = 44字节
+    array_data_type<8> setup_buffer;
+    co_await unsigned_integral_and_array_read_from_socket_co(
+        sock,
+        header.seqnum, header.devid, header.direction, header.ep,
+        transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval,
+        setup_buffer
+    );
     //设置命令类型
     header.command = USBIP_CMD_SUBMIT;
 
-    co_await unsigned_integral_read_from_socket_co(sock, transfer_flags, transfer_buffer_length, start_frame,
-                                                   number_of_packets,
-                                                   interval);
-    co_await setup.from_socket_co(sock);
+    // 解析 setup packet（小端序）
+    setup = SetupPacket::parse(setup_buffer);
 
     // 检查缓冲区大小，防止恶意大内存分配
     if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE)[[unlikely]] {
@@ -702,14 +710,20 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
 }
 
 void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
-    header.from_socket(sock);
+    // 使用 scatter-gather 一次性读取固定部分
+    // header 字段(16字节) + transfer参数(20字节) + setup(8字节) = 44字节
+    decltype(SetupPacket{}.to_bytes()) setup_buffer;
+    unsigned_integral_and_array_read_from_socket(
+        sock,
+        header.seqnum, header.devid, header.direction, header.ep,
+        transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval,
+        setup_buffer
+    );
     //设置命令类型
     header.command = USBIP_CMD_SUBMIT;
 
-    unsigned_integral_read_from_socket(sock, transfer_flags, transfer_buffer_length, start_frame,
-                                       number_of_packets,
-                                       interval);
-    setup.from_socket(sock);
+    // 解析 setup packet（小端序）
+    setup = SetupPacket::parse(setup_buffer);
 
     // 检查缓冲区大小，防止恶意大内存分配
     if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE)[[unlikely]] {
@@ -787,14 +801,14 @@ asio::awaitable<void> UsbIpCommand::UsbIpCmdUnlink::to_socket_co(asio::ip::tcp::
 }
 
 asio::awaitable<void> usbipdcpp::UsbIpCommand::UsbIpCmdUnlink::from_socket_co(asio::ip::tcp::socket &sock) {
-    co_await header.from_socket_co(sock);
+    // 使用 scatter-gather 一次性读取 header 字段 + unlink_seqnum + padding
+    co_await unsigned_integral_and_array_read_from_socket_co<24>(
+        sock,
+        header.seqnum, header.devid, header.direction, header.ep,
+        unlink_seqnum
+    );
     //设置命令类型
     header.command = USBIP_CMD_UNLINK;
-
-    unlink_seqnum = co_await read_u32_co(sock);
-
-    std::array<uint8_t, 24> padding{};
-    co_await asio::async_read(sock, asio::buffer(padding), asio::use_awaitable);
 }
 
 void UsbIpCommand::UsbIpCmdUnlink::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
@@ -802,14 +816,14 @@ void UsbIpCommand::UsbIpCmdUnlink::to_socket(asio::ip::tcp::socket &sock, error_
 }
 
 void UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
-    header.from_socket(sock);
+    // 使用 scatter-gather 一次性读取 header 字段 + unlink_seqnum + padding
+    unsigned_integral_and_array_read_from_socket<24>(
+        sock,
+        header.seqnum, header.devid, header.direction, header.ep,
+        unlink_seqnum
+    );
     //设置命令类型
     header.command = USBIP_CMD_UNLINK;
-
-    unlink_seqnum = read_u32(sock);
-
-    std::array<uint8_t, 24> padding{};
-    asio::read(sock, asio::buffer(padding));
 }
 
 asio::awaitable<usbipdcpp::UsbIpCommand::OpCmdVariant> usbipdcpp::UsbIpCommand::get_op_from_socket_co(

@@ -93,7 +93,7 @@ void usbipdcpp::UsbDevice::handle_urb(
         std::error_code &ec) {
     SPDLOG_TRACE("设备处理URB，将其转发到对应handler中");
     if (handler) {
-        handler->dispatch_urb(cmd, seqnum, ep, interface, transfer_buffer_length, transfer_buffer_length,
+        handler->dispatch_urb(cmd, seqnum, ep, interface, cmd.transfer_flags, transfer_buffer_length,
                               setup_packet, std::move(out_data), std::move(iso_packet_descriptors), ec);
     }
     else {

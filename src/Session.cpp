@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "DeviceHandler/DeviceHandler.h"
+#include "utils/SmallVector.h"
 #ifdef USBIPDCPP_USE_COROUTINE
 #include <asio/experimental/parallel_group.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -14,6 +15,7 @@
 #include "Server.h"
 #include "Device.h"
 #include "protocol.h"
+#include "network.h"
 #include "../include/utils/utils.h"
 
 usbipdcpp::Session::Session(Server &server) :
@@ -634,19 +636,12 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
 
 std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
     std::unique_lock lock(send_data_mutex);
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    // busy-wait: 不等待条件变量
-    if (!send_data_deque.empty())[[likely]] {
-        usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(send_data_deque.front());
-        send_data_deque.pop_front();
-        return ret_v;
-    }
-    return std::nullopt;
-# else
+# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     // 非 busy-wait: 使用条件变量等待
     send_data_cv.wait(lock, [this]() {
         return !send_data_deque.empty() || should_immediately_stop;
     });
+# endif
     if (!send_data_deque.empty())[[likely]] {
         usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(send_data_deque.front());
         send_data_deque.pop_front();
@@ -655,7 +650,6 @@ std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_g
     else {
         return std::nullopt;
     }
-# endif
 }
 
 void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
@@ -782,26 +776,73 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
 }
 
 void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
-    while (!should_immediately_stop) {
 # ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-        // busy-wait 模式：执行回调（如 libusb 事件处理）
+    // busy-wait 模式：批量发送所有完成的数据
+    while (!should_immediately_stop) {
+        // 执行回调（如 libusb 事件处理）
         if (server.busy_wait_callback) {
             server.busy_wait_callback();
         }
-# endif
 
-        //不停从channel中获取数据
+        // 批量获取所有待发送数据
+        SmallVector<UsbIpResponse::RetVariant, 32> batch;
+        {
+            std::unique_lock lock(send_data_mutex);
+            while (!send_data_deque.empty()) {
+                batch.emplace_back(std::move(send_data_deque.front()));
+                send_data_deque.pop_front();
+            }
+        }
+
+        // 发送所有数据，每发送一个就处理一次事件以捕获新完成的 transfer
+        for (auto& send_data : batch) {
+            error_code sending_ec;
+            std::visit([&](auto &&cmd) {
+                using T = std::remove_cvref_t<decltype(cmd)>;
+                if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
+                    cmd.to_socket(socket, sending_ec);
+                    LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
+                }
+                else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
+                    cmd.to_socket(socket, sending_ec);
+                    LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
+                }
+                else if constexpr (std::is_same_v<std::monostate, T>) {
+                    SPDLOG_ERROR("收到未知包");
+                    sending_ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                }
+                else {
+                    static_assert(!std::is_same_v<T, T>);
+                }
+            }, send_data);
+            if (sending_ec) {
+                break;
+            }
+
+            // 发送完后立即处理事件，确保新完成的 transfer 能被及时捕获
+            if (server.busy_wait_callback) {
+                server.busy_wait_callback();
+            }
+        }
+
+        if (batch.empty()) {
+            continue;
+        }
+    }
+
+    // 退出后继续处理事件，直到所有传输完成
+    while (current_import_device && current_import_device->has_pending_transfers() && server.busy_wait_callback) {
+        server.busy_wait_callback();
+    }
+# else
+    // 非 busy-wait 模式：原有逻辑
+    while (!should_immediately_stop) {
         auto send_data_opt = sender_get_data(ec);
         if (ec || should_immediately_stop)[[unlikely]] {
             break;
         }
         if (!send_data_opt.has_value())[[unlikely]] {
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-            // busy-wait: 不等待，继续循环
-            continue;
-# else
             break;
-# endif
         }
         auto send_data = send_data_opt.value();
 
@@ -812,18 +853,16 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
                 cmd.to_socket(socket, sending_ec);
                 LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
-                // end_processing_urb();
             }
             else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
                 cmd.to_socket(socket, sending_ec);
-                // end_processing_urb();
+                LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
                 sending_ec = make_error_code(ErrorType::UNKNOWN_CMD);
             }
             else {
-                //确保处理了所有可能类型
                 static_assert(!std::is_same_v<T, T>);
             }
         }, send_data);
@@ -832,12 +871,6 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             // ec = sending_ec;
             break;
         }
-    }
-
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    // 退出后继续处理 libusb 事件，直到所有传输完成
-    while (current_import_device && current_import_device->has_pending_transfers() && server.busy_wait_callback) {
-        server.busy_wait_callback();
     }
 # endif
 }
