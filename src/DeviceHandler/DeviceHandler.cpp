@@ -25,13 +25,15 @@ void AbstDeviceHandler::dispatch_urb(
         const SetupPacket &setup_packet, data_type &&out_data,
         std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors,
         usbipdcpp::error_code &ec) {
-    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) {
+    // 控制传输较少，Bulk/Interrupt 更常见
+    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control))[[unlikely]] {
         SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()), setup_packet.to_string());
         handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(out_data), ec);
     }
-    else if (interface.has_value()) {
+    else if (interface.has_value())[[likely]] {
         auto &intf = interface.value();
-        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) {
+        // Bulk 和 Interrupt 最常见
+        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk))[[likely]] {
             SPDLOG_DEBUG("处理块传输");
             handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(out_data), ec);
         }
@@ -45,12 +47,12 @@ void AbstDeviceHandler::dispatch_urb(
             handle_isochronous_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(out_data),
                                         iso_packet_descriptors, ec);
         }
-        else {
+        else [[unlikely]] {
             SPDLOG_DEBUG("端口{:02x}的未知传输类型：{}", ep.address, ep.attributes);
             ec = make_error_code(ErrorType::INVALID_ARG);
         }
     }
-    else {
+    else[[unlikely]] {
         SPDLOG_ERROR("非控制传输却不存在目标接口");
         ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
@@ -58,7 +60,7 @@ void AbstDeviceHandler::dispatch_urb(
 
 void AbstDeviceHandler::trigger_session_stop() {
     std::lock_guard lock(session_mutex_);
-    if (session) {
+    if (session)[[likely]] {
         session->immediately_stop();
     }
 }

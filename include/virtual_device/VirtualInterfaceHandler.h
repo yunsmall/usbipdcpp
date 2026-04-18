@@ -4,10 +4,10 @@
 
 namespace usbipdcpp {
 
-class VirtualInterfaceHandler : public InterfaceHandlerBase {
+class VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
     explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        InterfaceHandlerBase(handle_interface), string_pool(string_pool) {
+        AbstInterfaceHandler(handle_interface), string_pool(string_pool) {
 
         string_interface = string_pool.new_string(L"Usbipdcpp Virtual Interface");
     }

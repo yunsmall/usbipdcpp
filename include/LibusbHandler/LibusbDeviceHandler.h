@@ -13,7 +13,7 @@
 #include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
-class LibusbDeviceHandler : public DeviceHandlerBase {
+class LibusbDeviceHandler : public AbstDeviceHandler {
     friend class LibusbServer;
 
 public:
@@ -44,7 +44,7 @@ public:
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
-# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     bool has_pending_transfers() const override {
         return transfer_tracker_.concurrent_count() > 0;
     }

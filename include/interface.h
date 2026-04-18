@@ -25,7 +25,6 @@ struct UsbInterface {
     }
 
     [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-    asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
     void from_socket(asio::ip::tcp::socket &sock);
 
     bool operator==(const UsbInterface &other) const {

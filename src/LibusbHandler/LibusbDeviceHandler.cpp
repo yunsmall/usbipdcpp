@@ -9,13 +9,13 @@
 
 // 普通模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device) :
-    DeviceHandlerBase(handle_device), native_device_(native_device) {
+    AbstDeviceHandler(handle_device), native_device_(native_device) {
     // 设备尚未打开，将在 on_new_connection 时打开
 }
 
 // Android 模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd) :
-    DeviceHandlerBase(handle_device), wrapped_fd_(fd) {
+    AbstDeviceHandler(handle_device), wrapped_fd_(fd) {
     // fd 将在 on_new_connection 时通过 libusb_wrap_sys_device 包装
 }
 
@@ -27,7 +27,7 @@ usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
 }
 
 void usbipdcpp::LibusbDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    DeviceHandlerBase::on_new_connection(current_session, ec);
+    AbstDeviceHandler::on_new_connection(current_session, ec);
 
     if (native_device_) {
         // 普通模式：需要打开设备
@@ -79,7 +79,7 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
         release_and_close_device();
     }
 
-    DeviceHandlerBase::on_disconnection(ec);
+    AbstDeviceHandler::on_disconnection(ec);
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
@@ -97,7 +97,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_s
         }
     });
 
-    if (transfer_to_cancel) {
+    if (transfer_to_cancel)[[likely]] {
         int err = libusb_cancel_transfer(transfer_to_cancel);
         if (err == LIBUSB_ERROR_NOT_FOUND)[[unlikely]]{
         }
@@ -199,6 +199,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_control_urb(
         return;
     }
     // tweak 成功或失败，都不提交 transfer，发送成功响应
+    // 大多数控制请求需要正常提交，tweak 是特殊情况
     // 与 usbipd-libusb 行为一致：特殊命令无论成功失败都返回成功
     session->submit_ret_submit(
             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
@@ -469,16 +470,17 @@ int usbipdcpp::LibusbDeviceHandler::tweak_special_requests(const SetupPacket &se
     // -1: 不需要 tweak，应该提交 transfer
     //  0: tweak 成功，不需要提交 transfer
     // >0: tweak 失败（libusb 错误码），不需要提交 transfer
-    if (setup_packet.is_clear_halt_cmd()) {
+    // 特殊请求较少见，大多数情况返回 -1（不需要 tweak）
+    if (setup_packet.is_clear_halt_cmd())[[unlikely]] {
         return tweak_clear_halt_cmd(setup_packet);
     }
-    else if (setup_packet.is_set_interface_cmd()) {
+    else if (setup_packet.is_set_interface_cmd())[[unlikely]] {
         return tweak_set_interface_cmd(setup_packet);
     }
-    else if (setup_packet.is_set_configuration_cmd()) {
+    else if (setup_packet.is_set_configuration_cmd())[[unlikely]] {
         return tweak_set_configuration_cmd(setup_packet);
     }
-    else if (setup_packet.is_reset_device_cmd()) {
+    else if (setup_packet.is_reset_device_cmd())[[unlikely]] {
         return tweak_reset_device_cmd(setup_packet);
     }
     SPDLOG_DEBUG("不需要调整包");
@@ -576,6 +578,7 @@ void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     });
 
     // 如果断连了，直接清理并返回（不发送响应）
+    // 这是在传输完成后检查，断连是特殊情况
     if (callback_arg.handler->client_disconnection)[[unlikely]] {
         if (callback_arg.handler->transfer_tracker_.concurrent_count() == 0) {
             std::lock_guard lock(callback_arg.handler->transfer_complete_mutex_);

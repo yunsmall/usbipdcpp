@@ -11,7 +11,6 @@
 #include <functional>
 
 #include <asio/ip/tcp.hpp>
-#include <asio/awaitable.hpp>
 
 #include "Device.h"
 
@@ -25,7 +24,7 @@ class Session;
 enum class ThreadPurpose {
     NetworkIO,      // Server的网络IO线程
     SessionMain,    // Session主线程
-    SessionSender   // Session发送线程（非协程版本）
+    SessionSender   // Session发送线程
 };
 
 /**
@@ -127,7 +126,7 @@ public:
      */
     void remove_session(Session *session);
 
-# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     void set_busy_wait_callback(std::function<void()> &&callback) {
         busy_wait_callback = std::move(callback);
     }
@@ -136,7 +135,7 @@ public:
     ~Server();
 
 protected:
-    asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
+    void do_accept(asio::ip::tcp::acceptor &acceptor);
 
     bool is_device_using(const std::string &busid);
 
@@ -161,7 +160,7 @@ protected:
     // 线程创建后回调
     std::function<void(ThreadPurpose, std::thread&)> after_thread_create_callback;
 
-# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     // busy-wait 回调，由 LibusbServer 设置，在 sender 的 busy-wait 循环中调用
     std::function<void()> busy_wait_callback;
 # endif

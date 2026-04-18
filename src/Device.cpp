@@ -53,10 +53,6 @@ array_data_type<UsbDevice::bytes_without_interfaces_num> usbipdcpp::UsbDevice::t
     return to_bytes_without_interfaces();
 }
 
-asio::awaitable<void> usbipdcpp::UsbDevice::from_socket_co(asio::ip::tcp::socket &sock) {
-    co_return;
-}
-
 void UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
     return;
 }
@@ -134,7 +130,7 @@ void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std
     }
 }
 
-#if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+#ifdef USBIPDCPP_ENABLE_BUSY_WAIT
 bool UsbDevice::has_pending_transfers() const {
     return handler && handler->has_pending_transfers();
 }

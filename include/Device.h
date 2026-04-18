@@ -78,7 +78,6 @@ struct UsbDevice {
 
     //devlist请求的时候要发送接口信息，import请求时不发送接口信息
     [[nodiscard]] array_data_type<bytes_without_interfaces_num> to_bytes() const;
-    asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock);
     void from_socket(asio::ip::tcp::socket &sock);
 
     std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);
@@ -106,7 +105,7 @@ struct UsbDevice {
      */
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
 
-# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     /**
      * @brief 检查是否还有传输在进行
      * @return true 表示还有传输未完成

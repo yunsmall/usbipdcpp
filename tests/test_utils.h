@@ -40,22 +40,18 @@ namespace test {
         asio::error_code ec;
         server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), ec);
 
-        asio::co_spawn(io_context, [&]()-> asio::awaitable<void> {
-            [[maybe_unused]] auto version = co_await usbipdcpp::read_u16_co(server_socket);
-            auto op_command = co_await usbipdcpp::read_u16_co(server_socket);
-            co_await received.from_socket_co(server_socket);
-            // SPDLOG_INFO("Received header from server");
-            if constexpr (with_header<T>) {
-                received.header.command = op_command;
-            }
-            else {
-                received.command = op_command;
-            }
-            server_socket.close();
-            io_context.stop();
-        }, if_has_value_than_rethrow);
+        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
+        auto op_command = usbipdcpp::read_u16(server_socket);
+        received.from_socket(server_socket);
+        // SPDLOG_INFO("Received header from server");
+        if constexpr (with_header<T>) {
+            received.header.command = op_command;
+        }
+        else {
+            received.command = op_command;
+        }
+        server_socket.close();
 
-        io_context.run();
         sender.join();
 
         return received;

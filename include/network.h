@@ -4,7 +4,6 @@
 #include <bit>
 
 #include <asio/read.hpp>
-#include <asio/use_awaitable.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include "type.h"
@@ -35,25 +34,6 @@ constexpr T hton(T num) {
 }
 
 
-#ifdef USBIPDCPP_USE_COROUTINE
-template<typename T>
-concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
-{
-    { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-    {
-        static_cast<const std::remove_cvref_t<T> &>(t1).to_socket_co(sock, ec)
-    } -> std::same_as<asio::awaitable<void>>;
-    { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
-};
-
-template<typename T>
-concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
-{
-    { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-    { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
-    { static_cast<std::remove_cvref_t<T>>(t1).from_socket_co(sock) } -> std::same_as<asio::awaitable<void>>;
-};
-#else
 template<typename T>
 concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
 {
@@ -69,7 +49,6 @@ concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
     { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
     { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<void>;
 };
-#endif
 
 template<typename T>
 concept is_serializable_can_be_array = requires(T &&t1)
@@ -167,32 +146,6 @@ constexpr std::size_t calculate_data_total_size_with_range(const Args &... arg) 
  * @param args 整数
  */
 template<std::unsigned_integral... Args>
-[[nodiscard]] asio::awaitable<void> unsigned_integral_read_from_socket_co(
-        asio::ip::tcp::socket &sock, Args &... args) {
-    constexpr auto total_size = calculate_unsigned_integral_total_size<Args...>();
-
-    std::array<std::uint8_t, total_size> buffer;
-    co_await asio::async_read(sock, asio::buffer(buffer), asio::use_awaitable);
-    std::size_t offset = 0;
-
-    auto process = [&](auto &arg) {
-        using RawType = std::remove_reference_t<decltype(arg)>;
-        RawType tmp;
-        std::memcpy(&tmp, &buffer[offset], sizeof(tmp));
-        offset += sizeof(tmp);
-
-        arg = ntoh(tmp);
-    };
-
-    (process(args), ...);
-}
-
-/**
- * @brief 从socket中读入整数，会一次性全读入然后赋值。读入后会调用 ntoh
- * @param sock 目标socket
- * @param args 整数
- */
-template<std::unsigned_integral... Args>
 void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
     constexpr auto total_size = calculate_unsigned_integral_total_size<Args...>();
 
@@ -225,34 +178,6 @@ template<typename... Args>
         (std::unsigned_integral<std::remove_cvref_t<Args>> ||
          supported_data_type<std::remove_cvref_t<Args>>)
         && ...)
-asio::awaitable<void> data_read_from_socket_co(asio::ip::tcp::socket &sock, Args &... args) {
-    auto process = [&](auto &arg)-> asio::awaitable<void> {
-        using RawType = std::remove_reference_t<decltype(arg)>;
-        if constexpr (supported_data_type<RawType>) {
-            co_await asio::async_read(sock, asio::buffer(arg), asio::use_awaitable);
-        }
-        else {
-            RawType tmp;
-            co_await asio::async_read(sock, asio::buffer(&tmp, sizeof(tmp)), asio::use_awaitable);
-            arg = ntoh(tmp);
-        }
-    };
-    (co_await process(args), ...);
-}
-
-/**
- * @brief 只能处理 unsigned_integral 类型和 supported_data_type 类型。
- * 整数类型读取后调用 ntoh，supported_data_type 类型会直接读取。
- * 会挨个读取并写入
- * @tparam Args 所有类型
- * @param sock 目标socket
- * @param args 希望读入的数据
- */
-template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
 void data_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
     auto process = [&](auto &arg)-> void {
         using RawType = std::remove_reference_t<decltype(arg)>;
@@ -268,22 +193,10 @@ void data_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
     (process(args), ...);
 }
 
-inline asio::awaitable<std::uint64_t> read_u64_co(asio::ip::tcp::socket &sock) {
-    std::uint64_t result;
-    co_await asio::async_read(sock, asio::buffer(&result, sizeof(result)), asio::use_awaitable);
-    co_return ntoh(result);
-}
-
 inline std::uint64_t read_u64(asio::ip::tcp::socket &sock) {
     std::uint64_t result;
     asio::read(sock, asio::buffer(&result, sizeof(result)));
     return ntoh(result);
-}
-
-inline asio::awaitable<std::uint32_t> read_u32_co(asio::ip::tcp::socket &sock) {
-    std::uint32_t result;
-    co_await asio::async_read(sock, asio::buffer(&result, sizeof(result)), asio::use_awaitable);
-    co_return ntoh(result);
 }
 
 inline std::uint32_t read_u32(asio::ip::tcp::socket &sock) {
@@ -292,22 +205,10 @@ inline std::uint32_t read_u32(asio::ip::tcp::socket &sock) {
     return ntoh(result);
 }
 
-inline asio::awaitable<std::uint16_t> read_u16_co(asio::ip::tcp::socket &sock) {
-    std::uint16_t result;
-    co_await asio::async_read(sock, asio::buffer(&result, sizeof(result)), asio::use_awaitable);
-    co_return ntoh(result);
-}
-
 inline std::uint16_t read_u16(asio::ip::tcp::socket &sock) {
     std::uint16_t result;
     asio::read(sock, asio::buffer(&result, sizeof(result)));
     return ntoh(result);
-}
-
-inline asio::awaitable<std::uint8_t> read_u8_co(asio::ip::tcp::socket &sock) {
-    std::uint8_t result;
-    co_await asio::async_read(sock, asio::buffer(&result, sizeof(result)), asio::use_awaitable);
-    co_return ntoh(result);
 }
 
 inline std::uint8_t read_u8(asio::ip::tcp::socket &sock) {
@@ -334,45 +235,6 @@ void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, A
 
     std::array<std::uint8_t, total_size> buffer;
     asio::read(sock, asio::buffer(buffer));
-    std::size_t offset = 0;
-
-    auto process = [&](auto &arg) {
-        using RawType = std::remove_reference_t<decltype(arg)>;
-        if constexpr (is_array_data_type<RawType>) {
-            std::memcpy(arg.data(), &buffer[offset], arg.size());
-            offset += arg.size();
-        }
-        else {
-            RawType tmp;
-            std::memcpy(&tmp, &buffer[offset], sizeof(tmp));
-            offset += sizeof(tmp);
-            arg = ntoh(tmp);
-        }
-    };
-
-    (process(args), ...);
-    // padding 数据已读取但被忽略
-}
-
-/**
- * @brief 从socket中读入整数和数组，会一次性全读入然后赋值。
- * 整数类型读取后会调用 ntoh，数组类型直接复制。
- * @tparam padding 尾部 padding 字节数
- * @tparam Args 参数类型
- * @param sock 目标socket
- * @param args 希望读入的数据（整数引用或数组引用）
- */
-template<std::size_t padding = 0, typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         is_array_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-[[nodiscard]] asio::awaitable<void> unsigned_integral_and_array_read_from_socket_co(
-        asio::ip::tcp::socket &sock, Args &... args) {
-    constexpr auto total_size = calculate_total_size_with_array<Args...>() + padding;
-
-    std::array<std::uint8_t, total_size> buffer;
-    co_await asio::async_read(sock, asio::buffer(buffer), asio::use_awaitable);
     std::size_t offset = 0;
 
     auto process = [&](auto &arg) {

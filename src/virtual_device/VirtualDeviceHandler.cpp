@@ -14,7 +14,7 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                         std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors,
                                         usbipdcpp::error_code &ec) {
     // if (se)
-    DeviceHandlerBase::dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet,
+    AbstDeviceHandler::dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet,
                                     std::move(out_data), std::move(iso_packet_descriptors),
                                     ec);
 }
@@ -84,7 +84,8 @@ void VirtualDeviceHandler::handle_control_urb(
         std::error_code &ec) {
     auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
     //标准的请求全在这里处理了
-    if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard)) {
+    // 大多数控制请求是标准请求
+    if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard))[[likely]] {
         auto status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
         switch (recipient) {
             case RequestRecipient::Device: {
@@ -257,12 +258,12 @@ void VirtualDeviceHandler::handle_control_urb(
             case RequestRecipient::Endpoint: {
                 SPDLOG_TRACE("发给端点");
                 auto find_ret = handle_device.find_ep(setup_packet.index);
-                if (find_ret) {
+                if (find_ret)[[likely]] {
                     // auto &target_ep = find_ret->first;
                     auto &intf = find_ret->second;
-                    if (intf) {
+                    if (intf)[[likely]] {
                         auto handler = intf->handler;
-                        if (handler) {
+                        if (handler)[[likely]] {
                             StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
                                 calc_standard_request());
                             if (setup_packet.is_out()) {
@@ -428,7 +429,7 @@ void VirtualDeviceHandler::handle_bulk_transfer(
         std::uint32_t transfer_buffer_length,
         data_type &&out_data,
         std::error_code &ec) {
-    if (interface.handler) {
+    if (interface.handler)[[likely]] {
         interface.handler->handle_bulk_transfer(
                 seqnum,
                 ep,
@@ -454,7 +455,7 @@ void VirtualDeviceHandler::handle_interrupt_transfer(
         data_type &&out_data,
         std::error_code &ec) {
 
-    if (interface.handler) {
+    if (interface.handler)[[likely]] {
         interface.handler->handle_interrupt_transfer(
                 seqnum,
                 ep,
@@ -481,7 +482,7 @@ void VirtualDeviceHandler::handle_isochronous_transfer(
         const std::vector<UsbIpIsoPacketDescriptor> &
         iso_packet_descriptors,
         std::error_code &ec) {
-    if (interface.handler) {
+    if (interface.handler)[[likely]] {
         interface.handler->handle_isochronous_transfer(
                 seqnum,
                 ep,
@@ -681,8 +682,8 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, 
                                                       std::uint32_t *p_status
         ) {
     std::shared_lock lock(data_mutex);
-    if (language_id == 0) {
-        // language ids
+    if (language_id == 0)[[unlikely]] {
+        // language ids - 特殊情况，用于获取支持的语言ID列表
         data_type desc = {
                 4,
                 static_cast<std::uint8_t>(DescriptorType::String),
@@ -694,7 +695,7 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, 
         }
         return desc;
     }
-    else if (auto string_ret = string_pool.get_string(language_id)) {
+    else if (auto string_ret = string_pool.get_string(language_id))[[likely]] {
         auto &string = string_ret.value();
         data_type desc = {
                 static_cast<std::uint8_t>((string.size() + 1) * 2),

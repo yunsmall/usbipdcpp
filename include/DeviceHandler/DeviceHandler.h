@@ -57,7 +57,7 @@ public:
         session = nullptr;
     }
 
-# if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
     /**
      * @brief 检查是否还有传输在进行
      * @return true 表示还有传输未完成
@@ -149,12 +149,5 @@ protected:
     UsbDevice &handle_device;
     Session *session = nullptr;
     mutable std::mutex session_mutex_;
-};
-
-class DeviceHandlerBase : public AbstDeviceHandler {
-public:
-    explicit DeviceHandlerBase(UsbDevice &handle_device) :
-        AbstDeviceHandler(handle_device) {
-    }
 };
 }

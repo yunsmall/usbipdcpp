@@ -5,11 +5,11 @@
 
 namespace usbipdcpp {
 
-class VirtualDeviceHandler : public DeviceHandlerBase {
+class VirtualDeviceHandler : public AbstDeviceHandler {
 public:
     explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                   const Version &usb_version = {2, 0, 0}) :
-        DeviceHandlerBase(handle_device), string_pool(string_pool), usb_version(usb_version) {
+        AbstDeviceHandler(handle_device), string_pool(string_pool), usb_version(usb_version) {
         change_device_ep0_max_size_by_speed();
 
         string_configuration_value = string_pool.new_string(L"Default Configuration");

@@ -38,12 +38,6 @@ struct SetupPacket {
         return result;
     }
 
-    [[nodiscard]] asio::awaitable<void> from_socket_co(asio::ip::tcp::socket &sock) {
-        array_storage setup{};
-        co_await data_read_from_socket_co(sock, setup);
-        *this = parse(setup);
-    }
-
     void from_socket(asio::ip::tcp::socket &sock) {
         array_storage setup{};
         data_read_from_socket(sock, setup);

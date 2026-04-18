@@ -13,7 +13,7 @@ class Session;
 
 
 /**
- * @brief 继承 InterfaceHandlerBase 类，不要继承这个类
+ * @brief 继承 VirtualInterfaceHandler 类，不要继承这个类
  */
 class AbstInterfaceHandler {
 public:
@@ -59,13 +59,6 @@ public:
 
 protected:
     UsbInterface &handle_interface;
-};
-
-class InterfaceHandlerBase : public AbstInterfaceHandler {
-public:
-    explicit InterfaceHandlerBase(UsbInterface &handle_interface) :
-        AbstInterfaceHandler(handle_interface) {
-    }
 };
 
 }

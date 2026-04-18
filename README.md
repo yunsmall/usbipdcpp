@@ -17,9 +17,22 @@ Contributions welcome! 🚀
 USB communication and network I/O are both resource-intensive operations. This project implements a fully asynchronous
 architecture using:
 
-- **C++20 coroutines** for network operations
 - **asio** for asynchronous I/O
 - **libusb**'s async API for USB communications (physical devices)
+
+### Why not C++20 Coroutines
+
+An earlier version used C++20 coroutines, but they were later removed for the following reasons:
+
+1. **Architecture mismatch**: This project uses a "per-connection-one-thread" model, where each client connection has its own thread and `io_context`. The core advantage of coroutines is "single-threaded multi-tasking", which cannot be leveraged in this architecture.
+
+2. **Code complexity**: The coroutine and non-coroutine versions had nearly identical logic, but maintaining two sets of code increased maintenance burden.
+
+3. **Compilation overhead**: Coroutine-related template instantiation significantly increased compilation time.
+
+4. **ESP32 considerations**: For embedded platforms, FreeRTOS native tasks are preferred over coroutines, or a single-threaded event loop architecture should be used instead.
+
+If future requirements demand supporting hundreds or thousands of concurrent connections, refactoring to a single `io_context` + coroutine model could be considered, where coroutine benefits would truly shine.
 
 ### Dependencies
 
@@ -50,7 +63,6 @@ architecture using:
 | `UsbDevice` | USB device descriptor and configuration |
 | `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
 | `AbstDeviceHandler` | Abstract base class for all device handlers. Provides `is_device_removed()`, `on_device_removed()`, and `trigger_session_stop()` for device lifecycle management |
-| `DeviceHandlerBase` | Intermediate base class providing common device handler functionality |
 | `VirtualDeviceHandler` | Base class for implementing virtual USB devices |
 | `LibusbDeviceHandler` | Handler for physical USB devices using libusb |
 | `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
@@ -69,10 +81,9 @@ architecture using:
 
 ```
 AbstDeviceHandler
-└── DeviceHandlerBase
-    ├── LibusbDeviceHandler    (physical devices via libusb)
-    └── VirtualDeviceHandler   (virtual devices)
-        └── SimpleVirtualDeviceHandler
+├── LibusbDeviceHandler    (physical devices via libusb)
+└── VirtualDeviceHandler   (virtual devices)
+    └── SimpleVirtualDeviceHandler
 ```
 
 ### Threading Model
@@ -193,8 +204,7 @@ There are multiple CMake options to control which parts are compiled:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `USBIPDCPP_USE_COROUTINE` | ON | Use C++20 coroutine-based implementation. |
-| `USBIPDCPP_ENABLE_BUSY_WAIT` | ON | Enable busy-wait mode for lower latency (only effective when USBIPDCPP_USE_COROUTINE is OFF) |
+| `USBIPDCPP_ENABLE_BUSY_WAIT` | OFF | Enable busy-wait mode for lower latency |
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |
@@ -234,7 +244,7 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp)
 # Or if want to use libusb server
 
 find_package(usbipdcpp CONFIG REQUIRED COMPONENTS libusb)
-target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::usbipdcpp_libusb)
+target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 ```
 
 ---

@@ -43,10 +43,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
             acceptor.bind(ep);
             acceptor.listen();
             spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
-            asio::co_spawn(
-                    asio_io_context,
-                    do_accept(acceptor),
-                    if_has_value_than_rethrow);
+            do_accept(acceptor);
             asio_io_context.run();
         } catch (const std::exception &e) {
             SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
@@ -192,8 +189,8 @@ void usbipdcpp::Server::remove_session(Session *session) {
 }
 
 
-asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
-    while (true) {
+void usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
+    while (!should_stop) {
         spdlog::info("Waiting for a new connection...");
 
         //先创建一个Session，同时内部创建一个自己的socket
@@ -201,7 +198,7 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
 
         asio::error_code ec;
         //服务器io_context接收到socket后将其转移到session内部专有的io_context
-        co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
+        acceptor.accept(session->socket, ec);
 
         if (!ec) {
             // 设置 socket 选项
@@ -240,11 +237,7 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
 
             //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备
-#ifdef USBIPDCPP_USE_COROUTINE
-            session->run_co();
-#else
             session->run();
-#endif
         }
         else if (ec == asio::error::operation_aborted) {
             SPDLOG_ERROR("Operation aborted：{}", ec.message());

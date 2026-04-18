@@ -7,14 +7,9 @@
 #include <chrono>
 #include <thread>
 #include <condition_variable>
+#include <deque>
 
 #include <asio/ip/tcp.hpp>
-#ifdef USBIPDCPP_USE_COROUTINE
-#include <asio/awaitable.hpp>
-#include <asio/experimental/channel.hpp>
-#else
-#include <deque>
-#endif
 
 #include "utils/LatencyTracker.h"
 #include "protocol.h"
@@ -65,9 +60,6 @@ public:
      * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
      * 请确保每个urb都需要提交返回的包
      * @param unlink
-     * @note 根据USBIPDCPP_USE_COROUTINE宏选择不同实现：
-     *       - 协程版本：通过transfer_channel发送
-     *       - 非协程版本：通过send_data队列发送
      */
     void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);
 
@@ -75,9 +67,6 @@ public:
      * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
      * 请确保每个urb都需要提交返回的包
      * @param submit
-     * @note 根据USBIPDCPP_USE_COROUTINE宏选择不同实现：
-     *       - 协程版本：通过transfer_channel发送
-     *       - 非协程版本：通过send_data队列发送
      */
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
@@ -98,36 +87,14 @@ public:
     LATENCY_TRACKER_MEMBER(latency_tracker);
 
 private:
-#ifdef USBIPDCPP_USE_COROUTINE
-    void submit_ret_submit_co(SessionResponse &&submit);
-    void submit_ret_unlink_co(UsbIpResponse::UsbIpRetUnlink &&unlink);
-#else
     void submit_ret_submit_impl(SessionResponse &&submit);
     void submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink);
-#endif
-
-private:
-    /**
-     * @brief 新建Session时由Server调用（协程版本）
-     */
-    void run_co();
 
     /**
-     * @brief 新建Session时由Server调用（非协程版本）
+     * @brief 新建Session时由Server调用
      */
     void run();
 
-#ifdef USBIPDCPP_USE_COROUTINE
-    asio::awaitable<void> parse_op_co();
-#else
-    void parse_op();
-#endif
-
-#ifdef USBIPDCPP_USE_COROUTINE
-    using transfer_channel_type = asio::experimental::channel<void(asio::error_code, SessionResponse)>;
-    static constexpr std::size_t transfer_channel_size = 100;
-    std::unique_ptr<transfer_channel_type> transfer_channel = nullptr;
-#else
     // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
     // 交换时短暂加锁，大幅减少锁竞争
     std::deque<SessionResponse> write_buffer;
@@ -135,21 +102,17 @@ private:
     mutable std::mutex swap_mutex;
     std::condition_variable data_available_cv;
     std::atomic_bool has_data{false};
-#endif
+
+    void parse_op();
+
     /**
      * @brief 不停地传输urb
      * @param transferring_ec 传输urb途中的ec
      */
-#ifdef USBIPDCPP_USE_COROUTINE
-    asio::awaitable<void> transfer_loop_co(usbipdcpp::error_code &transferring_ec);
-    asio::awaitable<void> receiver_co(usbipdcpp::error_code &receiver_ec);
-    asio::awaitable<void> sender_co(usbipdcpp::error_code &ec);
-#else
     void transfer_loop(usbipdcpp::error_code &transferring_ec);
     void receiver(usbipdcpp::error_code &receiver_ec);
     void sender(usbipdcpp::error_code &ec);
     std::optional<SessionResponse> sender_get_data(usbipdcpp::error_code &ec);
-#endif
 
     std::atomic_bool should_immediately_stop = false;
 
