@@ -8,7 +8,8 @@ using namespace usbipdcpp::test;
 
 TEST(TestUsbIpRetSubmit, CreateOkWithNoIso) {
     data_type data = {0x01, 0x02, 0x03, 0x04};
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, data);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+            0x1234, static_cast<std::uint32_t>(data.size()), data);
 
     EXPECT_EQ(ret.header.seqnum, 0x1234);
     EXPECT_EQ(ret.status, 0);
@@ -17,7 +18,7 @@ TEST(TestUsbIpRetSubmit, CreateOkWithNoIso) {
 }
 
 TEST(TestUsbIpRetSubmit, CreateOkWithoutData) {
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x5678);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x5678, 0);
 
     EXPECT_EQ(ret.header.seqnum, 0x5678);
     EXPECT_EQ(ret.status, 0);
@@ -27,7 +28,8 @@ TEST(TestUsbIpRetSubmit, CreateOkWithoutData) {
 
 TEST(TestUsbIpRetSubmit, CreateEpipeNoIso) {
     data_type data = {0xAA, 0xBB};
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(0xABCD, data);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
+            0xABCD, static_cast<std::uint32_t>(data.size()), data);
 
     EXPECT_EQ(ret.header.seqnum, 0xABCD);
     EXPECT_EQ(ret.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -35,7 +37,7 @@ TEST(TestUsbIpRetSubmit, CreateEpipeNoIso) {
 }
 
 TEST(TestUsbIpRetSubmit, CreateEpipeWithoutData) {
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(0x1111);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(0x1111, 0);
 
     EXPECT_EQ(ret.header.seqnum, 0x1111);
     EXPECT_EQ(ret.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -154,7 +156,8 @@ TEST(TestOpRepDevlist, EmptyDeviceList) {
 TEST(TestUsbIpRetSubmit, LargeData) {
     // 大数据量
     data_type large_data(65536, 0xAB);
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, large_data);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+            0x1234, static_cast<std::uint32_t>(large_data.size()), large_data);
 
     EXPECT_EQ(ret.actual_length, large_data.size());
     EXPECT_EQ(ret.transfer_buffer.size(), large_data.size());
@@ -162,7 +165,7 @@ TEST(TestUsbIpRetSubmit, LargeData) {
 
 TEST(TestUsbIpRetSubmit, ZeroLengthData) {
     data_type empty_data;
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, empty_data);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, 0, empty_data);
 
     EXPECT_EQ(ret.actual_length, 0);
     EXPECT_TRUE(ret.transfer_buffer.empty());
@@ -192,11 +195,11 @@ TEST(TestUsbIpRetSubmit, WithIsoPacketDescriptors) {
 
 TEST(TestUsbIpRetSubmit, VariousErrorStatus) {
     // 测试各种错误状态
-    auto ret_epipe = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(0x1234);
+    auto ret_epipe = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(0x1234, 0);
     EXPECT_EQ(ret_epipe.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 
     // create_ret_submit 直接接受 errno 并存储，内部不转换
-    auto ret_enoent = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(0x1234, ENOENT, 0, 0, {}, {});
+    auto ret_enoent = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(0x1234, ENOENT, 0, 0, 0, {}, {});
     EXPECT_EQ(ret_enoent.status, static_cast<std::uint32_t>(ENOENT));
 }
 

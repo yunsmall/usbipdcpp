@@ -42,7 +42,7 @@ public:
     ~LibusbDeviceHandler() override;
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
-    void handle_unlink_seqnum(std::uint32_t seqnum) override;
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 # if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
     bool has_pending_transfers() const override {
@@ -103,12 +103,15 @@ protected:
 
     struct libusb_callback_args {
         LibusbDeviceHandler *handler = nullptr;
-        std::uint32_t seqnum;
+        std::uint32_t seqnum;                          // CMD_SUBMIT 的 seqnum
         bool is_out;
         data_type transfer_buffer;
     };
 
     static void transfer_callback(libusb_transfer *trx);
+
+    // 清理传输资源（供发送线程调用）
+    static void cleanup_transfer_resources(void* context, void* transfer);
 
     // 对象池：64个
     using CallbackArgsPool = ObjectPool<libusb_callback_args, 256, true>;

@@ -58,8 +58,9 @@ void MockMouseInterfaceHandler::on_new_connection(Session &current_session, erro
                     }
 
                     if (!should_immediately_stop) {
+                        auto ret_size = static_cast<std::uint32_t>(ret.size());
                         session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(ret))
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, ret_size, std::move(ret))
                                 );
                     }
                 }
@@ -100,8 +101,7 @@ void MockMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
             int_req_queue.clear();
         }
         session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
-                );
+        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 
 }
@@ -163,7 +163,7 @@ void MockMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uin
                                                                         const SetupPacket &setup_packet,
                                                                         const data_type &out_data,
                                                                         std::error_code &ec) {
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 data_type MockMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,

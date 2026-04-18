@@ -124,10 +124,10 @@ void usbipdcpp::UsbDevice::on_disconnection(error_code &ec) {
     }
 }
 
-void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t seqnum) {
+void usbipdcpp::UsbDevice::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     SPDLOG_TRACE("设备处理unlink，将其转发到对应handler中");
     if (handler) {
-        handler->handle_unlink_seqnum(seqnum);
+        handler->handle_unlink_seqnum(unlink_seqnum, cmd_seqnum);
     }
     else {
         SPDLOG_ERROR("设备没注册handler");

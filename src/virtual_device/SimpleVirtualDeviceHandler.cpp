@@ -10,7 +10,7 @@ void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_con
         const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
     SPDLOG_ERROR("Unimplement non standard control transfer request to simple device");
     session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum)
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0)
             );
 }
 
@@ -57,6 +57,6 @@ void usbipdcpp::SimpleVirtualDeviceHandler::set_descriptor(std::uint16_t configu
     SPDLOG_WARN("Unimplement set_descriptor to simple device");
 }
 
-void SimpleVirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t seqnum) {
-    SPDLOG_WARN("Unimplemented handle_unlink_seqnum, seqnum: {}", seqnum);
+void SimpleVirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    SPDLOG_WARN("Unimplemented handle_unlink_seqnum, unlink_seqnum: {}, cmd_seqnum: {}", unlink_seqnum, cmd_seqnum);
 }

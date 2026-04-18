@@ -149,8 +149,8 @@ TEST(SmallVector, At) {
     EXPECT_EQ(vec.at(0), 10);
     EXPECT_EQ(vec.at(1), 20);
 
-    EXPECT_THROW(vec.at(2), std::out_of_range);
-    EXPECT_THROW(vec.at(100), std::out_of_range);
+    EXPECT_THROW((void)vec.at(2), std::out_of_range);
+    EXPECT_THROW((void)vec.at(100), std::out_of_range);
 }
 
 TEST(SmallVector, FrontBack) {

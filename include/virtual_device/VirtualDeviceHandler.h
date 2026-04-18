@@ -35,6 +35,8 @@ public:
      */
     void on_disconnection(error_code &ec) override;
 
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+
 protected:
     void change_device_ep0_max_size_by_speed();
 

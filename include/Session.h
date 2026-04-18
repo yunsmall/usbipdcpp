@@ -3,7 +3,6 @@
 #include <atomic>
 #include <unordered_map>
 #include <shared_mutex>
-#include <tuple>
 
 #include <chrono>
 #include <thread>
@@ -18,12 +17,37 @@
 #endif
 
 #include "utils/LatencyTracker.h"
-#include "utils/ConcurrentUnlinkMap.h"
 #include "protocol.h"
 #include "type.h"
 
 namespace usbipdcpp {
 class Server;
+
+/**
+ * @brief Session 内部使用的响应包装类
+ *
+ * 包含协议响应对象和可选的资源清理回调。
+ * 清理函数在发送完成后由 sender 线程调用，减少回调中的工作量。
+ */
+struct SessionResponse {
+    UsbIpResponse::RetVariant response;
+
+    // 清理资源（可选，零堆分配）
+    using CleanupFunc = void(*)(void* context, void* transfer);
+    void* cleanup_context = nullptr;
+    void* cleanup_transfer = nullptr;
+    CleanupFunc cleanup_func = nullptr;
+
+    SessionResponse() = default;
+    explicit SessionResponse(UsbIpResponse::RetVariant &&resp) : response(std::move(resp)) {}
+    SessionResponse(UsbIpResponse::RetVariant &&resp, void* ctx, void* trx, CleanupFunc func)
+        : response(std::move(resp)), cleanup_context(ctx), cleanup_transfer(trx), cleanup_func(func) {}
+
+    // 便捷构造函数
+    static SessionResponse with_cleanup(UsbIpResponse::RetVariant &&resp, void* ctx, void* trx, CleanupFunc func) {
+        return SessionResponse(std::move(resp), ctx, trx, func);
+    }
+};
 
 /**
  * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
@@ -38,32 +62,7 @@ public:
     Session(Session &&) = delete;
 
     /**
-     * @brief 线程安全，用来查询某一序列是否被unlink了。
-     * @param seqnum
-     * @return true表示被unlink了，第二个值为发过来的unlink包的seqnum而不是将要取消的包的seqnum
-     */
-    std::tuple<bool, std::uint32_t> get_unlink_seqnum(std::uint32_t seqnum);
-
-    /**
-     * @brief 线程安全，删除某序列的标记
-     * @param seqnum 被unlink的包的seqnum
-     */
-    void remove_seqnum_unlink(std::uint32_t seqnum);
-
-    /**
-     * @brief 推荐使用这个函数。该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
-     * 请确保每个urb都需要提交返回的包
-     * @param unlink
-     * @param seqnum 被unlink的包的seqnum
-     * @note 根据USBIPDCPP_USE_COROUTINE宏选择不同实现：
-     *       - 协程版本：通过transfer_channel发送
-     *       - 非协程版本：通过send_data队列发送
-     */
-    void submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
-                                                         std::uint32_t seqnum);
-
-    /**
-     * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。调用完别忘记调用remove_seqnum_unlink。
+     * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
      * 请确保每个urb都需要提交返回的包
      * @param unlink
      * @note 根据USBIPDCPP_USE_COROUTINE宏选择不同实现：
@@ -83,6 +82,12 @@ public:
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
     /**
+     * @brief 带资源清理的提交函数，供 DeviceHandler 使用
+     * @param response Session 响应包装对象
+     */
+    void submit_session_response(SessionResponse &&response);
+
+    /**
      * @brief 置停止标志位，并且关闭socket。只能由Server和AbstDeviceHandler::trigger_session_stop调用。
      * 内部不会关闭线程，只会通知线程关闭
      */
@@ -94,10 +99,10 @@ public:
 
 private:
 #ifdef USBIPDCPP_USE_COROUTINE
-    void submit_ret_submit_co(UsbIpResponse::UsbIpRetSubmit &&submit);
+    void submit_ret_submit_co(SessionResponse &&submit);
     void submit_ret_unlink_co(UsbIpResponse::UsbIpRetUnlink &&unlink);
 #else
-    void submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit);
+    void submit_ret_submit_impl(SessionResponse &&submit);
     void submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink);
 #endif
 
@@ -119,14 +124,14 @@ private:
 #endif
 
 #ifdef USBIPDCPP_USE_COROUTINE
-    using transfer_channel_type = asio::experimental::channel<void(asio::error_code, UsbIpResponse::RetVariant)>;
+    using transfer_channel_type = asio::experimental::channel<void(asio::error_code, SessionResponse)>;
     static constexpr std::size_t transfer_channel_size = 100;
     std::unique_ptr<transfer_channel_type> transfer_channel = nullptr;
 #else
     // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
     // 交换时短暂加锁，大幅减少锁竞争
-    std::deque<UsbIpResponse::RetVariant> write_buffer;
-    std::deque<UsbIpResponse::RetVariant> read_buffer;
+    std::deque<SessionResponse> write_buffer;
+    std::deque<SessionResponse> read_buffer;
     mutable std::mutex swap_mutex;
     std::condition_variable data_available_cv;
     std::atomic_bool has_data{false};
@@ -143,7 +148,7 @@ private:
     void transfer_loop(usbipdcpp::error_code &transferring_ec);
     void receiver(usbipdcpp::error_code &receiver_ec);
     void sender(usbipdcpp::error_code &ec);
-    std::optional<UsbIpResponse::RetVariant> sender_get_data(usbipdcpp::error_code &ec);
+    std::optional<SessionResponse> sender_get_data(usbipdcpp::error_code &ec);
 #endif
 
     std::atomic_bool should_immediately_stop = false;
@@ -157,9 +162,6 @@ private:
     std::shared_ptr<UsbDevice> current_import_device = nullptr;
     //上面两个变量的值的锁
     std::shared_mutex current_import_device_data_mutex;
-
-    //从原本的ret_submit的seqnum映射到ret_unlink的seqnum（分段锁）
-    ConcurrentUnlinkMap<> unlink_map;
 
     Server &server;
     asio::io_context session_io_context{};

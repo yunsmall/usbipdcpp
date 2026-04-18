@@ -31,12 +31,14 @@ void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, 
     if (ep.is_in()) {
         // 返回一个简单的数据
         usbipdcpp::data_type data = {0x00};
+        auto data_size = static_cast<std::uint32_t>(data.size());
         session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, std::move(data)));
+                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data_size, std::move(data)));
     }
     else {
+        // OUT 传输：actual_length 为设备实际接收的字节数
         session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum));
+                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
     }
 }
 
@@ -102,7 +104,7 @@ void SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb(
         const usbipdcpp::data_type &out_data, std::error_code &ec) {
     SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb");
     session->submit_ret_submit(
-            usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(seqnum, {}));
+            usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 usbipdcpp::data_type SimpleHidInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,

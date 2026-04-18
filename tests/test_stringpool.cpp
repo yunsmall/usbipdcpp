@@ -126,7 +126,7 @@ TEST(TestStringPool, RemoveInvalidIndex) {
     // 删除无效索引不应崩溃
     pool.remove_string(0);
     pool.remove_string(255);
-    pool.remove_string(1000);
+    pool.remove_string(static_cast<std::uint8_t>(232));  // 使用有效范围内的值
 }
 
 TEST(TestStringPool, ReuseAfterRemove) {

@@ -36,6 +36,6 @@ protected:
     void set_descriptor(std::uint16_t configuration_value) override;
 
 public:
-    void handle_unlink_seqnum(std::uint32_t seqnum) override;
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 };
 }

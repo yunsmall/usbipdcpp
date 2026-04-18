@@ -32,6 +32,8 @@ public:
         std::uint32_t seqnum;
         TransferPtr transfer;
         std::uint8_t endpoint;
+        bool is_unlinked = false;           // 是否被 unlink
+        std::uint32_t unlink_cmd_seqnum;    // CMD_UNLINK 的 seqnum
     };
 
     ConcurrentTransferTracker() = default;
@@ -96,6 +98,68 @@ public:
             return true;
         }
         return false;
+    }
+
+    /**
+     * @brief 在锁保护下对传输执行操作
+     * @param seqnum 传输序号
+     * @param func 回调函数，参数为 TransferInfo*（找到时）或 nullptr（未找到时）
+     */
+    template<typename Func>
+    void with_transfer(std::uint32_t seqnum, Func&& func) {
+        size_t segment_idx = get_segment_index(seqnum);
+        std::unique_lock lock(segment_locks_[segment_idx]);
+        auto it = segments_[segment_idx].find(seqnum);
+        if (it != segments_[segment_idx].end()) {
+            func(&it->second);
+        } else {
+            func(static_cast<TransferInfo*>(nullptr));
+        }
+    }
+
+    /**
+     * @brief 在锁保护下检查并移除传输（原子操作）
+     * @param seqnum 传输序号
+     * @param func 回调函数，参数为 TransferInfo*（找到时）或 nullptr（未找到时）
+     *             返回值决定是否移除：true = 移除，false = 保留
+     * @return true 表示找到并处理了（可能移除也可能保留）
+     */
+    template<typename Func>
+    bool check_and_remove(std::uint32_t seqnum, Func&& func) {
+        size_t segment_idx = get_segment_index(seqnum);
+        std::unique_lock lock(segment_locks_[segment_idx]);
+        auto it = segments_[segment_idx].find(seqnum);
+        if (it != segments_[segment_idx].end()) {
+            bool should_remove = func(&it->second);
+            if (should_remove) {
+                segments_[segment_idx].erase(it);
+                concurrent_transfer_count_.fetch_sub(1, std::memory_order_release);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * @brief 在锁保护下检查并移除传输（原子操作，如果找不到也会调用回调）
+     * @param seqnum 传输序号
+     * @param func 回调函数，参数为 TransferInfo*（找到时）或 nullptr（未找到时）
+     *             返回值决定是否移除：true = 移除，false = 保留
+     */
+    template<typename Func>
+    void check_and_remove_always(std::uint32_t seqnum, Func&& func) {
+        size_t segment_idx = get_segment_index(seqnum);
+        std::unique_lock lock(segment_locks_[segment_idx]);
+        auto it = segments_[segment_idx].find(seqnum);
+        if (it != segments_[segment_idx].end()) {
+            bool should_remove = func(&it->second);
+            if (should_remove) {
+                segments_[segment_idx].erase(it);
+                concurrent_transfer_count_.fetch_sub(1, std::memory_order_release);
+            }
+        } else {
+            func(static_cast<TransferInfo*>(nullptr));
+        }
     }
 
     /**

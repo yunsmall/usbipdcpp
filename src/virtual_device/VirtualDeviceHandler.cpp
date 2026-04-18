@@ -82,348 +82,341 @@ void VirtualDeviceHandler::handle_control_urb(
         const SetupPacket &setup_packet,
         data_type &&out_data,
         std::error_code &ec) {
-    auto unlink_ret = session->get_unlink_seqnum(seqnum);
-    if (!std::get<0>(unlink_ret)) {
-        auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
-        //标准的请求全在这里处理了
-        if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard)) {
-            auto status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
-            switch (recipient) {
-                case RequestRecipient::Device: {
-                    SPDLOG_TRACE("发给设备");
-                    auto std_request = static_cast<StandardRequest>(setup_packet.
-                        calc_standard_request());
+    auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
+    //标准的请求全在这里处理了
+    if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard)) {
+        auto status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+        switch (recipient) {
+            case RequestRecipient::Device: {
+                SPDLOG_TRACE("发给设备");
+                auto std_request = static_cast<StandardRequest>(setup_packet.
+                    calc_standard_request());
 
+                if (setup_packet.is_out()) {
+                    switch (std_request) {
+                        case StandardRequest::ClearFeature: {
+                            SPDLOG_TRACE("设备ClearFeature");
+                            request_clear_feature(setup_packet.value, &status);
+                            break;
+                        }
+                        case StandardRequest::SetAddress: {
+                            SPDLOG_TRACE("设备SetAddress");
+                            request_set_address(setup_packet.value, &status);
+                            break;
+                        }
+                        case StandardRequest::SetConfiguration: {
+                            SPDLOG_TRACE("设备SetConfiguration");
+                            request_set_configuration(setup_packet.value, &status);
+                            break;
+                        }
+                        case StandardRequest::SetDescriptor: {
+                            SPDLOG_TRACE("设备SetDescriptor");
+                            request_set_descriptor(setup_packet.value >> 8, setup_packet.value & 0x00FF,
+                                                   setup_packet.index,
+                                                   setup_packet.length, out_data, &status);
+                            break;
+                        }
+                        case StandardRequest::SetFeature: {
+                            SPDLOG_TRACE("设备SetFeature");
+                            request_set_feature(setup_packet.value, &status);
+                            break;
+                        }
+                        default: {
+                            SPDLOG_WARN("Device Unhandled StandardRequest {}",
+                                        static_cast<int>(std_request));
+                            status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+                        }
+                    }
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                                    seqnum,
+                                    status,
+                                    0
+                                    )
+                            );
+                }
+                else {
+                    data_type result{};
+                    switch (std_request) {
+                        case StandardRequest::GetConfiguration: {
+                            SPDLOG_TRACE("设备GetConfiguration");
+                            auto ret = request_get_configuration(&status);
+                            vector_append_to_net(result, ret);
+                            break;
+                        }
+                        case StandardRequest::GetDescriptor: {
+                            SPDLOG_TRACE("设备GetDescriptor");
+                            result = request_get_descriptor(setup_packet.value >> 8, setup_packet.value,
+                                                            setup_packet.length, &status);
+                            if (setup_packet.length < result.size()) {
+                                result.resize(setup_packet.length);
+                            }
+                            break;
+                        }
+                        case StandardRequest::GetStatus: {
+                            SPDLOG_TRACE("设备GetStatus");
+                            auto gotten_status = request_get_status(&status);
+                            vector_append_to_net(result, gotten_status);
+                            break;
+                        }
+                        default: {
+                            SPDLOG_WARN("Device Unhandled StandardRequest {}", static_cast<int>(std_request));
+                        }
+                    }
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                    seqnum, status, static_cast<std::uint32_t>(result.size()), result)
+                            );
+
+                }
+                break;
+            }
+            case RequestRecipient::Interface: {
+                SPDLOG_TRACE("发给接口");
+                auto intf_idx = setup_packet.index;
+                auto handler = handle_device.interfaces[intf_idx].handler;
+                if (handler) {
+                    StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
+                        calc_standard_request());
                     if (setup_packet.is_out()) {
                         switch (std_request) {
                             case StandardRequest::ClearFeature: {
-                                SPDLOG_TRACE("设备ClearFeature");
-                                request_clear_feature(setup_packet.value, &status);
-                                break;
-                            }
-                            case StandardRequest::SetAddress: {
-                                SPDLOG_TRACE("设备SetAddress");
-                                request_set_address(setup_packet.value, &status);
-                                break;
-                            }
-                            case StandardRequest::SetConfiguration: {
-                                SPDLOG_TRACE("设备SetConfiguration");
-                                request_set_configuration(setup_packet.value, &status);
-                                break;
-                            }
-                            case StandardRequest::SetDescriptor: {
-                                SPDLOG_TRACE("设备SetDescriptor");
-                                request_set_descriptor(setup_packet.value >> 8, setup_packet.value & 0x00FF,
-                                                       setup_packet.index,
-                                                       setup_packet.length, out_data, &status);
+                                SPDLOG_TRACE("接口request_clear_feature");
+                                handler->request_clear_feature(setup_packet.value, &status);
                                 break;
                             }
                             case StandardRequest::SetFeature: {
-                                SPDLOG_TRACE("设备SetFeature");
-                                request_set_feature(setup_packet.value, &status);
+                                SPDLOG_TRACE("接口request_set_feature");
+                                handler->request_set_feature(setup_packet.value, &status);
+                                break;
+                            }
+                            case StandardRequest::SetInterface: {
+                                SPDLOG_TRACE("接口request_set_interface");
+                                handler->request_set_interface(setup_packet.value, &status);
                                 break;
                             }
                             default: {
-                                SPDLOG_WARN("Device Unhandled StandardRequest {}",
+                                SPDLOG_WARN("Interface Unhandled StandardRequest {}",
                                             static_cast<int>(std_request));
-                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                             }
                         }
                         session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                         seqnum,
-                                        status
+                                        status,
+                                        0 // 控制传输 OUT 命令，无数据阶段
                                         )
                                 );
                     }
                     else {
                         data_type result{};
                         switch (std_request) {
-                            case StandardRequest::GetConfiguration: {
-                                SPDLOG_TRACE("设备GetConfiguration");
-                                auto ret = request_get_configuration(&status);
+                            case StandardRequest::GetInterface: {
+                                SPDLOG_TRACE("接口request_get_interface");
+                                auto ret = this->request_get_interface(setup_packet.index, &status);
+                                vector_append_to_net(result, ret);
+                                break;
+                            }
+                            case StandardRequest::GetStatus: {
+                                SPDLOG_TRACE("接口request_get_status");
+                                auto ret = handler->request_get_status(&status);
                                 vector_append_to_net(result, ret);
                                 break;
                             }
                             case StandardRequest::GetDescriptor: {
-                                SPDLOG_TRACE("设备GetDescriptor");
-                                result = request_get_descriptor(setup_packet.value >> 8, setup_packet.value,
-                                                                setup_packet.length, &status);
+                                SPDLOG_TRACE("接口request_get_descriptor");
+                                result = handler->request_get_descriptor(
+                                        setup_packet.value >> 8, setup_packet.value & 0x00FF,
+                                        setup_packet.length, &status);
                                 if (setup_packet.length < result.size()) {
                                     result.resize(setup_packet.length);
                                 }
                                 break;
                             }
-                            case StandardRequest::GetStatus: {
-                                SPDLOG_TRACE("设备GetStatus");
-                                auto gotten_status = request_get_status(&status);
-                                vector_append_to_net(result, gotten_status);
-                                break;
-                            }
                             default: {
-                                SPDLOG_WARN("Device Unhandled StandardRequest {}", static_cast<int>(std_request));
+                                SPDLOG_WARN("Interface Unhandled StandardRequest {}",
+                                            static_cast<int>(std_request));
                             }
                         }
                         session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                        seqnum, status, result)
+                                        seqnum, status, static_cast<std::uint32_t>(result.size()), result)
                                 );
+                    }
 
-                    }
-                    break;
                 }
-                case RequestRecipient::Interface: {
-                    SPDLOG_TRACE("发给接口");
-                    auto intf_idx = setup_packet.index;
-                    auto handler = handle_device.interfaces[intf_idx].handler;
-                    if (handler) {
-                        StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
-                            calc_standard_request());
-                        if (setup_packet.is_out()) {
-                            switch (std_request) {
-                                case StandardRequest::ClearFeature: {
-                                    SPDLOG_TRACE("接口request_clear_feature");
-                                    handler->request_clear_feature(setup_packet.value, &status);
-                                    break;
-                                }
-                                case StandardRequest::SetFeature: {
-                                    SPDLOG_TRACE("接口request_set_feature");
-                                    handler->request_set_feature(setup_packet.value, &status);
-                                    break;
-                                }
-                                case StandardRequest::SetInterface: {
-                                    SPDLOG_TRACE("接口request_set_interface");
-                                    handler->request_set_interface(setup_packet.value, &status);
-                                    break;
-                                }
-                                default: {
-                                    SPDLOG_WARN("Interface Unhandled StandardRequest {}",
-                                                static_cast<int>(std_request));
-                                }
-                            }
-                            session->submit_ret_submit(
-                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                            seqnum,
-                                            status
-                                            )
-                                    );
-                        }
-                        else {
-                            data_type result{};
-                            switch (std_request) {
-                                case StandardRequest::GetInterface: {
-                                    SPDLOG_TRACE("接口request_get_interface");
-                                    auto ret = this->request_get_interface(setup_packet.index, &status);
-                                    vector_append_to_net(result, ret);
-                                    break;
-                                }
-                                case StandardRequest::GetStatus: {
-                                    SPDLOG_TRACE("接口request_get_status");
-                                    auto ret = handler->request_get_status(&status);
-                                    vector_append_to_net(result, ret);
-                                    break;
-                                }
-                                case StandardRequest::GetDescriptor: {
-                                    SPDLOG_TRACE("接口request_get_descriptor");
-                                    result = handler->request_get_descriptor(
-                                            setup_packet.value >> 8, setup_packet.value & 0x00FF,
-                                            setup_packet.length, &status);
-                                    if (setup_packet.length < result.size()) {
-                                        result.resize(setup_packet.length);
-                                    }
-                                    break;;
-                                }
-                                default: {
-                                    SPDLOG_WARN("Interface Unhandled StandardRequest {}",
-                                                static_cast<int>(std_request));
-                                }
-                            }
-                            session->submit_ret_submit(
-                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                            seqnum, status, result)
-                                    );
-                        }
-
-                    }
-                    else {
-                        SPDLOG_ERROR("接口未注册handler，无法处理发去接口的信息");
-                        ec = make_error_code(ErrorType::INVALID_ARG);
-                        session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                        return;
-                    }
-                    break;
+                else {
+                    SPDLOG_ERROR("接口未注册handler，无法处理发去接口的信息");
+                    ec = make_error_code(ErrorType::INVALID_ARG);
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
                 }
-                case RequestRecipient::Endpoint: {
-                    SPDLOG_TRACE("发给端点");
-                    auto find_ret = handle_device.find_ep(setup_packet.index);
-                    if (find_ret) {
-                        // auto &target_ep = find_ret->first;
-                        auto &intf = find_ret->second;
-                        if (intf) {
-                            auto handler = intf->handler;
-                            if (handler) {
-                                StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
-                                    calc_standard_request());
-                                if (setup_packet.is_out()) {
-                                    switch (std_request) {
-                                        case StandardRequest::ClearFeature: {
-                                            SPDLOG_TRACE("端点request_endpoint_clear_feature");
-                                            handler->request_endpoint_clear_feature(
-                                                    setup_packet.value, setup_packet.index, &status);
-                                            break;
-                                        }
-                                        case StandardRequest::SetFeature: {
-                                            SPDLOG_TRACE("端点request_endpoint_set_feature");
-                                            handler->request_endpoint_set_feature(
-                                                    setup_packet.value, setup_packet.index, &status);
-                                            break;
-                                        }
-                                        default: {
-                                            SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
-                                                        setup_packet.index,
-                                                        static_cast<int>(std_request));
-                                        }
+                break;
+            }
+            case RequestRecipient::Endpoint: {
+                SPDLOG_TRACE("发给端点");
+                auto find_ret = handle_device.find_ep(setup_packet.index);
+                if (find_ret) {
+                    // auto &target_ep = find_ret->first;
+                    auto &intf = find_ret->second;
+                    if (intf) {
+                        auto handler = intf->handler;
+                        if (handler) {
+                            StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
+                                calc_standard_request());
+                            if (setup_packet.is_out()) {
+                                switch (std_request) {
+                                    case StandardRequest::ClearFeature: {
+                                        SPDLOG_TRACE("端点request_endpoint_clear_feature");
+                                        handler->request_endpoint_clear_feature(
+                                                setup_packet.value, setup_packet.index, &status);
+                                        break;
                                     }
-                                    session->submit_ret_submit(
-                                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                                    seqnum,
-                                                    status
-                                                    )
-                                            );
-                                }
-                                else {
-                                    data_type result{};
-                                    switch (std_request) {
-                                        case StandardRequest::GetStatus: {
-                                            SPDLOG_TRACE("端点request_endpoint_get_status");
-                                            auto gotten_status = handler->request_endpoint_get_status(
-                                                    setup_packet.index, &status);
-                                            vector_append_to_net(result, gotten_status);
-                                            break;
-                                        }
-                                        case StandardRequest::SynchFrame: {
-                                            SPDLOG_TRACE("端点request_endpoint_sync_frame");
-                                            handler->request_endpoint_sync_frame(setup_packet.index, &status);
-                                            break;
-                                        }
-                                        default: {
-                                            SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
-                                                        setup_packet.index,
-                                                        static_cast<int>(std_request));
-                                        }
+                                    case StandardRequest::SetFeature: {
+                                        SPDLOG_TRACE("端点request_endpoint_set_feature");
+                                        handler->request_endpoint_set_feature(
+                                                setup_packet.value, setup_packet.index, &status);
+                                        break;
                                     }
-                                    session->submit_ret_submit(
-                                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                                    seqnum,
-                                                    status,
-                                                    result)
-                                            );
+                                    default: {
+                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
+                                                    setup_packet.index,
+                                                    static_cast<int>(std_request));
+                                    }
                                 }
+                                session->submit_ret_submit(
+                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                                                seqnum,
+                                                status,
+                                                0 // 控制传输 OUT 命令，无数据阶段
+                                                )
+                                        );
                             }
                             else {
-                                SPDLOG_ERROR("端点{:04x}所在的接口没注册对应handler", setup_packet.value);
-                                ec = make_error_code(ErrorType::INVALID_ARG);
+                                data_type result{};
+                                switch (std_request) {
+                                    case StandardRequest::GetStatus: {
+                                        SPDLOG_TRACE("端点request_endpoint_get_status");
+                                        auto gotten_status = handler->request_endpoint_get_status(
+                                                setup_packet.index, &status);
+                                        vector_append_to_net(result, gotten_status);
+                                        break;
+                                    }
+                                    case StandardRequest::SynchFrame: {
+                                        SPDLOG_TRACE("端点request_endpoint_sync_frame");
+                                        handler->request_endpoint_sync_frame(setup_packet.index, &status);
+                                        break;
+                                    }
+                                    default: {
+                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
+                                                    setup_packet.index,
+                                                    static_cast<int>(std_request));
+                                    }
+                                }
                                 session->submit_ret_submit(
-                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                                return;
+                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                                seqnum,
+                                                status,
+                                                static_cast<std::uint32_t>(result.size()),
+                                                result)
+                                        );
                             }
                         }
                         else {
-                            SPDLOG_ERROR("端点{:04x}没有对应的接口", setup_packet.value);
+                            SPDLOG_ERROR("端点{:04x}所在的接口没注册对应handler", setup_packet.value);
                             ec = make_error_code(ErrorType::INVALID_ARG);
                             session->submit_ret_submit(
-                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
+                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                             return;
                         }
                     }
-                    break;
-                }
-                case RequestRecipient::Other: {
-                    SPDLOG_TRACE("发给其他");
-                    SPDLOG_WARN("未实现去其他地方的包");
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                    break;
-                }
-                default: {
-                    SPDLOG_WARN("未知去往目标");
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                }
-            }
-        }
-        else {
-            switch (recipient) {
-                case RequestRecipient::Device: {
-                    SPDLOG_TRACE("发给设备的非标准控制传输包");
-                    handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
-                                                                 transfer_buffer_length,
-                                                                 setup_packet,
-                                                                 out_data, ec);
-                    break;
-                }
-                case RequestRecipient::Interface: {
-                    SPDLOG_TRACE("发给{}号接口的非标准控制传输包", setup_packet.index);
-                    auto intf_idx = setup_packet.index;
-                    auto handler = handle_device.interfaces[intf_idx].handler;
-                    if (handler) {
-                        handler->handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
-                                                                              transfer_buffer_length,
-                                                                              setup_packet,
-                                                                              out_data, ec);
-                    }
                     else {
-                        SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
+                        SPDLOG_ERROR("端点{:04x}没有对应的接口", setup_packet.value);
                         ec = make_error_code(ErrorType::INVALID_ARG);
                         session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                         return;
                     }
-                    break;
                 }
-                case RequestRecipient::Endpoint: {
-                    SPDLOG_TRACE("发给{}号接口的{:04x}号地址端口的非标准控制传输包", setup_packet.index, ep.address);
-                    auto intf_idx = setup_packet.index;
-                    auto handler = handle_device.interfaces[intf_idx].handler;
-                    if (handler) {
-                        handler->handle_non_standard_request_type_control_urb_to_endpoint(
-                                seqnum, ep, transfer_flags,
-                                transfer_buffer_length,
-                                setup_packet,
-                                out_data, ec);
-                    }
-                    else {
-                        SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
-                        ec = make_error_code(ErrorType::INVALID_ARG);
-                        session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                        return;
-                    }
-                    break;
-                }
-                case RequestRecipient::Other: {
-                    SPDLOG_WARN("未实现去其他地方的包");
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                    break;
-                }
-                default: {
-                    SPDLOG_WARN("未知去往目标");
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-                }
+                break;
             }
-
+            case RequestRecipient::Other: {
+                SPDLOG_TRACE("发给其他");
+                SPDLOG_WARN("未实现去其他地方的包");
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                break;
+            }
+            default: {
+                SPDLOG_WARN("未知去往目标");
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            }
         }
     }
     else {
-        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
-                        std::get<1>(unlink_ret)
-                        ),
-                seqnum
-                );
+        switch (recipient) {
+            case RequestRecipient::Device: {
+                SPDLOG_TRACE("发给设备的非标准控制传输包");
+                handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
+                                                             transfer_buffer_length,
+                                                             setup_packet,
+                                                             out_data, ec);
+                break;
+            }
+            case RequestRecipient::Interface: {
+                SPDLOG_TRACE("发给{}号接口的非标准控制传输包", setup_packet.index);
+                auto intf_idx = setup_packet.index;
+                auto handler = handle_device.interfaces[intf_idx].handler;
+                if (handler) {
+                    handler->handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
+                                                                          transfer_buffer_length,
+                                                                          setup_packet,
+                                                                          out_data, ec);
+                }
+                else {
+                    SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
+                    ec = make_error_code(ErrorType::INVALID_ARG);
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
+                }
+                break;
+            }
+            case RequestRecipient::Endpoint: {
+                SPDLOG_TRACE("发给{}号接口的{:04x}号地址端口的非标准控制传输包", setup_packet.index, ep.address);
+                auto intf_idx = setup_packet.index;
+                auto handler = handle_device.interfaces[intf_idx].handler;
+                if (handler) {
+                    handler->handle_non_standard_request_type_control_urb_to_endpoint(
+                            seqnum, ep, transfer_flags,
+                            transfer_buffer_length,
+                            setup_packet,
+                            out_data, ec);
+                }
+                else {
+                    SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
+                    ec = make_error_code(ErrorType::INVALID_ARG);
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
+                }
+                break;
+            }
+            case RequestRecipient::Other: {
+                SPDLOG_WARN("未实现去其他地方的包");
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                break;
+            }
+            default: {
+                SPDLOG_WARN("未知去往目标");
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            }
+        }
+
     }
 }
 
@@ -435,31 +428,20 @@ void VirtualDeviceHandler::handle_bulk_transfer(
         std::uint32_t transfer_buffer_length,
         data_type &&out_data,
         std::error_code &ec) {
-    auto unlink_ret = session->get_unlink_seqnum(seqnum);
-    if (!std::get<0>(unlink_ret)) {
-        if (interface.handler) {
-            interface.handler->handle_bulk_transfer(
-                    seqnum,
-                    ep,
-                    transfer_flags,
-                    transfer_buffer_length,
-                    std::move(out_data),
-                    ec
-                    );
-        }
-        else {
-            SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-        }
+    if (interface.handler) {
+        interface.handler->handle_bulk_transfer(
+                seqnum,
+                ep,
+                transfer_flags,
+                transfer_buffer_length,
+                std::move(out_data),
+                ec
+                );
     }
     else {
-        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
-                        std::get<1>(unlink_ret)
-                        ),
-                seqnum
-                );
+        SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+        session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -472,31 +454,20 @@ void VirtualDeviceHandler::handle_interrupt_transfer(
         data_type &&out_data,
         std::error_code &ec) {
 
-    auto unlink_ret = session->get_unlink_seqnum(seqnum);
-    if (!std::get<0>(unlink_ret)) {
-        if (interface.handler) {
-            interface.handler->handle_interrupt_transfer(
-                    seqnum,
-                    ep,
-                    transfer_flags,
-                    transfer_buffer_length,
-                    std::move(out_data),
-                    ec
-                    );
-        }
-        else {
-            SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-        }
+    if (interface.handler) {
+        interface.handler->handle_interrupt_transfer(
+                seqnum,
+                ep,
+                transfer_flags,
+                transfer_buffer_length,
+                std::move(out_data),
+                ec
+                );
     }
     else {
-        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
-                        std::get<1>(unlink_ret)
-                        ),
-                seqnum
-                );
+        SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+        session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -510,32 +481,29 @@ void VirtualDeviceHandler::handle_isochronous_transfer(
         const std::vector<UsbIpIsoPacketDescriptor> &
         iso_packet_descriptors,
         std::error_code &ec) {
-    auto unlink_ret = session->get_unlink_seqnum(seqnum);
-    if (!std::get<0>(unlink_ret)) {
-        if (interface.handler) {
-            interface.handler->handle_isochronous_transfer(
-                    seqnum,
-                    ep,
-                    transfer_flags,
-                    transfer_buffer_length,
-                    std::move(req),
-                    iso_packet_descriptors,
-                    ec
-                    );
-        }
-        else {
-            SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
-            session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum));
-        }
+    if (interface.handler) {
+        interface.handler->handle_isochronous_transfer(
+                seqnum,
+                ep,
+                transfer_flags,
+                transfer_buffer_length,
+                std::move(req),
+                iso_packet_descriptors,
+                ec
+                );
     }
     else {
-        session->submit_ret_unlink_and_then_remove_seqnum_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(
-                        std::get<1>(unlink_ret)
-                        ),
-                seqnum
-                );
+        SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
+        session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    }
+}
+
+void VirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    for (auto &interface: handle_device.interfaces) {
+        if (interface.handler) {
+            interface.handler->handle_unlink_seqnum(unlink_seqnum, cmd_seqnum);
+        }
     }
 }
 

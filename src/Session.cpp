@@ -23,28 +23,20 @@ usbipdcpp::Session::Session(Server &server) :
     socket(session_io_context) {
 }
 
-std::tuple<bool, std::uint32_t> usbipdcpp::Session::get_unlink_seqnum(std::uint32_t seqnum) {
-    return unlink_map.get(seqnum);
-}
-
-void usbipdcpp::Session::remove_seqnum_unlink(std::uint32_t seqnum) {
-    unlink_map.erase(seqnum);
-}
-
 #ifdef USBIPDCPP_USE_COROUTINE
-void usbipdcpp::Session::submit_ret_submit_co(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    SPDLOG_DEBUG("收到提交的submit包{}", submit.header.seqnum);
+void usbipdcpp::Session::submit_ret_submit_co(SessionResponse &&submit) {
+    SPDLOG_DEBUG("收到提交的submit包{}", std::get<UsbIpResponse::UsbIpRetSubmit>(submit.response).header.seqnum);
     error_code send_ec;
-    transfer_channel->async_send(send_ec, UsbIpResponse::RetVariant{std::move(submit)}, asio::detached);
+    transfer_channel->async_send(send_ec, std::move(submit), asio::detached);
 }
 
 void usbipdcpp::Session::submit_ret_unlink_co(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     SPDLOG_DEBUG("收到提交的unlink包 {}", unlink.header.seqnum);
     error_code send_ec;
-    transfer_channel->async_send(send_ec, UsbIpResponse::RetVariant{std::move(unlink)}, asio::detached);
+    transfer_channel->async_send(send_ec, SessionResponse{std::move(unlink)}, asio::detached);
 }
 #else
-void usbipdcpp::Session::submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit) {
+void usbipdcpp::Session::submit_ret_submit_impl(SessionResponse &&submit) {
     // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
     std::lock_guard lock(swap_mutex);
     write_buffer.emplace_back(std::move(submit));
@@ -57,23 +49,13 @@ void usbipdcpp::Session::submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&
 void usbipdcpp::Session::submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
     std::lock_guard lock(swap_mutex);
-    write_buffer.emplace_back(std::move(unlink));
+    write_buffer.emplace_back(SessionResponse{std::move(unlink)});
     has_data.store(true, std::memory_order_release);
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     data_available_cv.notify_one();
 # endif
 }
 #endif
-
-void usbipdcpp::Session::submit_ret_unlink_and_then_remove_seqnum_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink,
-                                                                         std::uint32_t seqnum) {
-#ifdef USBIPDCPP_USE_COROUTINE
-    submit_ret_unlink_co(std::move(unlink));
-#else
-    submit_ret_unlink_impl(std::move(unlink));
-#endif
-    unlink_map.erase(seqnum);
-}
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
 #ifdef USBIPDCPP_USE_COROUTINE
@@ -84,10 +66,14 @@ void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlin
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
+    submit_session_response(SessionResponse{std::move(submit)});
+}
+
+void usbipdcpp::Session::submit_session_response(SessionResponse &&response) {
 #ifdef USBIPDCPP_USE_COROUTINE
-    submit_ret_submit_co(std::move(submit));
+    submit_ret_submit_co(std::move(response));
 #else
-    submit_ret_submit_impl(std::move(submit));
+    submit_ret_submit_impl(std::move(response));
 #endif
 }
 
@@ -502,11 +488,9 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                 else {
                     SPDLOG_WARN("找不到端点{}", real_ep);
                     UsbIpResponse::UsbIpRetSubmit ret_submit;
-                    ret_submit = UsbIpResponse::UsbIpRetSubmit::usbip_ret_submit_fail_with_status(
-                            cmd2.header.seqnum,EPIPE);
-                    auto to_be_sent = ret_submit.to_bytes();
-                    SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
-                    co_await asio::async_write(socket, asio::buffer(to_be_sent), asio::use_awaitable);
+                    ret_submit = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_for_out(
+                            cmd2.header.seqnum);
+                    ret_submit.to_socket_co(socket, ec);
                     SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
                 }
             }
@@ -514,8 +498,7 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
                 UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
                 SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                unlink_map.insert(cmd2.unlink_seqnum, cmd2.header.seqnum);
-                current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
+                current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
@@ -545,7 +528,8 @@ asio::awaitable<void> usbipdcpp::Session::receiver_co(usbipdcpp::error_code &rec
         SPDLOG_INFO("设备已物理拔出，不再移回可用列表");
         std::lock_guard lock(server.get_devices_mutex());
         server.get_using_devices().erase(*current_import_device_id);
-    } else {
+    }
+    else {
         server.try_moving_device_to_available(*current_import_device_id);
     }
     current_import_device_id.reset();
@@ -568,11 +552,9 @@ asio::awaitable<void> usbipdcpp::Session::sender_co(usbipdcpp::error_code &ec) {
                 LATENCY_TRACK(latency_tracker, cmd.header.seqnum, "准备调用to_socket_co");
                 co_await cmd.to_socket_co(socket, sending_ec);
                 LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket_co调用结束");
-                // end_processing_urb();
             }
             else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
                 co_await cmd.to_socket_co(socket, sending_ec);
-                // end_processing_urb();
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
@@ -582,7 +564,13 @@ asio::awaitable<void> usbipdcpp::Session::sender_co(usbipdcpp::error_code &ec) {
                 //确保处理了所有可能类型
                 static_assert(!std::is_same_v<T, T>);
             }
-        }, send_data);
+        }, send_data.response);
+
+        // 清理资源（在发送线程中执行，减少回调工作量）
+        if (send_data.cleanup_func) {
+            send_data.cleanup_func(send_data.cleanup_context, send_data.cleanup_transfer);
+        }
+
         if (sending_ec) {
             // 直接不处理发送过程中的错误
             // ec = sending_ec;
@@ -629,7 +617,7 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     cmd_transferring = false;
 }
 
-std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
+std::optional<usbipdcpp::SessionResponse> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
     // 如果 read_buffer 为空，尝试交换
     if (read_buffer.empty())[[likely]] {
         std::unique_lock lock(swap_mutex);
@@ -645,7 +633,7 @@ std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_g
         }
     }
     if (!read_buffer.empty())[[likely]] {
-        usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(read_buffer.front());
+        usbipdcpp::SessionResponse ret_v = std::move(read_buffer.front());
         read_buffer.pop_front();
         return ret_v;
     }
@@ -721,12 +709,10 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                 }
                 else {
                     SPDLOG_WARN("找不到端点{}", real_ep);
-                    UsbIpResponse::UsbIpRetSubmit ret_submit;
-                    ret_submit = UsbIpResponse::UsbIpRetSubmit::usbip_ret_submit_fail_with_status(
-                            cmd2.header.seqnum, EPIPE);
-                    auto to_be_sent = ret_submit.to_bytes();
-                    SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
-                    asio::write(socket, asio::buffer(to_be_sent), ec);
+                    UsbIpResponse::UsbIpRetSubmit ret_submit =
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
+                                    cmd2.header.seqnum, 0);
+                    ret_submit.to_socket(socket, ec);
                     SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
                 }
             }
@@ -734,8 +720,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                 UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
                 SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                unlink_map.insert(cmd2.unlink_seqnum, cmd2.header.seqnum);
-                current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum);
+                current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
@@ -766,7 +751,8 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
         SPDLOG_INFO("设备已物理拔出，不再移回可用列表");
         std::lock_guard lock(server.get_devices_mutex());
         server.get_using_devices().erase(*current_import_device_id);
-    } else {
+    }
+    else {
         server.try_moving_device_to_available(*current_import_device_id);
     }
     current_import_device_id.reset();
@@ -784,7 +770,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         }
 
         // 批量获取所有待发送数据（双缓冲交换）
-        SmallVector<UsbIpResponse::RetVariant, 32> batch;
+        SmallVector<SessionResponse, 32> batch;
         {
             std::lock_guard lock(swap_mutex);
             if (!write_buffer.empty()) {
@@ -799,7 +785,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         }
 
         // 发送所有数据，每发送一个就处理一次事件以捕获新完成的 transfer
-        for (auto& send_data : batch) {
+        for (auto &send_data: batch) {
             error_code sending_ec;
             std::visit([&](auto &&cmd) {
                 using T = std::remove_cvref_t<decltype(cmd)>;
@@ -818,7 +804,13 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
                 else {
                     static_assert(!std::is_same_v<T, T>);
                 }
-            }, send_data);
+            }, send_data.response);
+
+            // 清理资源（在发送线程中执行，减少回调工作量）
+            if (send_data.cleanup_func) {
+                send_data.cleanup_func(send_data.cleanup_context, send_data.cleanup_transfer);
+            }
+
             if (sending_ec) {
                 break;
             }
@@ -848,7 +840,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         if (!send_data_opt.has_value())[[unlikely]] {
             break;
         }
-        auto send_data = send_data_opt.value();
+        auto send_data = std::move(send_data_opt.value());
 
         SPDLOG_TRACE("channel收到消息");
         error_code sending_ec;
@@ -869,7 +861,13 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             else {
                 static_assert(!std::is_same_v<T, T>);
             }
-        }, send_data);
+        }, send_data.response);
+
+        // 清理资源（在发送线程中执行，减少回调工作量）
+        if (send_data.cleanup_func) {
+            send_data.cleanup_func(send_data.cleanup_context, send_data.cleanup_transfer);
+        }
+
         if (sending_ec) {
             // 直接不处理发送过程中的错误
             // ec = sending_ec;

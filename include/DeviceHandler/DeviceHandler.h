@@ -86,10 +86,11 @@ public:
     void trigger_session_stop();
 
     /**
-     * @brief 处理unlink。传入想要取消的序号。默认是空实现，就当全部发得太快了来不及取消了
-     * @param seqnum 包序号
+     * @brief 处理unlink。传入想要取消的序号和UNLINK命令的序号。
+     * @param unlink_seqnum 想要取消的包序号
+     * @param cmd_seqnum CMD_UNLINK 命令的序号（用于构造 RET_UNLINK）
      */
-    virtual void handle_unlink_seqnum(std::uint32_t seqnum) =0;
+    virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) = 0;
 
 protected:
     // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了

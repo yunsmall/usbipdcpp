@@ -101,9 +101,10 @@ struct UsbDevice {
     void on_disconnection(error_code &ec);
     /**
      * @brief 当收到cmd_unlink时会调用这个函数，负责unlink某个seqnum
-     * @param seqnum
+     * @param unlink_seqnum 想要取消的包序号
+     * @param cmd_seqnum CMD_UNLINK 命令的序号
      */
-    void handle_unlink_seqnum(std::uint32_t seqnum);
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
 
 # if !defined(USBIPDCPP_USE_COROUTINE) && defined(USBIPDCPP_ENABLE_BUSY_WAIT)
     /**

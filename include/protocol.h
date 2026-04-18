@@ -347,29 +347,69 @@ namespace UsbIpResponse {
 
         bool operator==(const UsbIpRetSubmit &other) const = default;
 
-        static UsbIpRetSubmit usbip_ret_submit_fail_with_status(std::uint32_t seqnum, std::uint32_t status);
+        /**
+         * @brief 创建 RET_SUBMIT 响应
+         * @param actual_length IN传输：设备返回数据的长度；OUT传输：主机发来的数据被设备成功读入的长度
+         * @param transfer_buffer IN传输：设备返回的数据；OUT传输：必须为空（不发送数据回客户端）
+         */
         static UsbIpRetSubmit create_ret_submit(
                 std::uint32_t seqnum,
                 std::uint32_t status,
+                std::uint32_t actual_length,
                 std::uint32_t start_frame,
                 std::uint32_t number_of_packets,
                 std::vector<std::uint8_t> &&transfer_buffer,
                 std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptor
                 );
-        static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum);
-        static UsbIpRetSubmit create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status);
+        /**
+         * @brief 创建成功的 RET_SUBMIT 响应（无数据）
+         * @param actual_length IN传输：设备返回数据的长度（无数据时为0）；OUT传输：主机发来的数据被设备成功读入的长度
+         */
+        static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum, std::uint32_t actual_length);
+
+        /**
+         * @brief 创建带状态的 RET_SUBMIT 响应（无数据）
+         * @param actual_length IN传输：设备返回数据的长度（无数据时为0）；OUT传输：主机发来的数据被设备成功读入的长度
+         */
+        static UsbIpRetSubmit create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status,
+                                                                        std::uint32_t actual_length);
+        /**
+         * @brief 创建带状态的 RET_SUBMIT 响应（无等时包）
+         * @param actual_length IN传输：设备返回数据的长度；OUT传输：主机发来的数据被设备成功读入的长度
+         * @param transfer_buffer IN传输：设备返回的数据；OUT传输：必须为空（不发送数据回客户端）
+         */
         static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
+                                                                       std::uint32_t actual_length,
                                                                        const data_type &transfer_buffer);
         static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
+                                                                       std::uint32_t actual_length,
                                                                        data_type &&transfer_buffer);
+        /**
+         * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应
+         * @param actual_length IN传输：设备返回数据的长度；OUT传输：主机发来的数据被设备成功读入的长度
+         * @param transfer_buffer IN传输：设备返回的数据；OUT传输：必须为空（不发送数据回客户端）
+         */
         static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum,
+                                                             std::uint32_t actual_length,
                                                              const data_type &transfer_buffer);
         static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum,
+                                                             std::uint32_t actual_length,
                                                              data_type &&transfer_buffer);
-        static UsbIpRetSubmit create_ret_submit_epipe_without_data(std::uint32_t seqnum);
+        /**
+         * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应（无数据）
+         * @param actual_length IN传输：设备返回数据的长度（无数据时为0）；OUT传输：主机发来的数据被设备成功读入的长度
+         */
+        static UsbIpRetSubmit create_ret_submit_epipe_without_data(std::uint32_t seqnum, std::uint32_t actual_length);
+        /**
+         * @brief 创建成功的 RET_SUBMIT 响应（无等时包）
+         * @param actual_length IN传输：设备返回数据的长度；OUT传输：主机发来的数据被设备成功读入的长度
+         * @param transfer_buffer IN传输：设备返回的数据；OUT传输：必须为空（不发送数据回客户端）
+         */
         static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum,
+                                                               std::uint32_t actual_length,
                                                                const data_type &transfer_buffer);
         static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum,
+                                                               std::uint32_t actual_length,
                                                                data_type &&transfer_buffer);
     };
 
