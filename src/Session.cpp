@@ -127,17 +127,19 @@ void usbipdcpp::Session::parse_op() {
                     current_import_device_id = wanted_busid;
                     //将当前使用的设备指向这个设备
                     current_import_device = using_device;
+                    current_handler = using_device->handler;
                     spdlog::info("成功缓存正在使用的设备");
 
                     // 在发送 OpRepImport 之前尝试打开设备
                     usbipdcpp::error_code open_ec;
-                    current_import_device->on_new_connection(*this, open_ec);
+                    current_handler->on_new_connection(*this, open_ec);
                     if (open_ec) {
                         SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
                         open_device_failed = true;
                         // 将设备移回可用列表
                         server.try_moving_device_to_available(wanted_busid);
                         current_import_device.reset();
+                        current_handler.reset();
                         current_import_device_id.reset();
                     }
                 }
@@ -306,12 +308,12 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                     usbipdcpp::error_code ec_during_handling_urb;
                     // start_processing_urb();
                     LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备handle_urb");
-                    current_import_device->handle_urb(
+                    current_handler->dispatch_urb(
                             cmd2,
                             current_seqnum,
                             ep,
                             intf,
-                            cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data),
+                            cmd2.transfer_flags, cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data),
                             std::move(cmd2.iso_packet_descriptor),
                             ec_during_handling_urb
                             );
@@ -337,7 +339,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                 UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
                 SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                current_import_device->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
+                current_handler->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
             }
             else if constexpr (std::is_same_v<std::monostate, T>) {
                 SPDLOG_ERROR("收到未知包");
@@ -351,7 +353,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
         }, command);
     }
     //通知设备断连，告诉设备禁止再发消息
-    current_import_device->on_disconnection(receiver_ec);
+    current_handler->on_disconnection(receiver_ec);
     //然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
     should_immediately_stop = true;
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
@@ -363,7 +365,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
      * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
      * 因此先标记为可用再清除这两个变量的状态
     */
-    if (current_import_device->is_device_removed()) {
+    if (current_handler->is_device_removed()) {
         // 设备已物理拔出，直接从 using_devices 移除
         SPDLOG_INFO("设备已物理拔出，不再移回可用列表");
         std::lock_guard lock(server.get_devices_mutex());
@@ -444,7 +446,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
     }
 
     // 退出后继续处理事件，直到所有传输完成
-    while (current_import_device && current_import_device->has_pending_transfers() && server.busy_wait_callback) {
+    while (current_handler->has_pending_transfers() && server.busy_wait_callback) {
         server.busy_wait_callback();
     }
 # else

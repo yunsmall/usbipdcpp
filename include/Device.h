@@ -47,8 +47,20 @@ struct UsbDevice {
     UsbEndpoint ep0_in;
     UsbEndpoint ep0_out;
 
+    /**
+     * @brief 设备处理器
+     * 必须在 Server::add_device 调用之前设置，推荐使用 with_handler 函数。
+     * 如果调用时 handler 为空，属于未定义行为。
+     */
     std::shared_ptr<AbstDeviceHandler> handler;
 
+    /**
+     * @brief 创建并设置 handler
+     * 推荐使用此函数设置 handler。
+     * @tparam T handler 类型
+     * @tparam args 传递给 handler 构造函数的参数
+     * @return 创建的 handler
+     */
     template<typename T, typename... Args>
     std::shared_ptr<T> with_handler(Args &&... args) {
         auto new_handler = std::make_shared<T>(*this, std::forward<Args>(args)...);
@@ -81,43 +93,6 @@ struct UsbDevice {
     void from_socket(asio::ip::tcp::socket &sock);
 
     std::optional<std::pair<UsbEndpoint, std::optional<UsbInterface>>> find_ep(std::uint8_t ep);
-
-    void handle_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
-                    std::uint32_t seqnum, const UsbEndpoint &ep,
-                    std::optional<UsbInterface> &interface, std::uint32_t transfer_buffer_length,
-                    const SetupPacket &setup_packet, std::vector<uint8_t> &&out_data,
-                    std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors, std::error_code &ec);
-    /**
-     * @brief 新的客户端连接时会调这个函数，可以阻塞
-     * @param session
-     * @param ec 发生的ec
-     */
-    void on_new_connection(Session &session, error_code &ec);
-    /**
-     * @brief 当发生错误等情况需要完全终止传输时会调用这个函数。被调用后禁止再提交消息和使用Session对象
-     * 可以阻塞，处理所有需要处理的事务
-     */
-    void on_disconnection(error_code &ec);
-    /**
-     * @brief 当收到cmd_unlink时会调用这个函数，负责unlink某个seqnum
-     * @param unlink_seqnum 想要取消的包序号
-     * @param cmd_seqnum CMD_UNLINK 命令的序号
-     */
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
-
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    /**
-     * @brief 检查是否还有传输在进行
-     * @return true 表示还有传输未完成
-     */
-    bool has_pending_transfers() const;
-# endif
-
-    /**
-     * @brief 检查设备是否已被移除
-     * @return true 表示设备已物理拔出
-     */
-    bool is_device_removed() const;
 
     bool operator==(const UsbDevice &other) const {
         return path == other.path &&

@@ -17,6 +17,7 @@
 
 namespace usbipdcpp {
 class Server;
+class AbstDeviceHandler;
 
 /**
  * @brief Session 内部使用的响应包装类
@@ -123,7 +124,9 @@ private:
     std::optional<std::string> current_import_device_id = std::nullopt;
     //传输过程中不允许为空，传输过程中禁止任何写入。不允许在非网络线程读，除非加锁
     std::shared_ptr<UsbDevice> current_import_device = nullptr;
-    //上面两个变量的值的锁
+    //直接持有 handler，避免通过 device 中转
+    std::shared_ptr<AbstDeviceHandler> current_handler = nullptr;
+    //上面变量的值的锁
     std::shared_mutex current_import_device_data_mutex;
 
     Server &server;
