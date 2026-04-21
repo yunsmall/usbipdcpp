@@ -5,8 +5,8 @@
 #include "constant.h"
 #include "SetupPacket.h"
 #include "Endpoint.h"
-#include "interface.h"
-#include "device.h"
+#include "Interface.h"
+#include "Device.h"
 
 // 核心功能
 #include "Server.h"

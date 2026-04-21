@@ -184,7 +184,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
                     intf_desc.endpoint[ep_i].bmAttributes,
                     intf_desc.endpoint[ep_i].wMaxPacketSize,
                     intf_desc.endpoint[ep_i].bInterval
-            );
+                    );
         }
         interfaces.emplace_back(
                 UsbInterface{
@@ -193,7 +193,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
                         intf_desc.bInterfaceProtocol,
                         std::move(endpoints)
                 }
-        );
+                );
     }
 
     // 创建 UsbDevice 和 LibusbDeviceHandler
@@ -285,7 +285,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
                     intf_desc.endpoint[ep_i].bmAttributes,
                     intf_desc.endpoint[ep_i].wMaxPacketSize,
                     intf_desc.endpoint[ep_i].bInterval
-            );
+                    );
         }
         interfaces.emplace_back(
                 UsbInterface{
@@ -294,7 +294,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
                         intf_desc.bInterfaceProtocol,
                         std::move(endpoints)
                 }
-        );
+                );
     }
 
     // 保存设备信息
@@ -510,23 +510,24 @@ void LibusbServer::start_hotplug_monitor() {
     }
 
     int ret = libusb_hotplug_register_callback(
-        nullptr,
-        static_cast<libusb_hotplug_event>(
-            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
-        ),
-        LIBUSB_HOTPLUG_NO_FLAGS,
-        LIBUSB_HOTPLUG_MATCH_ANY,
-        LIBUSB_HOTPLUG_MATCH_ANY,
-        LIBUSB_HOTPLUG_MATCH_ANY,
-        hotplug_callback,
-        this,
-        &hotplug_handle_
-    );
+            nullptr,
+            static_cast<libusb_hotplug_event>(
+                LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
+            ),
+            LIBUSB_HOTPLUG_NO_FLAGS,
+            LIBUSB_HOTPLUG_MATCH_ANY,
+            LIBUSB_HOTPLUG_MATCH_ANY,
+            LIBUSB_HOTPLUG_MATCH_ANY,
+            hotplug_callback,
+            this,
+            &hotplug_handle_
+            );
 
     if (ret == 0) {
         hotplug_enabled_ = true;
         SPDLOG_INFO("热插拔监控已启动");
-    } else {
+    }
+    else {
         SPDLOG_ERROR("注册热插拔回调失败: {}", libusb_strerror(ret));
     }
 }
@@ -540,16 +541,16 @@ void LibusbServer::stop_hotplug_monitor() {
 }
 
 int LIBUSB_CALL LibusbServer::hotplug_callback(
-    libusb_context *ctx,
-    libusb_device *device,
-    libusb_hotplug_event event,
-    void *user_data)
-{
-    auto *server = static_cast<LibusbServer*>(user_data);
+        libusb_context *ctx,
+        libusb_device *device,
+        libusb_hotplug_event event,
+        void *user_data) {
+    auto *server = static_cast<LibusbServer *>(user_data);
 
     if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
         server->handle_device_arrived(device);
-    } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
+    }
+    else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
         auto busid = get_device_busid(device, server->busid_include_address_);
         server->handle_device_left(busid);
     }
@@ -563,7 +564,7 @@ void LibusbServer::handle_device_arrived(libusb_device *device) {
     // 检查是否已绑定
     {
         std::shared_lock lock(server.get_devices_mutex());
-        for (const auto &dev : server.get_available_devices()) {
+        for (const auto &dev: server.get_available_devices()) {
             if (dev->busid == busid) {
                 SPDLOG_DEBUG("设备 {} 已在已绑定列表中", busid);
                 return;
@@ -640,10 +641,12 @@ void LibusbServer::start(asio::ip::tcp::endpoint &ep) {
         try {
             SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
             while (!should_exit_libusb_event_thread) {
-                //usbipd-libusb说这个函数有性能问题，起初我还不信，延时分析了一下发现果真如此
-                // auto ret = libusb_handle_events(nullptr);
-                struct timeval tv = {0, 0};
-                auto ret = libusb_handle_events_timeout(nullptr, &tv);//所以这里直接死循环？
+                // usbipd-libusb说libusb_handle_events有性能问题，看了一下会慢100多微秒，没啥大关系吧？？
+                auto ret = libusb_handle_events(nullptr);
+
+                // usbipd-libusb采用下面的形式，这是个忙等待，会占用100%的cpu，大部分使用情况不支持这么写
+                // struct timeval tv = {0, 0};
+                // auto ret = libusb_handle_events_timeout(nullptr, &tv);
 
                 if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread)[[unlikely]] {
                     SPDLOG_INFO("libusb事件循环收到中断信号正常退出");

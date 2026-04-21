@@ -8,7 +8,7 @@
 #include "SetupPacket.h"
 #include "constant.h"
 #include "network.h"
-#include "interface.h"
+#include "Interface.h"
 #include "type.h"
 
 

@@ -5,6 +5,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <poll.h>
+#include <csignal>
+#include <atomic>
 
 #include "Session.h"
 #include "Server.h"
@@ -16,7 +18,17 @@
 using namespace usbipdcpp;
 using namespace usbipdcpp::umouse;
 
+static std::atomic_bool should_exit{false};
+
+void signal_handler(int sig) {
+    should_exit = true;
+}
+
 int main() {
+    // 设置信号处理
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
     auto mouses = findAllMouses();
 
     if (mouses.size() > 0) {
@@ -120,7 +132,7 @@ int main() {
         fds[0].fd = opened_mouse.fd;
         fds[0].events = POLLIN;
 
-        while (true) {
+        while (!should_exit) {
             // 等待事件（1000毫秒超时）
             int ret = poll(fds, 1, 1000);
 
@@ -262,9 +274,13 @@ int main() {
             }
         }
 
+        SPDLOG_INFO("正在退出...");
+
         closeMouse(opened_mouse);
 
         server.stop();
+
+        SPDLOG_INFO("已退出");
 
     }
     else {

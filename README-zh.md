@@ -179,14 +179,11 @@ AbstDeviceHandler
 4. multi_devices
 
    包含10个虚拟HID设备的示例。展示了如何使用工厂模式创建多个设备。
-5. empty_server
-
-   一个只有一个设备的usbip服务器。设备无任何功能，不会对数据做相应。
-6. libusb_server
+5. libusb_server
 
    转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
    通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
-7. termux_libusb_server
+6. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。

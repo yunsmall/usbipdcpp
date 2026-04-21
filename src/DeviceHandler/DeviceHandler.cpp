@@ -2,7 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "interface.h"
+#include "Interface.h"
 #include "constant.h"
 #include "Device.h"
 #include "Session.h"

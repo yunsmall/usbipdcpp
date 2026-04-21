@@ -181,15 +181,12 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 4. multi_devices
 
    A demonstration with 10 virtual HID devices. Shows how to create multiple devices using a factory pattern.
-5. empty_server
-
-   A usbip server that has only one device which has no functions and will not response to any input data.
-6. libusb_server
+5. libusb_server
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
-7. termux_libusb_server
+6. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
