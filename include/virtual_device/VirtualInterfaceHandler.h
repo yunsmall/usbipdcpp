@@ -4,6 +4,8 @@
 
 namespace usbipdcpp {
 
+class AbstDeviceHandler;
+
 class VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
     explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
@@ -12,32 +14,39 @@ public:
         string_interface = string_pool.new_string(L"Usbipdcpp Virtual Interface");
     }
 
+    /**
+     * @brief 设置所属的 DeviceHandler
+     * @param handler DeviceHandler 指针
+     */
+    void set_device_handler(AbstDeviceHandler* handler) {
+        device_handler = handler;
+    }
+
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              data_type &&out_data,
+                              TransferHandle transfer,
                               error_code &ec) override;
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   data_type &&out_data,
-                                   std::error_code &ec) override;
+                                   TransferHandle transfer,
+                                   error_code &ec) override;
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                      std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                     data_type &&out_data,
-                                     const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
-                                     std::error_code &ec) override;
+                                     TransferHandle transfer,
+                                     int num_iso_packets, error_code &ec) override;
 
     virtual void handle_non_standard_request_type_control_urb(std::uint32_t seqnum,
                                                               const UsbEndpoint &ep,
                                                               std::uint32_t transfer_flags,
                                                               std::uint32_t transfer_buffer_length,
                                                               const SetupPacket &setup,
-                                                              const data_type &out_data, std::error_code &ec);
+                                                              TransferHandle transfer, std::error_code &ec);
     virtual void handle_non_standard_request_type_control_urb_to_endpoint(std::uint32_t seqnum,
                                                                           const UsbEndpoint &ep,
                                                                           std::uint32_t transfer_flags,
                                                                           std::uint32_t transfer_buffer_length,
                                                                           const SetupPacket &setup,
-                                                                          const data_type &out_data,
+                                                                          TransferHandle transfer,
                                                                           std::error_code &ec);
     /**
      * @brief 新的客户端连接时会调这个函数
@@ -106,6 +115,7 @@ public:
 
 protected:
     Session *session = nullptr;
+    AbstDeviceHandler* device_handler = nullptr;
 
     std::uint8_t string_interface;
 

@@ -22,49 +22,50 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
                 break;
             //清空所有发来的中断传输
             while (true) {
-                std::uint32_t seqnum{};
-                bool has_seqnum = false;
+                IntRequest req{};
+                bool has_req = false;
                 {
                     std::lock_guard lock(int_req_queue_mutex);
                     auto at_begin = int_req_queue.begin();
                     if (at_begin != int_req_queue.end()) {
-                        seqnum = *at_begin;
+                        req = std::move(*at_begin);
                         int_req_queue.pop_front();
-                        has_seqnum = true;
+                        has_req = true;
                     }
                 }
 
                 //如果有值，则发送
-                if (has_seqnum) {
-                    data_type ret(4, 0);
+                if (has_req) {
+                    auto* trx = GenericTransfer::from_handle(req.transfer.get());
+                    trx->data.resize(4);
                     {
                         if (current_state.left_pressed) {
-                            ret[0] |= 0b00000001;
+                            trx->data[0] |= 0b00000001;
                         }
                         if (current_state.right_pressed) {
-                            ret[0] |= 0b00000010;
+                            trx->data[0] |= 0b00000010;
                         }
                         if (current_state.middle_pressed) {
-                            ret[0] |= 0b00000100;
+                            trx->data[0] |= 0b00000100;
                         }
                         if (current_state.side_pressed) {
-                            ret[0] |= 0b00001000;
+                            trx->data[0] |= 0b00001000;
                         }
                         if (current_state.extra_pressed) {
-                            ret[0] |= 0b00010000;
+                            trx->data[0] |= 0b00010000;
                         }
-                        ret[1] = current_state.move_horizontal;
-                        ret[2] = current_state.move_vertical;
-                        ret[3] = current_state.wheel_vertical;
+                        trx->data[1] = current_state.move_horizontal;
+                        trx->data[2] = current_state.move_vertical;
+                        trx->data[3] = current_state.wheel_vertical;
                     }
+                    trx->actual_length = 4;
 
                     if (!should_immediately_stop) {
-                        auto ret_size = static_cast<std::uint32_t>(ret.size());
                         session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                        seqnum, ret_size, std::move(ret))
-                                );
+                                        req.seqnum, 4, std::move(req.transfer)));
                     }
+                    // TransferHandle 析构时自动释放（should_immediately_stop 为 true 时）
                 }
                 //没值了就继续等待
                 else {
@@ -82,6 +83,11 @@ void LibevdevMouseInterfaceHandler::on_disconnection(error_code &ec) {
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+
+    // TransferHandle 析构时自动释放
+    std::lock_guard lock(int_req_queue_mutex);
+    int_req_queue.clear();
+
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
@@ -99,18 +105,15 @@ void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqn
                                                               const UsbEndpoint &ep,
                                                               std::uint32_t transfer_flags,
                                                               std::uint32_t transfer_buffer_length,
-                                                              data_type &&out_data,
+                                                              TransferHandle transfer,
                                                               std::error_code &ec) {
     if (ep.is_in()) {
         //往队列里添加东西
         std::lock_guard lock(int_req_queue_mutex);
-        int_req_queue.emplace_back(seqnum);
+        int_req_queue.emplace_back(IntRequest{seqnum, std::move(transfer)});
     }
     else {
-        {
-            std::lock_guard lock(int_req_queue_mutex);
-            int_req_queue.clear();
-        }
+        // OUT 传输没有数据阶段，transfer 析构时自动释放
         session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0)
                 );
@@ -176,8 +179,9 @@ void LibevdevMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std:
                                                                             std::uint32_t transfer_flags,
                                                                             std::uint32_t transfer_buffer_length,
                                                                             const SetupPacket &setup_packet,
-                                                                            const data_type &out_data,
+                                                                            TransferHandle transfer,
                                                                             std::error_code &ec) {
+    // transfer 析构时自动释放
     session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 

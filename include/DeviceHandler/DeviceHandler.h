@@ -7,6 +7,8 @@
 #include <mutex>
 #include <spdlog/spdlog.h>
 
+#include <asio.hpp>
+
 #include "Device.h"
 #include "type.h"
 #include "protocol.h"
@@ -33,9 +35,7 @@ public:
             const UsbEndpoint &ep,
             std::optional<UsbInterface> &interface,
             std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-            data_type &&out_data, std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptors,
-            usbipdcpp::error_code
-            &ec
+            usbipdcpp::error_code &ec
             );
 
     /**
@@ -92,54 +92,112 @@ public:
      */
     virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) = 0;
 
+    // ========== transfer_handle 操作接口 ==========
+
+    /**
+     * @brief 创建 transfer_handle
+     * @param buffer_length 数据缓冲区长度
+     * @param num_iso_packets 等时包数量
+     * @param header
+     * @param setup_packet
+     * @return 创建的 transfer_handle
+     */
+    virtual void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic& header, const SetupPacket& setup_packet);
+
+    /**
+     * @brief 获取 buffer 头指针
+     * @param transfer_handle
+     * @return buffer 头指针
+     */
+    virtual void* get_transfer_buffer(void* transfer_handle);
+
+    /**
+     * @brief 获取实际传输长度
+     * @param transfer_handle
+     * @return 实际长度
+     */
+    virtual std::size_t get_actual_length(void* transfer_handle);
+
+    /**
+     * @brief 获取读取数据时的偏移量
+     * 用于 RET_SUBMIT 响应，控制传输需要跳过 setup 包（8字节）
+     * @param transfer_handle
+     * @return 偏移量
+     */
+    virtual std::size_t get_read_data_offset(void* transfer_handle);
+
+    /**
+     * @brief 获取写入数据时的偏移量
+     * 用于 alloc_transfer_handle 时计算 buffer 位置，控制传输需要跳过 setup 包
+     * @param header 用于判断是否为控制传输
+     * @return 偏移量
+     */
+    virtual std::size_t get_write_data_offset(const UsbIpHeaderBasic& header);
+
+    /**
+     * @brief 获取等时包描述符
+     * @param transfer_handle
+     * @param index 索引
+     * @return 描述符
+     */
+    virtual UsbIpIsoPacketDescriptor get_iso_descriptor(void* transfer_handle, int index);
+
+    /**
+     * @brief 设置等时包描述符
+     * @param transfer_handle
+     * @param index 索引
+     * @param desc 描述符
+     */
+    virtual void set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc);
+
+    /**
+     * @brief 释放 transfer_handle
+     * @param transfer_handle
+     */
+    virtual void free_transfer_handle(void* transfer_handle);
+
 protected:
-    // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
-    // out时由主机传给设备数据，故transfer_data里面有实际的数据。
-    // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
-    // 因此函数内部请使用transfer_buffer_length获取buffer长度
+    // transfer 中包含数据，通过 get_transfer_buffer 获取
     // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
+    // 注意：transfer 是移动语义，函数接管后必须要么传给 create_ret_submit_*，要么让它析构自动释放
     virtual void handle_control_urb(
             std::uint32_t seqnum,
             const UsbEndpoint &ep,
             std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-            data_type &&out_data, std::error_code &ec
+            TransferHandle transfer,
+            std::error_code &ec
             ) =0;
-    // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
-    // out时由主机传给设备数据，故transfer_data里面有实际的数据。
-    // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
-    // 因此函数内部请使用transfer_buffer_length获取buffer长度
+    // transfer 中包含数据，通过 get_transfer_buffer 获取
     // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
     virtual void handle_bulk_transfer(
             std::uint32_t seqnum,
             const UsbEndpoint &ep,
             UsbInterface &interface,
             std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            data_type &&out_data, std::error_code &ec
+            TransferHandle transfer,
+            std::error_code &ec
             ) =0;
-    // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
-    // out时由主机传给设备数据，故transfer_data里面有实际的数据。
-    // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
-    // 因此函数内部请使用transfer_buffer_length获取buffer长度
+    // transfer 中包含数据，通过 get_transfer_buffer 获取
     // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
     virtual void handle_interrupt_transfer(
             std::uint32_t seqnum,
             const UsbEndpoint &ep,
             UsbInterface &interface,
             std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            data_type &&out_data, std::error_code &ec
+            TransferHandle transfer,
+            std::error_code &ec
             ) =0;
-    // transfer_data.size()始终等于transfer_buffer_length，不论是否真的从网络读入值了
-    // out时由主机传给设备数据，故transfer_data里面有实际的数据。
-    // in时为读入数据，没有要传给设备的数据，transfer_data长度为transfer_buffer_length但内容全为0，因为没有从socket读取数据
-    // 因此函数内部请使用transfer_buffer_length获取buffer长度
+    // transfer 中包含数据和 iso 描述符，通过 get_transfer_buffer 和 get_iso_descriptor 获取
     // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
     virtual void handle_isochronous_transfer(
             std::uint32_t seqnum,
             const UsbEndpoint &ep,
             UsbInterface &interface,
             std::uint32_t transfer_flags,
-            std::uint32_t transfer_buffer_length, data_type &&out_data,
-            const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors, std::error_code &ec
+            std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            int num_iso_packets,
+            std::error_code &ec
             ) =0;
 
 

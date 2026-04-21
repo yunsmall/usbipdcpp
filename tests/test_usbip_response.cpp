@@ -2,19 +2,99 @@
 
 #include "protocol.h"
 #include "test_utils.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 using namespace usbipdcpp;
 using namespace usbipdcpp::test;
 
+// 用于测试的 mock DeviceHandler
+class MockDeviceHandlerForTest : public AbstDeviceHandler {
+public:
+    explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {}
+
+    void on_new_connection(Session &current_session, error_code &ec) override {}
+    void on_disconnection(error_code &ec) override {}
+
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
+    bool has_pending_transfers() const override { return false; }
+# endif
+
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
+
+protected:
+    void handle_control_urb(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_bulk_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_interrupt_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_isochronous_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags,
+            std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            int num_iso_packets,
+            std::error_code &ec) override {}
+};
+
+// 创建测试用的 UsbDevice
+inline UsbDevice create_test_device() {
+    return UsbDevice{
+        .path = "/test",
+        .busid = "1-1",
+        .bus_num = 1,
+        .dev_num = 1,
+        .speed = 0,
+        .vendor_id = 0,
+        .product_id = 0,
+        .device_bcd = 0,
+        .device_class = 0,
+        .device_subclass = 0,
+        .device_protocol = 0,
+        .configuration_value = 1,
+        .num_configurations = 1,
+        .interfaces = {},
+        .ep0_in = UsbEndpoint::get_default_ep0_in(),
+        .ep0_out = UsbEndpoint::get_default_ep0_out()
+    };
+}
+
 TEST(TestUsbIpRetSubmit, CreateOkWithNoIso) {
-    data_type data = {0x01, 0x02, 0x03, 0x04};
+    auto test_device = create_test_device();
+    MockDeviceHandlerForTest mock_handler(test_device);
+
+    auto* trx = new GenericTransfer{};
+    trx->data = {0x01, 0x02, 0x03, 0x04};
+    trx->actual_length = trx->data.size();
+
+    TransferHandle handle(trx, &mock_handler);
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-            0x1234, static_cast<std::uint32_t>(data.size()), data);
+            0x1234, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
     EXPECT_EQ(ret.header.seqnum, 0x1234);
     EXPECT_EQ(ret.status, 0);
-    EXPECT_EQ(ret.actual_length, data.size());
-    EXPECT_EQ(ret.transfer_buffer, data);
+    EXPECT_EQ(ret.actual_length, trx->actual_length);
+    EXPECT_TRUE(ret.transfer);
+    // TransferHandle 析构时自动释放
 }
 
 TEST(TestUsbIpRetSubmit, CreateOkWithoutData) {
@@ -23,17 +103,24 @@ TEST(TestUsbIpRetSubmit, CreateOkWithoutData) {
     EXPECT_EQ(ret.header.seqnum, 0x5678);
     EXPECT_EQ(ret.status, 0);
     EXPECT_EQ(ret.actual_length, 0);
-    EXPECT_TRUE(ret.transfer_buffer.empty());
+    EXPECT_FALSE(ret.transfer);
 }
 
 TEST(TestUsbIpRetSubmit, CreateEpipeNoIso) {
-    data_type data = {0xAA, 0xBB};
+    auto test_device = create_test_device();
+    MockDeviceHandlerForTest mock_handler(test_device);
+
+    auto* trx = new GenericTransfer{};
+    trx->data = {0xAA, 0xBB};
+    trx->actual_length = trx->data.size();
+
+    TransferHandle handle(trx, &mock_handler);
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
-            0xABCD, static_cast<std::uint32_t>(data.size()), data);
+            0xABCD, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
     EXPECT_EQ(ret.header.seqnum, 0xABCD);
     EXPECT_EQ(ret.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
-    EXPECT_EQ(ret.transfer_buffer, data);
+    // TransferHandle 析构时自动释放
 }
 
 TEST(TestUsbIpRetSubmit, CreateEpipeWithoutData) {
@@ -41,7 +128,7 @@ TEST(TestUsbIpRetSubmit, CreateEpipeWithoutData) {
 
     EXPECT_EQ(ret.header.seqnum, 0x1111);
     EXPECT_EQ(ret.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
-    EXPECT_TRUE(ret.transfer_buffer.empty());
+    EXPECT_FALSE(ret.transfer);
 }
 
 TEST(TestUsbIpRetUnlink, CreateSuccess) {
@@ -155,42 +242,47 @@ TEST(TestOpRepDevlist, EmptyDeviceList) {
 
 TEST(TestUsbIpRetSubmit, LargeData) {
     // 大数据量
-    data_type large_data(65536, 0xAB);
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-            0x1234, static_cast<std::uint32_t>(large_data.size()), large_data);
+    auto test_device = create_test_device();
+    MockDeviceHandlerForTest mock_handler(test_device);
 
-    EXPECT_EQ(ret.actual_length, large_data.size());
-    EXPECT_EQ(ret.transfer_buffer.size(), large_data.size());
+    auto* trx = new GenericTransfer{};
+    trx->data.resize(65536, 0xAB);
+    trx->actual_length = trx->data.size();
+
+    TransferHandle handle(trx, &mock_handler);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+            0x1234, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
+
+    EXPECT_EQ(ret.actual_length, trx->actual_length);
+    // TransferHandle 析构时自动释放
 }
 
 TEST(TestUsbIpRetSubmit, ZeroLengthData) {
-    data_type empty_data;
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1234, 0, empty_data);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0);
 
     EXPECT_EQ(ret.actual_length, 0);
-    EXPECT_TRUE(ret.transfer_buffer.empty());
+    EXPECT_FALSE(ret.transfer);
 }
 
 TEST(TestUsbIpRetSubmit, WithIsoPacketDescriptors) {
     // 带等时包描述符
-    std::vector<UsbIpIsoPacketDescriptor> iso_descs = {
+    auto test_device = create_test_device();
+    MockDeviceHandlerForTest mock_handler(test_device);
+
+    auto* trx = new GenericTransfer{};
+    trx->data.resize(1536, 0xCD);
+    trx->actual_length = 1536;
+    trx->iso_descriptors = {
             {.offset = 0, .length = 1024, .actual_length = 1024, .status = 0},
             {.offset = 1024, .length = 1024, .actual_length = 512, .status = 0},
     };
 
-    UsbIpResponse::UsbIpRetSubmit ret{
-            .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
-            .status = 0,
-            .actual_length = 1536,
-            .start_frame = 0,
-            .number_of_packets = static_cast<std::uint32_t>(iso_descs.size()),
-            .error_count = 0,
-            .transfer_buffer = data_type(1536, 0xCD),
-            .iso_packet_descriptor = std::move(iso_descs)
-    };
+    TransferHandle handle(trx, &mock_handler);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+            0x1234, 0, 1536, 0, 2, std::move(handle));
 
     EXPECT_EQ(ret.number_of_packets, 2);
-    EXPECT_EQ(ret.iso_packet_descriptor.size(), 2);
+    // TransferHandle 析构时自动释放
 }
 
 TEST(TestUsbIpRetSubmit, VariousErrorStatus) {
@@ -199,7 +291,7 @@ TEST(TestUsbIpRetSubmit, VariousErrorStatus) {
     EXPECT_EQ(ret_epipe.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 
     // create_ret_submit 直接接受 errno 并存储，内部不转换
-    auto ret_enoent = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(0x1234, ENOENT, 0, 0, 0, {}, {});
+    auto ret_enoent = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(0x1234, ENOENT, 0, 0, 0, TransferHandle());
     EXPECT_EQ(ret_enoent.status, static_cast<std::uint32_t>(ENOENT));
 }
 

@@ -23,14 +23,14 @@ public:
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
                                                       const SetupPacket &setup_packet,
-                                                      const data_type &out_data, std::error_code &ec) override;
+                                                      TransferHandle transfer, std::error_code &ec) override;
 
     virtual void handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
                                                          const UsbEndpoint &ep,
                                                          std::uint32_t transfer_flags,
                                                          std::uint32_t transfer_buffer_length,
                                                          const SetupPacket &setup_packet,
-                                                         const data_type &out_data, std::error_code &ec) =0;
+                                                         TransferHandle transfer, std::error_code &ec) =0;
 
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                      std::uint16_t descriptor_length, std::uint32_t *p_status) override;

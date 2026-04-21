@@ -20,32 +20,6 @@ class Server;
 class AbstDeviceHandler;
 
 /**
- * @brief Session 内部使用的响应包装类
- *
- * 包含协议响应对象和可选的资源清理回调。
- * 清理函数在发送完成后由 sender 线程调用，减少回调中的工作量。
- */
-struct SessionResponse {
-    UsbIpResponse::RetVariant response;
-
-    // 清理资源（可选，零堆分配）
-    using CleanupFunc = void(*)(void* context, void* transfer);
-    void* cleanup_context = nullptr;
-    void* cleanup_transfer = nullptr;
-    CleanupFunc cleanup_func = nullptr;
-
-    SessionResponse() = default;
-    explicit SessionResponse(UsbIpResponse::RetVariant &&resp) : response(std::move(resp)) {}
-    SessionResponse(UsbIpResponse::RetVariant &&resp, void* ctx, void* trx, CleanupFunc func)
-        : response(std::move(resp)), cleanup_context(ctx), cleanup_transfer(trx), cleanup_func(func) {}
-
-    // 便捷构造函数
-    static SessionResponse with_cleanup(UsbIpResponse::RetVariant &&resp, void* ctx, void* trx, CleanupFunc func) {
-        return SessionResponse(std::move(resp), ctx, trx, func);
-    }
-};
-
-/**
  * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
  * 请确保Session存活的时候Server未被析构，不然是未定义行为
  */
@@ -72,12 +46,6 @@ public:
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
     /**
-     * @brief 带资源清理的提交函数，供 DeviceHandler 使用
-     * @param response Session 响应包装对象
-     */
-    void submit_session_response(SessionResponse &&response);
-
-    /**
      * @brief 置停止标志位，并且关闭socket。只能由Server和AbstDeviceHandler::trigger_session_stop调用。
      * 内部不会关闭线程，只会通知线程关闭
      */
@@ -88,7 +56,7 @@ public:
     LATENCY_TRACKER_MEMBER(latency_tracker);
 
 private:
-    void submit_ret_submit_impl(SessionResponse &&submit);
+    void submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit);
     void submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink);
 
     /**
@@ -98,8 +66,8 @@ private:
 
     // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
     // 交换时短暂加锁，大幅减少锁竞争
-    std::deque<SessionResponse> write_buffer;
-    std::deque<SessionResponse> read_buffer;
+    std::deque<UsbIpResponse::RetVariant> write_buffer;
+    std::deque<UsbIpResponse::RetVariant> read_buffer;
     mutable std::mutex swap_mutex;
     std::condition_variable data_available_cv;
     std::atomic_bool has_data{false};
@@ -113,7 +81,7 @@ private:
     void transfer_loop(usbipdcpp::error_code &transferring_ec);
     void receiver(usbipdcpp::error_code &receiver_ec);
     void sender(usbipdcpp::error_code &ec);
-    std::optional<SessionResponse> sender_get_data(usbipdcpp::error_code &ec);
+    std::optional<UsbIpResponse::RetVariant> sender_get_data(usbipdcpp::error_code &ec);
 
     std::atomic_bool should_immediately_stop = false;
 

@@ -8,6 +8,7 @@
 #include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
+#include "protocol.h"
 #include "utils/ConcurrentTransferTracker.h"
 #include "utils/ObjectPool.h"
 #include "LibusbHandler/tools.h"
@@ -58,26 +59,36 @@ public:
         device_removed = true;
     }
 
+    // ========== transfer_handle 操作覆盖实现 ==========
+    void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic& header, const SetupPacket& setup_packet) override;
+    void* get_transfer_buffer(void* transfer_handle) override;
+    std::size_t get_actual_length(void* transfer_handle) override;
+    std::size_t get_read_data_offset(void* transfer_handle) override;
+    std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) override;
+    UsbIpIsoPacketDescriptor get_iso_descriptor(void* transfer_handle, int index) override;
+    void set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
+    void free_transfer_handle(void* transfer_handle) override;
+
 protected:
     void handle_control_urb(
             std::uint32_t seqnum, const UsbEndpoint &ep,
             std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            const SetupPacket &setup_packet, data_type &&transfer_data, std::error_code &ec) override;
+            const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) override;
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               UsbInterface &interface, std::uint32_t transfer_flags,
-                              std::uint32_t transfer_buffer_length, data_type &&transfer_data,
+                              std::uint32_t transfer_buffer_length, TransferHandle transfer,
                               std::error_code &ec) override;
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    UsbInterface &interface, std::uint32_t transfer_flags,
-                                   std::uint32_t transfer_buffer_length, data_type &&transfer_data,
+                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
 
     void handle_isochronous_transfer(std::uint32_t seqnum,
                                      const UsbEndpoint &ep, UsbInterface &interface,
                                      std::uint32_t transfer_flags,
                                      std::uint32_t transfer_buffer_length,
-                                     data_type &&transfer_data,
-                                     const std::vector<UsbIpIsoPacketDescriptor> &iso_packet_descriptors,
+                                     TransferHandle transfer,
+                                     int num_iso_packets,
                                      std::error_code &ec) override;
 
     int tweak_clear_halt_cmd(const SetupPacket &setup_packet);
@@ -105,13 +116,10 @@ protected:
         LibusbDeviceHandler *handler = nullptr;
         std::uint32_t seqnum;                          // CMD_SUBMIT 的 seqnum
         bool is_out;
-        data_type transfer_buffer;
+        TransferHandle transfer;                       // 拥有 libusb_transfer* 的所有权
     };
 
     static void transfer_callback(libusb_transfer *trx);
-
-    // 清理传输资源（供发送线程调用）
-    static void cleanup_transfer_resources(void* context, void* transfer);
 
     // 对象池：64个
     using CallbackArgsPool = ObjectPool<libusb_callback_args, 256, true>;

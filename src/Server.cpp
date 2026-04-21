@@ -6,6 +6,7 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/redirect_error.hpp>
+#include <asio/use_awaitable.hpp>
 #include <spdlog/spdlog.h>
 
 #include "../include/utils/utils.h"
@@ -43,7 +44,10 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
             acceptor.bind(ep);
             acceptor.listen();
             spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
-            do_accept(acceptor);
+            asio::co_spawn(
+                    asio_io_context,
+                    do_accept(acceptor),
+                    asio::detached);
             asio_io_context.run();
         } catch (const std::exception &e) {
             SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
@@ -189,8 +193,8 @@ void usbipdcpp::Server::remove_session(Session *session) {
 }
 
 
-void usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
-    while (!should_stop) {
+asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
+    while (true) {
         spdlog::info("Waiting for a new connection...");
 
         //先创建一个Session，同时内部创建一个自己的socket
@@ -198,7 +202,7 @@ void usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
 
         asio::error_code ec;
         //服务器io_context接收到socket后将其转移到session内部专有的io_context
-        acceptor.accept(session->socket, ec);
+        co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
 
         if (!ec) {
             // 设置 socket 选项

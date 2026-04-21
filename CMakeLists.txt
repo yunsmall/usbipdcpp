@@ -230,6 +230,17 @@ if (USBIPDCPP_BUILD_TESTS)
     target_link_libraries(test_small_vector PRIVATE ${PROJECT_NAME})
     target_link_libraries(test_small_vector PRIVATE GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_small_vector)
+
+    add_executable(test_transfer_handle tests/test_transfer_handle.cpp)
+    target_include_directories(test_transfer_handle PRIVATE tests)
+    target_link_libraries(test_transfer_handle PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_transfer_handle PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_transfer_handle)
+
+    add_executable(test_generic_transfer tests/test_generic_transfer.cpp)
+    target_link_libraries(test_generic_transfer PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_generic_transfer PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_generic_transfer)
 endif ()
 
 if (IS_TOP_LEVEL)

@@ -35,19 +35,17 @@ constexpr T hton(T num) {
 
 
 template<typename T>
-concept SerializableFromSocket = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
+concept SerializableFromSocket = requires(const T &t, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
 {
-    { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-    { static_cast<const std::remove_cvref_t<T> &>(t1).to_socket(sock, ec) } -> std::same_as<void>;
-    { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<void>;
+    { t.to_socket(sock, ec) } -> std::same_as<void>;
+    { std::declval<T&>().from_socket(sock) } -> std::same_as<void>;
 };
 
 template<typename T>
-concept Serializable = requires(T &&t1, T &&t2, asio::ip::tcp::socket &sock)
+concept Serializable = requires(const T &t, asio::ip::tcp::socket &sock)
 {
-    { static_cast<std::remove_cvref_t<T>>(t1) == static_cast<std::remove_cvref_t<T>>(t2) } -> std::same_as<bool>;
-    { static_cast<const std::remove_cvref_t<T> &>(t1).to_bytes() } -> supported_data_type;
-    { static_cast<std::remove_cvref_t<T>>(t1).from_socket(sock) } -> std::same_as<void>;
+    { t.to_bytes() } -> supported_data_type;
+    { std::declval<T&>().from_socket(sock) } -> std::same_as<void>;
 };
 
 template<typename T>

@@ -2,6 +2,8 @@
 
 A C++ library for creating usbip servers
 
+> [中文文档](README-zh.md)
+
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ Virtual HID devices: Create virtual USB devices on any platform without libusb dependency (see `examples/`)
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
@@ -9,6 +11,12 @@ A C++ library for creating usbip servers
 Contributions welcome! 🚀
 
 > 💡 **Hint**: If this project is useful to you, please consider giving it a ⭐. This can help more people discover it.
+
+---
+
+### Transfer Data Carrier
+
+Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wrapper that automatically frees the transfer handle on destruction. Supports move semantics for ownership transfer. Note that `release()` gives up ownership and requires manual cleanup.
 
 ---
 

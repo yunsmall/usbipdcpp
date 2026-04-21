@@ -1,6 +1,7 @@
 #pragma once
 
 #include <asio.hpp>
+#include <gtest/gtest.h>
 
 #include "protocol.h"
 #include "type.h"
@@ -8,6 +9,21 @@
 
 namespace usbipdcpp {
 namespace test {
+
+// 测试专用比较函数
+inline void expect_header_equal(const UsbIpHeaderBasic &actual, const UsbIpHeaderBasic &expected) {
+    EXPECT_EQ(actual.command, expected.command);
+    EXPECT_EQ(actual.seqnum, expected.seqnum);
+    EXPECT_EQ(actual.devid, expected.devid);
+    EXPECT_EQ(actual.direction, expected.direction);
+    EXPECT_EQ(actual.ep, expected.ep);
+}
+
+inline void expect_cmd_unlink_equal(const UsbIpCommand::UsbIpCmdUnlink &actual,
+                                     const UsbIpCommand::UsbIpCmdUnlink &expected) {
+    expect_header_equal(actual.header, expected.header);
+    EXPECT_EQ(actual.unlink_seqnum, expected.unlink_seqnum);
+}
 
     template<typename T>
     concept with_header = requires(T &&t)
@@ -30,6 +46,8 @@ namespace test {
         std::thread sender([&]() {
             auto sock = acceptor.accept();
             usbipdcpp::data_type buffer;
+            // 发送版本号 + 命令码
+            usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint16_t>(USBIP_VERSION));
             usbipdcpp::vector_append_to_net(buffer, (std::uint16_t) cmd);
             auto data = origin.to_bytes();
             sock.send(asio::buffer(data));

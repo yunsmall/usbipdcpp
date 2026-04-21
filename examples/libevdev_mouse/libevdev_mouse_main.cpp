@@ -89,7 +89,8 @@ int main() {
                 .ep0_in = UsbEndpoint::get_default_ep0_in(),
                 .ep0_out = UsbEndpoint::get_default_ep0_out(),
         });
-        libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+        auto device_handler = libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+        device_handler->setup_interface_handlers();
 
         LibevdevMouseInterfaceHandler &mouse_interface_handler = *std::dynamic_pointer_cast<
             LibevdevMouseInterfaceHandler>(

@@ -14,7 +14,7 @@ protected:
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
                                                       const SetupPacket &setup_packet,
-                                                      const data_type &out_data, std::error_code &ec) override;
+                                                      TransferHandle transfer, std::error_code &ec) override;
 
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
 

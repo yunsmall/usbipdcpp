@@ -19,7 +19,7 @@ usbipdcpp::Session::Session(Server &server) :
     socket(session_io_context) {
 }
 
-void usbipdcpp::Session::submit_ret_submit_impl(SessionResponse &&submit) {
+void usbipdcpp::Session::submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit) {
     // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
     std::lock_guard lock(swap_mutex);
     write_buffer.emplace_back(std::move(submit));
@@ -32,7 +32,7 @@ void usbipdcpp::Session::submit_ret_submit_impl(SessionResponse &&submit) {
 void usbipdcpp::Session::submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
     std::lock_guard lock(swap_mutex);
-    write_buffer.emplace_back(SessionResponse{std::move(unlink)});
+    write_buffer.emplace_back(std::move(unlink));
     has_data.store(true, std::memory_order_release);
 # ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     data_available_cv.notify_one();
@@ -44,11 +44,7 @@ void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlin
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    submit_session_response(SessionResponse{std::move(submit)});
-}
-
-void usbipdcpp::Session::submit_session_response(SessionResponse &&response) {
-    submit_ret_submit_impl(std::move(response));
+    submit_ret_submit_impl(std::move(submit));
 }
 
 usbipdcpp::Session::~Session() {
@@ -236,7 +232,7 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     cmd_transferring = false;
 }
 
-std::optional<usbipdcpp::SessionResponse> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
+std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
     // 如果 read_buffer 为空，尝试交换
     if (read_buffer.empty())[[likely]] {
         std::unique_lock lock(swap_mutex);
@@ -252,7 +248,7 @@ std::optional<usbipdcpp::SessionResponse> usbipdcpp::Session::sender_get_data(us
         }
     }
     if (!read_buffer.empty())[[likely]] {
-        usbipdcpp::SessionResponse ret_v = std::move(read_buffer.front());
+        usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(read_buffer.front());
         read_buffer.pop_front();
         return ret_v;
     }
@@ -266,7 +262,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
 
-        auto command = UsbIpCommand::get_cmd_from_socket(socket, ec);
+        auto command = UsbIpCommand::get_cmd_from_socket(socket, current_handler.get(), ec);
         if (ec)[[unlikely]] {
             if (ec.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
                 SPDLOG_DEBUG("连接关闭");
@@ -302,7 +298,6 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
 
                     SPDLOG_TRACE("->端口{0:02x}", ep.address);
                     SPDLOG_TRACE("->setup数据{}", get_every_byte(cmd2.setup.to_bytes()));
-                    SPDLOG_TRACE("->请求数据{}", get_every_byte(cmd2.data));
 
 
                     usbipdcpp::error_code ec_during_handling_urb;
@@ -313,8 +308,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                             current_seqnum,
                             ep,
                             intf,
-                            cmd2.transfer_flags, cmd2.transfer_buffer_length, cmd2.setup, std::move(cmd2.data),
-                            std::move(cmd2.iso_packet_descriptor),
+                            cmd2.transfer_flags, cmd2.transfer_buffer_length, cmd2.setup,
                             ec_during_handling_urb
                             );
 
@@ -389,7 +383,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         }
 
         // 批量获取所有待发送数据（双缓冲交换）
-        SmallVector<SessionResponse, 32> batch;
+        SmallVector<UsbIpResponse::RetVariant, 32> batch;
         {
             std::lock_guard lock(swap_mutex);
             if (!write_buffer.empty()) {
@@ -423,12 +417,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
                 else {
                     static_assert(!std::is_same_v<T, T>);
                 }
-            }, send_data.response);
-
-            // 清理资源（在发送线程中执行，减少回调工作量）
-            if (send_data.cleanup_func) {
-                send_data.cleanup_func(send_data.cleanup_context, send_data.cleanup_transfer);
-            }
+            }, send_data);
 
             if (sending_ec) {
                 break;
@@ -480,12 +469,7 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             else {
                 static_assert(!std::is_same_v<T, T>);
             }
-        }, send_data.response);
-
-        // 清理资源（在发送线程中执行，减少回调工作量）
-        if (send_data.cleanup_func) {
-            send_data.cleanup_func(send_data.cleanup_context, send_data.cleanup_transfer);
-        }
+        }, send_data);
 
         if (sending_ec) {
             // 直接不处理发送过程中的错误

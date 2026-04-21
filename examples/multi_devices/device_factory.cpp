@@ -50,7 +50,8 @@ DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_poo
     });
 
     // 为设备设置处理器
-    device->with_handler<SimpleDeviceHandler>(string_pool);
+    auto device_handler = device->with_handler<SimpleDeviceHandler>(string_pool);
+    device_handler->setup_interface_handlers();
 
     SPDLOG_INFO("Created device {}: VID={:04x} PID={:04x} busid={}",
                 index, generate_vendor_id(index), generate_product_id(index), generate_busid(index));

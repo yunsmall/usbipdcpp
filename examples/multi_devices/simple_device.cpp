@@ -24,19 +24,22 @@ SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &ha
 void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
-                                                          usbipdcpp::data_type &&out_data,
+                                                          usbipdcpp::TransferHandle transfer,
                                                           std::error_code &ec) {
     SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_interrupt_transfer on ep 0x{:02x}", ep.address);
 
     if (ep.is_in()) {
         // 返回一个简单的数据
-        usbipdcpp::data_type data = {0x00};
-        auto data_size = static_cast<std::uint32_t>(data.size());
+        auto* trx = usbipdcpp::GenericTransfer::from_handle(transfer.get());
+        trx->data = {0x00};
+        trx->actual_length = trx->data.size();
+
         session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, data_size, std::move(data)));
+                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                        seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
     }
     else {
-        // OUT 传输：actual_length 为设备实际接收的字节数
+        // OUT 传输：actual_length 为设备实际接收的字节数，transfer 析构时自动释放
         session->submit_ret_submit(
                 usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
     }
@@ -101,8 +104,9 @@ void SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb(
         std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         const usbipdcpp::SetupPacket &setup_packet,
-        const usbipdcpp::data_type &out_data, std::error_code &ec) {
+        usbipdcpp::TransferHandle transfer, std::error_code &ec) {
     SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb");
+    // transfer 析构时自动释放
     session->submit_ret_submit(
             usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }

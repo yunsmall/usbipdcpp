@@ -8,6 +8,7 @@
 #include "virtual_device/HidVirtualInterfaceHandler.h"
 #include "Server.h"
 #include "Session.h"
+#include "protocol.h"
 
 
 class MockMouseInterfaceHandler : public usbipdcpp::HidVirtualInterfaceHandler {
@@ -16,7 +17,7 @@ public:
 
     void handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   usbipdcpp::data_type &&out_data,
+                                   usbipdcpp::TransferHandle transfer,
                                    std::error_code &ec) override;
     void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override;
     void on_disconnection(usbipdcpp::error_code &ec) override;
@@ -46,7 +47,7 @@ public:
     void handle_non_hid_request_type_control_urb(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
                                                  std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                                  const usbipdcpp::SetupPacket &setup_packet,
-                                                 const usbipdcpp::data_type &out_data, std::error_code &ec) override;
+                                                 usbipdcpp::TransferHandle transfer, std::error_code &ec) override;
     usbipdcpp::data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) override;
     void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
@@ -148,7 +149,12 @@ X/Y轴相对移动量
     std::mutex state_mutex;
 
 
-    std::deque<std::uint32_t> int_req_queue;
+    struct IntRequest {
+        std::uint32_t seqnum;
+        usbipdcpp::TransferHandle transfer;
+    };
+
+    std::deque<IntRequest> int_req_queue;
     std::shared_mutex int_req_queue_mutex;
 
     std::thread send_thread;

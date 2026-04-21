@@ -2,10 +2,12 @@
 
 #include "constant.h"
 #include "Session.h"
+#include "protocol.h"
 
 void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const SetupPacket &setup_packet, const data_type &out_data, std::error_code &ec) {
+        const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
+    auto* trx = GenericTransfer::from_handle(transfer.get());
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     switch (type) {
         case RequestType::Class: {
@@ -41,11 +43,19 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
 
                 }
+                // 将数据写入 transfer_handle
+                trx->data = std::move(result);
+                trx->actual_length = trx->data.size();
+                trx->data_offset = 0;
+
                 session->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                seqnum, status, static_cast<std::uint32_t>(result.size()), result));
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                                seqnum, static_cast<std::uint32_t>(trx->actual_length),
+                                std::move(transfer)));
             }
             else {
+                // 从 transfer_handle 获取 OUT 数据
+                data_type out_data(trx->data.begin(), trx->data.begin() + transfer_buffer_length);
                 switch (request) {
                     case HIDRequest::SetIdle: {
                         request_set_idle(setup_packet.value >> 8, &status);
@@ -65,6 +75,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                         status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                     }
                 }
+                // transfer 析构时自动释放
                 session->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                                 seqnum, status, 0));
@@ -73,7 +84,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
         }
         default: {
             handle_non_hid_request_type_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length,
-                                                    setup_packet, out_data, ec);
+                                                    setup_packet, std::move(transfer), ec);
         }
     }
 

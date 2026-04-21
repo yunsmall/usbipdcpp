@@ -21,35 +21,35 @@ void MockKeyboardInterfaceHandler::on_new_connection(Session &current_session, e
                 break;
             //清空所有发来的中断传输
             while (true) {
-                std::uint32_t seqnum{};
-                bool has_seqnum = false;
+                IntRequest req{};
+                bool has_req = false;
                 {
                     std::lock_guard lock(int_req_queue_mutex);
                     auto at_begin = int_req_queue.begin();
                     if (at_begin != int_req_queue.end()) {
-                        seqnum = *at_begin;
+                        req = std::move(*at_begin);
                         int_req_queue.pop_front();
-                        has_seqnum = true;
+                        has_req = true;
                     }
                 }
 
                 //如果有值，则发送
-                if (has_seqnum) {
-                    data_type ret(8, 0);
-                    {
-                        ret[0] = current_state.modifier;
-                        // ret[1] = 0; // 保留字节，已经是0
-                        for (size_t i = 0; i < 6; ++i) {
-                            ret[2 + i] = current_state.keys[i];
-                        }
+                if (has_req) {
+                    auto* trx = GenericTransfer::from_handle(req.transfer.get());
+                    trx->data.resize(8);
+                    trx->data[0] = current_state.modifier;
+                    // trx->data[1] = 0; // 保留字节，已经是0
+                    for (size_t i = 0; i < 6; ++i) {
+                        trx->data[2 + i] = current_state.keys[i];
                     }
+                    trx->actual_length = 8;
 
                     if (!should_immediately_stop) {
-                        auto ret_size = static_cast<std::uint32_t>(ret.size());
                         session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(seqnum, ret_size, std::move(ret))
-                                );
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                                        req.seqnum, 8, std::move(req.transfer)));
                     }
+                    // TransferHandle 析构时会自动释放（should_immediately_stop 为 true 时）
                 }
                 //没值了就继续等待
                 else {
@@ -66,6 +66,10 @@ void MockKeyboardInterfaceHandler::on_disconnection(error_code &ec) {
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+
+    // 清理队列中残留的 transfer（TransferHandle 析构时会自动释放）
+    std::lock_guard lock(int_req_queue_mutex);
+    int_req_queue.clear();
 }
 
 MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
@@ -75,18 +79,15 @@ MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_
 void MockKeyboardInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                              std::uint32_t transfer_flags,
                                                              std::uint32_t transfer_buffer_length,
-                                                             data_type &&out_data,
+                                                             TransferHandle transfer,
                                                              std::error_code &ec) {
     if (ep.is_in()) {
         //往队列里添加东西
         std::lock_guard lock(int_req_queue_mutex);
-        int_req_queue.emplace_back(seqnum);
+        int_req_queue.emplace_back(IntRequest{seqnum, std::move(transfer)});
     }
     else {
-        {
-            std::lock_guard lock(int_req_queue_mutex);
-            int_req_queue.clear();
-        }
+        // OUT 传输没有数据阶段，transfer 析构时自动释放
         session->submit_ret_submit(
         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
@@ -150,8 +151,9 @@ void MockKeyboardInterfaceHandler::handle_non_hid_request_type_control_urb(std::
                                                                            std::uint32_t transfer_flags,
                                                                            std::uint32_t transfer_buffer_length,
                                                                            const SetupPacket &setup_packet,
-                                                                           const data_type &out_data,
+                                                                           TransferHandle transfer,
                                                                            std::error_code &ec) {
+    // transfer 析构时自动释放
     session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 

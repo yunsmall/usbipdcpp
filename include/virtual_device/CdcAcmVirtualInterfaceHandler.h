@@ -4,6 +4,7 @@
 #include "SetupPacket.h"
 #include "constant.h"
 #include "CdcAcmConstants.h"
+#include "protocol.h"
 #include <deque>
 #include <shared_mutex>
 #include <mutex>
@@ -111,11 +112,11 @@ public:
                                                        std::uint32_t transfer_flags,
                                                        std::uint32_t transfer_buffer_length,
                                                        const SetupPacket &setup_packet,
-                                                       const data_type &out_data, std::error_code &ec) override;
+                                                       TransferHandle transfer, std::error_code &ec) override;
 
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   data_type &&out_data, std::error_code &ec) override;
+                                   TransferHandle transfer, std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -141,7 +142,7 @@ public:
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
                                                           const SetupPacket &setup_packet,
-                                                          const data_type &out_data, std::error_code &ec);
+                                                          TransferHandle transfer, std::error_code &ec);
 
     // 获取当前线路编码
     [[nodiscard]] const LineCoding& get_line_coding() const { return line_coding_; }
@@ -164,7 +165,11 @@ protected:
     /**
      * @brief 中断传输队列
      */
-    std::deque<std::uint32_t> interrupt_req_queue_;
+    struct IntRequest {
+        std::uint32_t seqnum;
+        TransferHandle transfer;
+    };
+    std::deque<IntRequest> interrupt_req_queue_;
     std::shared_mutex interrupt_req_queue_mutex_;
 
     /**
@@ -270,13 +275,13 @@ public:
 
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              data_type &&out_data, std::error_code &ec) override;
+                              TransferHandle transfer, std::error_code &ec) override;
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                        std::uint32_t transfer_flags,
                                                        std::uint32_t transfer_buffer_length,
                                                        const SetupPacket &setup_packet,
-                                                       const data_type &out_data, std::error_code &ec) override;
+                                                       TransferHandle transfer, std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -405,6 +410,7 @@ protected:
     struct BulkInRequest {
         std::uint32_t seqnum;
         std::uint32_t length;
+        TransferHandle transfer;
     };
     std::deque<BulkInRequest> bulk_in_req_queue_;
 
@@ -433,10 +439,10 @@ protected:
      * @brief 从 TX 缓冲区读取数据并发送
      * @param seqnum 请求序号
      * @param max_length 最大发送长度
-     * @return 是否发送了数据
-     * @note 调用者必须已持有 tx_mutex_
+     * @param transfer 传输句柄
+     * @note 调用者必须已持有 tx_mutex_ 且确保 tx_buffer_ 不为空
      */
-    bool send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length);
+    void send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length, TransferHandle transfer);
 
     /**
      * @brief 尝试发送等待的数据

@@ -3,8 +3,58 @@
 #include "protocol.h"
 #include "SetupPacket.h"
 #include "constant.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 using namespace usbipdcpp;
+
+// 用于测试的 mock DeviceHandler
+class MockDeviceHandlerForTest : public AbstDeviceHandler {
+public:
+    explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {}
+
+    void on_new_connection(Session &current_session, error_code &ec) override {}
+    void on_disconnection(error_code &ec) override {}
+
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
+    bool has_pending_transfers() const override { return false; }
+# endif
+
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
+
+protected:
+    void handle_control_urb(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_bulk_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_interrupt_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_isochronous_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags,
+            std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            int num_iso_packets,
+            std::error_code &ec) override {}
+};
 
 // 测试协议头部大小是否与 USBIP 规范一致
 class ProtocolSizeTest : public ::testing::Test {
@@ -22,16 +72,7 @@ protected:
 
 TEST_F(ProtocolSizeTest, RetSubmitHeaderSize) {
     // RET_SUBMIT 头部应该是 48 字节
-    UsbIpResponse::UsbIpRetSubmit ret{
-        .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
-        .status = 0,
-        .actual_length = 0,
-        .start_frame = 0,
-        .number_of_packets = 0,
-        .error_count = 0,
-        .transfer_buffer = {},
-        .iso_packet_descriptor = {}
-    };
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0);
 
     auto bytes = ret.to_bytes();
     // 头部固定部分大小
@@ -75,16 +116,8 @@ class ProtocolEndianTest : public ::testing::Test {};
 
 TEST_F(ProtocolEndianTest, RetSubmitStatusEndian) {
     // status 应该是大端序
-    UsbIpResponse::UsbIpRetSubmit ret{
-        .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
-        .status = 0x12345678, // 测试值
-        .actual_length = 0,
-        .start_frame = 0,
-        .number_of_packets = 0,
-        .error_count = 0,
-        .transfer_buffer = {},
-        .iso_packet_descriptor = {}
-    };
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+            0x1234, 0x12345678, 0);
 
     auto bytes = ret.to_bytes();
 
@@ -98,16 +131,7 @@ TEST_F(ProtocolEndianTest, RetSubmitStatusEndian) {
 
 TEST_F(ProtocolEndianTest, RetSubmitActualLengthEndian) {
     // actual_length 应该是大端序
-    UsbIpResponse::UsbIpRetSubmit ret{
-        .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
-        .status = 0,
-        .actual_length = 0xDEADBEEF, // 测试值
-        .start_frame = 0,
-        .number_of_packets = 0,
-        .error_count = 0,
-        .transfer_buffer = {},
-        .iso_packet_descriptor = {}
-    };
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0xDEADBEEF);
 
     auto bytes = ret.to_bytes();
 
@@ -246,33 +270,27 @@ class ControlTransferDataOffsetTest : public ::testing::Test {};
 
 TEST_F(ControlTransferDataOffsetTest, DataOffsetIs8) {
     // 控制传输的数据从偏移 8 开始（跳过 setup 包）
-    data_type control_buffer(100, 0);
+    // 创建 GenericTransfer 模拟控制传输
+    auto* trx = new GenericTransfer{};
+    trx->data.resize(100);
+    trx->data_offset = 8;
+    trx->actual_length = 92; // 100 - 8 = 92 字节数据
 
     // 前 8 字节是 setup 包
     for (int i = 0; i < 8; ++i) {
-        control_buffer[i] = static_cast<std::uint8_t>(i);
+        trx->data[i] = static_cast<std::uint8_t>(i);
     }
 
     // 数据从偏移 8 开始
     for (int i = 8; i < 100; ++i) {
-        control_buffer[i] = static_cast<std::uint8_t>(i);
+        trx->data[i] = static_cast<std::uint8_t>(i);
     }
 
-    UsbIpResponse::UsbIpRetSubmit ret{
-        .header = UsbIpHeaderBasic::get_server_header(USBIP_RET_SUBMIT, 0x1234),
-        .status = 0,
-        .actual_length = 92, // 100 - 8 = 92 字节数据
-        .start_frame = 0,
-        .number_of_packets = 0,
-        .error_count = 0,
-        .transfer_buffer = std::move(control_buffer),
-        .iso_packet_descriptor = {}
-    };
-    ret.send_config.data_offset = 8; // 控制传输偏移
+    // 验证数据偏移正确
+    EXPECT_EQ(trx->data_offset, 8);
+    EXPECT_EQ(trx->actual_length, 92);
 
-    // 验证发送时数据偏移正确
-    EXPECT_EQ(ret.send_config.data_offset, 8);
-    EXPECT_EQ(ret.actual_length, 92);
+    delete trx;
 }
 
 // 测试状态码转换
@@ -358,8 +376,34 @@ TEST_F(UsbipdLibusbCompatibilityTest, RetUnlinkFormat) {
 
 TEST_F(UsbipdLibusbCompatibilityTest, RetSubmitWithData) {
     // 创建一个带数据的 RET_SUBMIT
-    data_type data = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(0x1111, static_cast<std::uint32_t>(data.size()), data);
+    auto* trx = new GenericTransfer{};
+    trx->data = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+    trx->actual_length = trx->data.size();
+
+    // 创建一个空的 UsbDevice 用于测试
+    UsbDevice test_device{
+        .path = "/test",
+        .busid = "1-1",
+        .bus_num = 1,
+        .dev_num = 1,
+        .speed = 0,
+        .vendor_id = 0,
+        .product_id = 0,
+        .device_bcd = 0,
+        .device_class = 0,
+        .device_subclass = 0,
+        .device_protocol = 0,
+        .configuration_value = 1,
+        .num_configurations = 1,
+        .interfaces = {},
+        .ep0_in = UsbEndpoint::get_default_ep0_in(),
+        .ep0_out = UsbEndpoint::get_default_ep0_out()
+    };
+    MockDeviceHandlerForTest mock_handler(test_device);
+
+    TransferHandle handle(trx, &mock_handler);
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+            0x1111, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
     auto bytes = ret.to_bytes();
 

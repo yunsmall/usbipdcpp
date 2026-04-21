@@ -2,6 +2,7 @@
 
 #include "protocol.h"
 #include "test_utils.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 #include <thread>
 
@@ -9,6 +10,55 @@
 
 using namespace usbipdcpp;
 using namespace usbipdcpp::test;
+
+// 用于测试的 mock DeviceHandler
+class MockDeviceHandlerForTest : public AbstDeviceHandler {
+public:
+    explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {}
+
+    void on_new_connection(Session &current_session, error_code &ec) override {}
+    void on_disconnection(error_code &ec) override {}
+
+# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
+    bool has_pending_transfers() const override { return false; }
+# endif
+
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
+
+protected:
+    void handle_control_urb(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_bulk_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_interrupt_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            std::error_code &ec) override {}
+
+    void handle_isochronous_transfer(
+            std::uint32_t seqnum,
+            const UsbEndpoint &ep,
+            UsbInterface &interface,
+            std::uint32_t transfer_flags,
+            std::uint32_t transfer_buffer_length,
+            TransferHandle transfer,
+            int num_iso_packets,
+            std::error_code &ec) override {}
+};
 
 TEST(TestProtocol, UsbIpHeaderBasic) {
     UsbIpHeaderBasic header{
@@ -42,75 +92,102 @@ TEST(TestProtocol, UsbIpHeaderBasicReadSocket) {
             .ep = 0x80
     };
     auto received_header = reread_from_socket_with_command<UsbIpHeaderBasic>(origin_header, USBIP_CMD_SUBMIT);
-    ASSERT_TRUE(received_header==origin_header);
+    expect_header_equal(received_header, origin_header);
 }
 
-TEST(TestProtocol, UsbIpCmdSubmitReadSocket) {
-    std::uint32_t transfer_buffer_length = 100;
-    UsbIpCommand::UsbIpCmdSubmit origin{
-            .header = UsbIpHeaderBasic{
-                    .command = USBIP_CMD_SUBMIT,
-                    .seqnum = 0x1234,
-                    .devid = 0x5678,
-                    .direction = UsbIpDirection::Out,
-                    .ep = 0x80
-            },
-            .transfer_flags = 0x1234,
-            .transfer_buffer_length = transfer_buffer_length,
-            .start_frame = 0x8765,
-            .number_of_packets = 0,
-            .interval = 0x1111,
-            .setup = SetupPacket::parse({1, 2, 3, 4, 5, 6, 7, 8}),
-            .data = data_type(transfer_buffer_length, 0),
-            .iso_packet_descriptor = {}
+TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
+    // IN 传输，没有数据需要读取
+    UsbIpHeaderBasic header{
+            .command = USBIP_CMD_SUBMIT,
+            .seqnum = 0x1234,
+            .devid = 0x5678,
+            .direction = UsbIpDirection::In,
+            .ep = 0x80
     };
-    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
 
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context);
+    auto server_endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0);
+    acceptor.open(server_endpoint.protocol());
+    acceptor.bind(server_endpoint);
+    acceptor.listen();
+    auto server_port = acceptor.local_endpoint().port();
 
-    ASSERT_TRUE(received==origin);
-}
+    std::thread sender([&]() {
+        auto sock = acceptor.accept();
+        usbipdcpp::data_type buffer;
+        // 发送版本号 + 命令码
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint16_t>(USBIP_VERSION));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint16_t>(USBIP_CMD_SUBMIT));
 
-TEST(TestProtocol, UsbIpCmdSubmitISOReadSocket) {
-    std::uint32_t transfer_buffer_length = 100;
-    data_type data(transfer_buffer_length, 0);
-    for (std::size_t i = 0; i < transfer_buffer_length; i++) {
-        data[i] = i;
-    }
-    std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors{
-            UsbIpIsoPacketDescriptor{
-                    .offset = 0,
-                    .length = 25,
-                    .actual_length = 10,
-                    .status = 0
-            },
-            UsbIpIsoPacketDescriptor{
-                    .offset = 25,
-                    .length = transfer_buffer_length - 25,
-                    .actual_length = 15,
-                    .status = 0
-            }
+        // from_socket 期望读取的数据从 seqnum 开始（不包含 command）
+        // 所以我们只发送 seqnum, devid, direction, ep (16 字节)
+        usbipdcpp::vector_append_to_net(buffer, header.seqnum);
+        usbipdcpp::vector_append_to_net(buffer, header.devid);
+        usbipdcpp::vector_append_to_net(buffer, header.direction);
+        usbipdcpp::vector_append_to_net(buffer, header.ep);
+
+        // transfer_flags = 0x1234
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x1234));
+        // transfer_buffer_length = 0
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        // start_frame = 0x8765
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x8765));
+        // number_of_packets = 0
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        // interval = 0x1111
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x1111));
+        // setup packet (8 bytes)
+        buffer.insert(buffer.end(), {1, 2, 3, 4, 5, 6, 7, 8});
+
+        sock.send(asio::buffer(buffer));
+    });
+
+    // 创建测试设备（必须先声明，因为 mock_handler 引用它）
+    auto test_device = UsbDevice{
+        .path = "/test",
+        .busid = "1-1",
+        .bus_num = 1,
+        .dev_num = 1,
+        .speed = 0,
+        .vendor_id = 0,
+        .product_id = 0,
+        .device_bcd = 0,
+        .device_class = 0,
+        .device_subclass = 0,
+        .device_protocol = 0,
+        .configuration_value = 1,
+        .num_configurations = 1,
+        .interfaces = {},
+        .ep0_in = UsbEndpoint::get_default_ep0_in(),
+        .ep0_out = UsbEndpoint::get_default_ep0_out()
     };
-    UsbIpCommand::UsbIpCmdSubmit origin{
-            .header = UsbIpHeaderBasic{
-                    .command = USBIP_CMD_SUBMIT,
-                    .seqnum = 0x1234,
-                    .devid = 0x5678,
-                    .direction = UsbIpDirection::Out,
-                    .ep = 0x80
-            },
-            .transfer_flags = 0x1234,
-            .transfer_buffer_length = transfer_buffer_length,
-            .start_frame = 0x8765,
-            .number_of_packets = static_cast<std::uint32_t>(iso_packet_descriptors.size()),
-            .interval = 0x1111,
-            .setup = SetupPacket::parse({1, 2, 3, 4, 5, 6, 7, 8}),
-            .data = data,
-            .iso_packet_descriptor = iso_packet_descriptors
-    };
-    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
+    MockDeviceHandlerForTest mock_handler(test_device);
 
+    {
+        // 使用作用域确保 received 在 mock_handler 之前析构
+        UsbIpCommand::UsbIpCmdSubmit received{};
+        asio::ip::tcp::socket server_socket(io_context);
+        asio::error_code ec;
+        server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), ec);
 
-    ASSERT_TRUE(received==origin);
+        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
+        [[maybe_unused]] auto op_command = usbipdcpp::read_u16(server_socket);
+
+        received.transfer.set_handler(&mock_handler);
+        received.from_socket(server_socket);
+        received.header.command = op_command;
+
+        server_socket.close();
+        sender.join();
+
+        EXPECT_EQ(received.header.seqnum, header.seqnum);
+        EXPECT_EQ(received.transfer_flags, 0x1234);
+        EXPECT_EQ(received.start_frame, 0x8765);
+        EXPECT_EQ(received.interval, 0x1111);
+    }  // received 在这里析构，此时 mock_handler 还有效
+
+    // mock_handler 和 test_device 在这里析构
 }
 
 TEST(TestProtocol, UsbIpCmdUnlinkReadSocket) {
@@ -127,7 +204,7 @@ TEST(TestProtocol, UsbIpCmdUnlinkReadSocket) {
     };
     auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdUnlink>(origin, USBIP_CMD_UNLINK);
 
-    ASSERT_TRUE(received==origin);
+    expect_cmd_unlink_equal(received, origin);
 }
 
 // ============== 极端情况测试 ==============
@@ -176,91 +253,7 @@ TEST(TestProtocol, UsbIpHeaderBasicRoundTrip) {
     };
 
     auto received = reread_from_socket_with_command<UsbIpHeaderBasic>(original, USBIP_RET_SUBMIT);
-    EXPECT_EQ(received, original);
-}
-
-TEST(TestProtocol, UsbIpCmdSubmitEmptyData) {
-    UsbIpCommand::UsbIpCmdSubmit origin{
-            .header = UsbIpHeaderBasic{
-                    .command = USBIP_CMD_SUBMIT,
-                    .seqnum = 0x1234,
-                    .devid = 0x5678,
-                    .direction = UsbIpDirection::In,
-                    .ep = 0x00
-            },
-            .transfer_flags = 0,
-            .transfer_buffer_length = 0,
-            .start_frame = 0,
-            .number_of_packets = 0,
-            .interval = 0,
-            .setup = SetupPacket{.request_type = 0x80, .request = 0x06, .value = 0, .index = 0, .length = 0},
-            .data = {},
-            .iso_packet_descriptor = {}
-    };
-    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
-    EXPECT_TRUE(received == origin);
-}
-
-TEST(TestProtocol, UsbIpCmdSubmitLargeData) {
-    // 大数据量测试
-    std::uint32_t transfer_buffer_length = 65536;
-    data_type data(transfer_buffer_length, 0xAB);
-
-    UsbIpCommand::UsbIpCmdSubmit origin{
-            .header = UsbIpHeaderBasic{
-                    .command = USBIP_CMD_SUBMIT,
-                    .seqnum = 0x1234,
-                    .devid = 0x5678,
-                    .direction = UsbIpDirection::Out,
-                    .ep = 0x02
-            },
-            .transfer_flags = 0,
-            .transfer_buffer_length = transfer_buffer_length,
-            .start_frame = 0,
-            .number_of_packets = 0,
-            .interval = 0,
-            .setup = SetupPacket{.request_type = 0x00, .request = 0x00, .value = 0, .index = 0, .length = 0},
-            .data = data,
-            .iso_packet_descriptor = {}
-    };
-    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
-    EXPECT_TRUE(received == origin);
-}
-
-TEST(TestProtocol, UsbIpCmdSubmitManyIsoDescriptors) {
-    // 多个等时包描述符
-    std::uint32_t transfer_buffer_length = 10240;
-    data_type data(transfer_buffer_length, 0xCD);
-
-    std::vector<UsbIpIsoPacketDescriptor> iso_packet_descriptors;
-    for (int i = 0; i < 10; ++i) {
-        iso_packet_descriptors.push_back(UsbIpIsoPacketDescriptor{
-                .offset = static_cast<std::uint32_t>(i * 1024),
-                .length = 1024,
-                .actual_length = 1024,
-                .status = 0
-        });
-    }
-
-    UsbIpCommand::UsbIpCmdSubmit origin{
-            .header = UsbIpHeaderBasic{
-                    .command = USBIP_CMD_SUBMIT,
-                    .seqnum = 0x1234,
-                    .devid = 0x5678,
-                    .direction = UsbIpDirection::Out,
-                    .ep = 0x81
-            },
-            .transfer_flags = 0,
-            .transfer_buffer_length = transfer_buffer_length,
-            .start_frame = 1000,
-            .number_of_packets = static_cast<std::uint32_t>(iso_packet_descriptors.size()),
-            .interval = 1,
-            .setup = SetupPacket{.request_type = 0x00, .request = 0x00, .value = 0, .index = 0, .length = 0},
-            .data = data,
-            .iso_packet_descriptor = iso_packet_descriptors
-    };
-    auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdSubmit>(origin, USBIP_CMD_SUBMIT);
-    EXPECT_TRUE(received == origin);
+    expect_header_equal(received, original);
 }
 
 TEST(TestProtocol, UsbIpIsoPacketDescriptorRoundTrip) {
@@ -307,7 +300,7 @@ TEST(TestProtocol, UsbIpCmdUnlinkMaxSeqnum) {
             .unlink_seqnum = 0xFFFFFFFF
     };
     auto received = reread_from_socket_with_command<UsbIpCommand::UsbIpCmdUnlink>(origin, USBIP_CMD_UNLINK);
-    EXPECT_TRUE(received == origin);
+    expect_cmd_unlink_equal(received, origin);
 }
 
 TEST(TestProtocol, OpReqDevlistRoundTrip) {

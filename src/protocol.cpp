@@ -6,9 +6,53 @@
 #include <variant>
 #include <spdlog/spdlog.h>
 #include "utils/SmallVector.h"
+#include "DeviceHandler/DeviceHandler.h"
 
 
 using namespace usbipdcpp;
+
+// ========== TransferHandle 实现 ==========
+
+TransferHandle::TransferHandle(void* handle, AbstDeviceHandler* handler)
+    : handle_(handle), handler_(handler) {}
+
+TransferHandle::TransferHandle(TransferHandle&& other) noexcept
+    : handle_(other.handle_), handler_(other.handler_) {
+    other.handle_ = nullptr;
+    other.handler_ = nullptr;
+}
+
+TransferHandle& TransferHandle::operator=(TransferHandle&& other) noexcept {
+    if (this != &other) {
+        reset();
+        handle_ = other.handle_;
+        handler_ = other.handler_;
+        other.handle_ = nullptr;
+        other.handler_ = nullptr;
+    }
+    return *this;
+}
+
+TransferHandle::~TransferHandle() {
+    reset();
+}
+
+void TransferHandle::reset() {
+    if (handle_ && handler_) {
+        handler_->free_transfer_handle(handle_);
+    }
+    handle_ = nullptr;
+    handler_ = nullptr;
+}
+
+void* TransferHandle::release() {
+    void* tmp = handle_;
+    handle_ = nullptr;
+    handler_ = nullptr;
+    return tmp;
+}
+
+// ========== 其他协议实现 ==========
 
 const usbipdcpp::TransferErrorCategory g_error_category;
 
@@ -187,15 +231,23 @@ data_type usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
 
     //padding
     total_result.resize(total_result.size() + 8, 0);
-    // if (header.direction == UsbIpDirection::In) {
-    //     result.insert(result.end(), transfer_buffer.begin(), transfer_buffer.end());
-    // }
-    if (!transfer_buffer.empty()) {
-        vector_append_to_net(total_result, transfer_buffer);
-    }
-    for (auto &iso_desc: iso_packet_descriptor) {
-        auto iso_byte = iso_desc.to_bytes();
-        vector_append_to_net(total_result, iso_byte);
+
+    // 从 transfer 获取数据
+    if (transfer && actual_length > 0) {
+        auto* handler = transfer.handler();
+        void* raw_handle = transfer.get();
+        void* buffer = handler->get_transfer_buffer(raw_handle);
+        auto offset = handler->get_read_data_offset(raw_handle);
+        auto byte_ptr = static_cast<const std::uint8_t*>(buffer) + offset;
+        total_result.insert(total_result.end(), byte_ptr, byte_ptr + actual_length);
+
+        // iso 描述符
+        int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
+        for (int i = 0; i < num_iso; i++) {
+            auto iso_desc = handler->get_iso_descriptor(raw_handle, i);
+            auto iso_byte = iso_desc.to_bytes();
+            vector_append_to_net(total_result, iso_byte);
+        }
     }
 
     return total_result;
@@ -206,51 +258,48 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
     auto data1 = array_add_padding<8>(to_network_array(header.to_bytes(), status, actual_length, start_frame,
                                                        number_of_packets, error_count));
-    // spdlog::debug("RET_SUBMIT seqnum:{} status:{} actual_length:{} buffer_size:{}",
-    //              header.seqnum, status, actual_length, transfer_buffer.size());
-    if (!transfer_buffer.empty() && actual_length > 0)[[likely]] {
-        // 验证长度一致性：actual_length 不应超过有效缓冲区大小
-        assert(actual_length <= transfer_buffer.size() - send_config.data_offset);
-        if (iso_packet_descriptor.empty())[[likely]] {
+
+    // 从 transfer 获取数据
+    if (transfer && actual_length > 0)[[likely]] {
+        auto* handler = transfer.handler();
+        void* raw_handle = transfer.get();
+        void* buffer = handler->get_transfer_buffer(raw_handle);
+        auto offset = handler->get_read_data_offset(raw_handle);
+
+        int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
+
+        if (num_iso == 0)[[likely]] {
             // 非等时传输：header + data
             std::array<asio::const_buffer, 2> buffers;
             buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(transfer_buffer.data() + send_config.data_offset, actual_length);
+            buffers[1] = asio::buffer(static_cast<const char*>(buffer) + offset, actual_length);
             asio::write(sock, buffers, ec);
         }
         else {
             // 等时传输：header + scatter-gather data + scatter-gather iso descriptors
-            // 零动态分配（64 个 iso packet 以内）
-
-            // 存储每个 iso descriptor 的字节（每个 16 字节）
-            SmallVector<decltype(UsbIpIsoPacketDescriptor{}.to_bytes()), 64> iso_desc_bytes;
-            for (const auto &iso: iso_packet_descriptor) {
-                iso_desc_bytes.push_back(iso.to_bytes());
-            }
-
-            // 组织 scatter-gather buffer
             SmallVector<asio::const_buffer, 130> buffers; // 1 header + 64 data + 64 iso_desc
             buffers.push_back(asio::buffer(data1));
 
             // scatter-gather 发送每个 iso packet 数据
-            size_t original_offset = 0;
-            for (const auto &iso: iso_packet_descriptor) {
-                // 验证偏移和长度不越界
-                assert(original_offset + iso.actual_length <= transfer_buffer.size());
+            size_t current_offset = 0;
+            for (int i = 0; i < num_iso; i++) {
+                auto iso = handler->get_iso_descriptor(raw_handle, i);
                 buffers.push_back(asio::buffer(
-                        transfer_buffer.data() + original_offset,
+                        static_cast<const char*>(buffer) + current_offset,
                         iso.actual_length
                         ));
-                original_offset += iso.length_in_transfer_buffer_only_for_send;
+                current_offset += iso.length_in_transfer_buffer_only_for_send;
             }
 
             // scatter-gather 发送每个 iso descriptor
-            for (const auto &bytes: iso_desc_bytes) {
-                buffers.push_back(asio::buffer(bytes));
+            for (int i = 0; i < num_iso; i++) {
+                auto iso_desc = handler->get_iso_descriptor(raw_handle, i);
+                buffers.push_back(asio::buffer(iso_desc.to_bytes()));
             }
 
             asio::write(sock, buffers, ec);
         }
+        // transfer 会在 UsbIpRetSubmit 析构时自动释放
     }
     else {
         asio::write(sock, asio::buffer(data1), ec);
@@ -265,8 +314,7 @@ void UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
         std::uint32_t seqnum, std::uint32_t status, std::uint32_t actual_length,
         std::uint32_t start_frame, std::uint32_t number_of_packets,
-        std::vector<std::uint8_t> &&transfer_buffer,
-        std::vector<UsbIpIsoPacketDescriptor> &&iso_packet_descriptor) {
+        TransferHandle transfer) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
                     USBIP_RET_SUBMIT,
@@ -277,8 +325,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
             .start_frame = start_frame,
             .number_of_packets = number_of_packets,
             .error_count = 0,
-            .transfer_buffer = std::move(transfer_buffer),
-            .iso_packet_descriptor = std::move(iso_packet_descriptor)
+            .transfer = std::move(transfer)
     };
     return ret;
 }
@@ -294,9 +341,7 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
             .actual_length = actual_length,
             .start_frame = 0,
             .number_of_packets = 0,
-            .error_count = 0,
-            .transfer_buffer = {},
-            .iso_packet_descriptor = {}
+            .error_count = 0
     };
     return ret;
 }
@@ -312,16 +357,14 @@ create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t st
             .actual_length = actual_length,
             .start_frame = 0,
             .number_of_packets = 0,
-            .error_count = 0,
-            .transfer_buffer = {},
-            .iso_packet_descriptor = {}
+            .error_count = 0
     };
     return ret;
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
 create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status, std::uint32_t actual_length,
-                                         const data_type &transfer_buffer) {
+                                         TransferHandle transfer) {
     auto ret = UsbIpRetSubmit{
             .header = UsbIpHeaderBasic::get_server_header(
                     USBIP_RET_SUBMIT,
@@ -332,43 +375,17 @@ create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t sta
             .start_frame = 0,
             .number_of_packets = 0,
             .error_count = 0,
-            .transfer_buffer = transfer_buffer,
-            .iso_packet_descriptor = {}
-    };
-    return ret;
-}
-
-usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::
-create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status, std::uint32_t actual_length,
-                                         data_type &&transfer_buffer) {
-    auto ret = UsbIpRetSubmit{
-            .header = UsbIpHeaderBasic::get_server_header(
-                    USBIP_RET_SUBMIT,
-                    seqnum
-                    ),
-            .status = status,
-            .actual_length = actual_length,
-            .start_frame = 0,
-            .number_of_packets = 0,
-            .error_count = 0,
-            .transfer_buffer = std::move(transfer_buffer),
-            .iso_packet_descriptor = {}
+            .transfer = std::move(transfer)
     };
     return ret;
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
-        std::uint32_t seqnum, std::uint32_t actual_length,
-        const data_type &transfer_buffer) {
+        std::uint32_t seqnum,
+        std::uint32_t actual_length,
+        TransferHandle transfer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
-                                                    actual_length, transfer_buffer);
-}
-
-usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
-        std::uint32_t seqnum, std::uint32_t actual_length,
-        data_type &&transfer_buffer) {
-    return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE),
-                                                    actual_length, std::move(transfer_buffer));
+                                                    actual_length, std::move(transfer));
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
@@ -382,23 +399,17 @@ usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmi
             .actual_length = actual_length,
             .start_frame = 0,
             .number_of_packets = 0,
-            .error_count = 0,
-            .transfer_buffer = {},
-            .iso_packet_descriptor = {}
+            .error_count = 0
     };
     return ret;
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-        std::uint32_t seqnum, std::uint32_t actual_length, const data_type &transfer_buffer) {
+        std::uint32_t seqnum,
+        std::uint32_t actual_length,
+        TransferHandle transfer) {
     return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                                                    actual_length, transfer_buffer);
-}
-
-usbipdcpp::UsbIpResponse::UsbIpRetSubmit usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-        std::uint32_t seqnum, std::uint32_t actual_length, data_type &&transfer_buffer) {
-    return create_ret_submit_with_status_and_no_iso(seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                                                    actual_length, std::move(transfer_buffer));
+                                                    actual_length, std::move(transfer));
 }
 
 array_data_type<
@@ -467,7 +478,6 @@ void usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &so
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() const {
-    assert(header.direction!=UsbIpDirection::Out||transfer_buffer_length==data.size());
     auto total_result =
             to_network_data(
                     to_network_array(
@@ -478,18 +488,29 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() co
                             number_of_packets,
                             interval,
                             setup.to_bytes()
-                            ),
-                    data
+                            )
                     );
-    for (auto &iso_des: iso_packet_descriptor) {
-        auto iso_byte = iso_des.to_bytes();
-        vector_append_to_net(total_result, iso_byte);
+    // 从 transfer 获取数据
+    if (transfer) {
+        auto* handler = transfer.handler();
+        void* raw_handle = transfer.get();
+        void* buffer = handler->get_transfer_buffer(raw_handle);
+        auto write_offset = handler->get_write_data_offset(header);
+        auto byte_ptr = static_cast<const std::uint8_t*>(buffer) + write_offset;
+        total_result.insert(total_result.end(), byte_ptr, byte_ptr + transfer_buffer_length);
+
+        // iso 描述符
+        int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
+        for (int i = 0; i < num_iso; i++) {
+            auto iso_desc = handler->get_iso_descriptor(raw_handle, i);
+            auto iso_byte = iso_desc.to_bytes();
+            vector_append_to_net(total_result, iso_byte);
+        }
     }
     return total_result;
 }
 
 void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
-    assert(header.direction!=UsbIpDirection::Out||transfer_buffer_length==data.size());
     std::array<asio::const_buffer, 2> buffers;
     buffers[0] = asio::buffer(
             to_network_array(
@@ -502,12 +523,27 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
                     setup.to_bytes()
                     )
             );
-    buffers[1] = asio::buffer(data);
-    asio::write(sock, buffers, ec);
+    // 从 transfer 获取数据
+    if (transfer) {
+        auto* handler = transfer.handler();
+        void* buffer = handler->get_transfer_buffer(transfer.get());
+        auto write_offset = handler->get_write_data_offset(header);
+        buffers[1] = asio::buffer(static_cast<const char*>(buffer) + write_offset, transfer_buffer_length);
+        asio::write(sock, buffers, ec);
+    }
+    else {
+        asio::write(sock, buffers[0], ec);
+    }
     // iso传输
-    if (!iso_packet_descriptor.empty()) {
-        auto iso_bytes = serializable_array_range_to_network_data(iso_packet_descriptor);
-        asio::write(sock, asio::buffer(iso_bytes), ec);
+    if (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF && transfer) {
+        auto* handler = transfer.handler();
+        void* raw_handle = transfer.get();
+        int num_iso = static_cast<int>(number_of_packets);
+        for (int i = 0; i < num_iso; i++) {
+            auto iso_desc = handler->get_iso_descriptor(raw_handle, i);
+            auto iso_byte = iso_desc.to_bytes();
+            asio::write(sock, asio::buffer(iso_byte), ec);
+        }
     }
 }
 
@@ -531,59 +567,35 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE)[[unlikely]] {
         throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
     }
-    data.resize(transfer_buffer_length);
+
+    // 使用 handler 创建 transfer_handle
+    int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
+    auto* raw_handle = transfer.handler()->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
+    transfer.set_handle(raw_handle);
+
+    // 获取 buffer 头指针和写入偏移量
+    void* buffer = transfer.handler()->get_transfer_buffer(raw_handle);
+    std::size_t write_offset = transfer.handler()->get_write_data_offset(header);
 
     if (header.direction == UsbIpDirection::In)[[likely]] {
         // IN 传输不需要从 socket 读取数据
     }
     else {
-        asio::read(sock, asio::buffer(data));
+        // OUT 传输：读入到 buffer + write_offset 位置（跳过 setup 空间）
+        asio::read(sock, asio::buffer(
+            static_cast<std::uint8_t*>(buffer) + write_offset,
+            transfer_buffer_length
+        ));
     }
 
+    // 读取等时包描述符
     if (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF)[[unlikely]] {
-        // 等时传输较少见
-        iso_packet_descriptor.resize(number_of_packets);
-        for (auto &iso_packet: iso_packet_descriptor) {
-            iso_packet.from_socket(sock);
+        for (int i = 0; i < num_iso; i++) {
+            UsbIpIsoPacketDescriptor iso_desc{};
+            iso_desc.from_socket(sock);
+            transfer.handler()->set_iso_descriptor(raw_handle, i, iso_desc);
         }
     }
-}
-
-bool usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::operator==(const UsbIpCmdSubmit &other) const {
-    bool non_data_equal = header == other.header &&
-                          transfer_flags == other.transfer_flags &&
-                          start_frame == other.start_frame &&
-                          number_of_packets == other.number_of_packets &&
-                          interval == other.interval &&
-                          setup == other.setup;
-    //非数据部分是否相等
-    if (!non_data_equal) {
-        return false;
-    }
-
-    //重新判断iso长度是否相等
-    if (iso_packet_descriptor.size() != other.iso_packet_descriptor.size()) {
-        return false;
-    }
-    //如果iso包长度为空，代表为非iso数据，则直接判断数据是否相等
-    if (iso_packet_descriptor.empty()) {
-        return transfer_buffer_length == other.transfer_buffer_length &&
-               data == other.data;
-    }
-    //iso描述符不为空则为iso包，则要判断每一个iso包描述符中的数据是否相等，允许data字段不相等
-    for (std::size_t i = 0; i < iso_packet_descriptor.size(); i++) {
-        //包描述符不相等则肯定不相等
-        if (iso_packet_descriptor[i] != other.iso_packet_descriptor[i]) {
-            return false;
-        }
-        //判断每个包描述的数据是否相等
-        if (std::memcmp(data.data() + iso_packet_descriptor[i].offset,
-                        other.data.data() + other.iso_packet_descriptor[i].offset,
-                        iso_packet_descriptor[i].actual_length) != 0) {
-            return false;
-        }
-    }
-    return true;
 }
 
 array_data_type<
@@ -657,7 +669,7 @@ usbipdcpp::UsbIpCommand::OpCmdVariant usbipdcpp::UsbIpCommand::get_op_from_socke
 }
 
 usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket(
-        asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+        asio::ip::tcp::socket &sock, AbstDeviceHandler* handler, usbipdcpp::error_code &ec) {
 
     try {
         auto command = read_u32(sock);
@@ -666,6 +678,7 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
         switch (command) {
             case USBIP_CMD_SUBMIT: {
                 auto cmd = UsbIpCmdSubmit{};
+                cmd.transfer.set_handler(handler);
                 cmd.from_socket(sock);
                 return cmd;
                 break;

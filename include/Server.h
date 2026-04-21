@@ -11,6 +11,7 @@
 #include <functional>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/awaitable.hpp>
 
 #include "Device.h"
 
@@ -135,7 +136,7 @@ public:
     ~Server();
 
 protected:
-    void do_accept(asio::ip::tcp::acceptor &acceptor);
+    asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
 
     bool is_device_using(const std::string &busid);
 
