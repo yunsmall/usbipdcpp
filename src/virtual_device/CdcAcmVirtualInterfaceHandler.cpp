@@ -216,8 +216,10 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
         TransferHandle transfer, std::error_code &ec) {
 
     if (ep.is_in()) {
-        // 中断 IN：主机请求状态通知
-        std::lock_guard lock(notification_mutex_);
+        // 同时锁两个 mutex，避免竞态条件
+        std::lock(notification_mutex_, interrupt_req_queue_mutex_);
+        std::lock_guard lock1(notification_mutex_, std::adopt_lock);
+        std::lock_guard lock2(interrupt_req_queue_mutex_, std::adopt_lock);
 
         if (!pending_notification_.empty()) {
             // 有待发送的通知
@@ -231,7 +233,6 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
         }
         else {
             // 没有待发送的通知，挂起请求
-            std::lock_guard queue_lock(interrupt_req_queue_mutex_);
             if (pending_interrupt_request_.has_value()) {
                 // 同一端点已有挂起请求，替换旧请求（响应0长度）
                 session->submit_ret_submit(
@@ -362,27 +363,25 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     SerialStateNotification notification;
     notification.data = state_bits;
 
-    std::lock_guard lock(notification_mutex_);
+    // 同时锁两个 mutex，避免竞态条件
+    std::lock(notification_mutex_, interrupt_req_queue_mutex_);
+    std::lock_guard lock1(notification_mutex_, std::adopt_lock);
+    std::lock_guard lock2(interrupt_req_queue_mutex_, std::adopt_lock);
+
     pending_notification_ = notification.to_bytes();
 
     // 如果有挂起的中断请求，立即响应
-    std::optional<IntRequest> req;
-    {
-        std::lock_guard queue_lock(interrupt_req_queue_mutex_);
-        if (pending_interrupt_request_.has_value()) {
-            req = std::move(*pending_interrupt_request_);
-            pending_interrupt_request_.reset();
-        }
-    }
+    if (pending_interrupt_request_.has_value()) {
+        auto req = std::move(*pending_interrupt_request_);
+        pending_interrupt_request_.reset();
 
-    if (req.has_value()) {
-        auto* trx = GenericTransfer::from_handle(req->transfer.get());
+        auto* trx = GenericTransfer::from_handle(req.transfer.get());
         trx->data = std::move(pending_notification_);
         trx->actual_length = trx->data.size();
         pending_notification_.clear();
         session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        req->seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(req->transfer)));
+                        req.seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(req.transfer)));
     }
 }
 

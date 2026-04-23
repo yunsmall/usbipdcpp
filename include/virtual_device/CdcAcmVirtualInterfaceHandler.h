@@ -174,7 +174,7 @@ protected:
         TransferHandle transfer;
     };
     std::optional<IntRequest> pending_interrupt_request_;
-    std::shared_mutex interrupt_req_queue_mutex_;
+    std::mutex interrupt_req_queue_mutex_;
 
     /**
      * @brief 待发送的状态通知数据
