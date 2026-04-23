@@ -460,12 +460,12 @@ void UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
 array_data_type<
     calculate_total_size_with_array<
         decltype(USBIP_VERSION),
-        decltype(OP_REQ_DEVLIST),
+        decltype(OP_REQ_IMPORT),
         decltype(UsbIpCommand::OpReqImport::status),
         decltype(UsbIpCommand::OpReqImport::busid)
     >()
 > usbipdcpp::UsbIpCommand::OpReqImport::to_bytes() const {
-    return to_network_array(USBIP_VERSION, OP_REQ_DEVLIST, status, busid);
+    return to_network_array(USBIP_VERSION, OP_REQ_IMPORT, status, busid);
 }
 
 void UsbIpCommand::OpReqImport::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
