@@ -56,10 +56,10 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
 }
 
 void LibevdevMouseInterfaceHandler::on_disconnection(error_code &ec) {
-    HidVirtualInterfaceHandler::on_disconnection(ec);
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+    HidVirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void LibevdevMouseInterfaceHandler::reset_relative_data() {

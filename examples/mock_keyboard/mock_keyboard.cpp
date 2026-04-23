@@ -35,10 +35,10 @@ void MockKeyboardInterfaceHandler::on_new_connection(Session &current_session, e
 }
 
 void MockKeyboardInterfaceHandler::on_disconnection(error_code &ec) {
-    HidVirtualInterfaceHandler::on_disconnection(ec);
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+    HidVirtualInterfaceHandler::on_disconnection(ec);
 }
 
 MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :

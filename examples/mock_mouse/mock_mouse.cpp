@@ -49,10 +49,10 @@ void MockMouseInterfaceHandler::on_new_connection(Session &current_session, erro
 }
 
 void MockMouseInterfaceHandler::on_disconnection(error_code &ec) {
-    HidVirtualInterfaceHandler::on_disconnection(ec);
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
+    HidVirtualInterfaceHandler::on_disconnection(ec);
 }
 
 MockMouseInterfaceHandler::MockMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :

@@ -157,32 +157,16 @@ int main() {
                         // 鼠标移动事件
                         switch (ev.code) {
                             case REL_X: {
-                                auto result = mouse_interface_handler.current_state.move_horizontal + ev.value;
-                                if (result > 127) {
-                                    mouse_interface_handler.current_state.move_horizontal = 127;
-                                }
-                                else if (result < -127) {
-                                    mouse_interface_handler.current_state.move_horizontal = -127;
-                                }
-                                else {
-                                    mouse_interface_handler.current_state.move_horizontal = result;
-                                }
+                                mouse_interface_handler.current_state.move_horizontal = std::clamp(
+                                        mouse_interface_handler.current_state.move_horizontal + ev.value, -127, 127);
 
                                 std::cout << std::format("Mouse moved: X={}", ev.value) << std::endl;
                                 break;
                             }
 
                             case REL_Y: {
-                                auto result = mouse_interface_handler.current_state.move_vertical + ev.value;
-                                if (result > 127) {
-                                    mouse_interface_handler.current_state.move_vertical = 127;
-                                }
-                                else if (result < -127) {
-                                    mouse_interface_handler.current_state.move_vertical = -127;
-                                }
-                                else {
-                                    mouse_interface_handler.current_state.move_vertical = result;
-                                }
+                                mouse_interface_handler.current_state.move_vertical = std::clamp(
+                                        mouse_interface_handler.current_state.move_vertical + ev.value, -127, 127);
 
                                 std::cout << std::format("Mouse moved: Y={}", ev.value) << std::endl;
                                 break;
@@ -197,16 +181,8 @@ int main() {
                                 break;
                             case REL_WHEEL_HI_RES: {
                                 auto resized = ev.value / 120;
-                                auto result = mouse_interface_handler.current_state.wheel_vertical + resized;
-                                if (result > 127) {
-                                    mouse_interface_handler.current_state.wheel_vertical = 127;
-                                }
-                                else if (result < -127) {
-                                    mouse_interface_handler.current_state.wheel_vertical = -127;
-                                }
-                                else {
-                                    mouse_interface_handler.current_state.wheel_vertical = result;
-                                }
+                                mouse_interface_handler.current_state.wheel_vertical = std::clamp(
+                                        mouse_interface_handler.current_state.wheel_vertical + resized, -127, 127);
 
                                 std::cout << std::format("Mouse wheel high resolution: Vertical={}", ev.value) <<
                                         std::endl;
