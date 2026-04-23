@@ -399,6 +399,19 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
+void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    std::lock_guard lock(interrupt_req_queue_mutex_);
+    if (pending_interrupt_request_.has_value() && pending_interrupt_request_->seqnum == unlink_seqnum) {
+        pending_interrupt_request_.reset();
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
+    else {
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
+}
+
 // ==================== CdcAcmDataInterfaceHandler ====================
 
 CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(
@@ -422,6 +435,19 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
     }
     tx_cv_.notify_all();
     VirtualInterfaceHandler::on_disconnection(ec);
+}
+
+void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    std::lock_guard lock(tx_mutex_);
+    if (pending_bulk_in_request_.has_value() && pending_bulk_in_request_->seqnum == unlink_seqnum) {
+        pending_bulk_in_request_.reset();
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
+    else {
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
 }
 
 void CdcAcmDataInterfaceHandler::handle_bulk_transfer(

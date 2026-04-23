@@ -159,6 +159,9 @@ public:
     // 连接生命周期管理
     void on_disconnection(std::error_code &ec) override;
 
+    // UNLINK 处理
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+
 protected:
     LineCoding line_coding_;
     ControlSignalState control_signal_state_;
@@ -395,6 +398,9 @@ public:
     // 连接生命周期管理
     void on_new_connection(Session &current_session, std::error_code &ec) override;
     void on_disconnection(std::error_code &ec) override;
+
+    // UNLINK 处理
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
     /**
