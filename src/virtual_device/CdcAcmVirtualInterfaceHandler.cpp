@@ -11,12 +11,21 @@ namespace usbipdcpp {
 
 RingBuffer::RingBuffer(std::size_t capacity) :
     capacity_(capacity) {
-    buffer_.resize(capacity_);
+    // 延迟分配：不在构造时分配内存，由 resize 或 write 触发
 }
 
 std::size_t RingBuffer::write(const std::uint8_t *data, std::size_t size) {
+    if (capacity_ == 0) {
+        return 0;  // 容量为0时不写入
+    }
+
     std::size_t available = capacity_ - count_;
     std::size_t to_write = std::min(size, available);
+
+    // 延迟分配：首次写入时才分配内存
+    if (buffer_.size() < capacity_) {
+        buffer_.resize(capacity_);
+    }
 
     for (std::size_t i = 0; i < to_write; ++i) {
         buffer_[tail_] = data[i];
@@ -78,19 +87,34 @@ void RingBuffer::clear() {
 }
 
 void RingBuffer::resize(std::size_t new_capacity) {
+    if (new_capacity == 0) {
+        // 清空并释放内存
+        buffer_.clear();
+        buffer_.shrink_to_fit();
+        capacity_ = 0;
+        head_ = 0;
+        tail_ = 0;
+        count_ = 0;
+        return;
+    }
+
     // 读取现有数据
     std::vector<std::uint8_t> old_data(count_);
     read(old_data.data(), count_);
 
-    // 重新分配
+    // 释放旧内存，重新分配到精确大小
+    buffer_.clear();
+    buffer_.shrink_to_fit();
     buffer_.resize(new_capacity);
     capacity_ = new_capacity;
     head_ = 0;
     tail_ = 0;
     count_ = 0;
 
-    // 写回数据
-    write(old_data.data(), old_data.size());
+    // 写回数据（不超过新容量）
+    if (!old_data.empty()) {
+        write(old_data.data(), std::min(old_data.size(), new_capacity));
+    }
 }
 
 // ==================== CdcAcmCommunicationInterfaceHandler ====================
@@ -118,7 +142,8 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
             auto* trx = GenericTransfer::from_handle(transfer.get());
             switch (request) {
                 case CdcAcmRequest::GetLineCoding: {
-                    trx->data = line_coding_.to_bytes();
+                    auto bytes = line_coding_.to_bytes();
+                    trx->data.assign(bytes.begin(), bytes.end());
                     if (setup_packet.length < trx->data.size()) {
                         trx->data.resize(setup_packet.length);
                     }
@@ -205,9 +230,17 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
                             seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
         }
         else {
-            // 没有待发送的通知，加入队列等待
+            // 没有待发送的通知，挂起请求
             std::lock_guard queue_lock(interrupt_req_queue_mutex_);
-            interrupt_req_queue_.push_back({seqnum, std::move(transfer)});
+            if (pending_interrupt_request_.has_value()) {
+                // USB协议错误：同一端点已有挂起请求
+                SPDLOG_WARN("Interrupt request while another is pending, returning EPIPE");
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            }
+            else {
+                pending_interrupt_request_.emplace(IntRequest{seqnum, std::move(transfer)});
+            }
         }
     }
     else {
@@ -333,26 +366,24 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     std::lock_guard lock(notification_mutex_);
     pending_notification_ = notification.to_bytes();
 
-    // 如果有等待的中断请求，立即响应
-    IntRequest req{};
-    bool has_pending = false;
+    // 如果有挂起的中断请求，立即响应
+    std::optional<IntRequest> req;
     {
         std::lock_guard queue_lock(interrupt_req_queue_mutex_);
-        if (!interrupt_req_queue_.empty()) {
-            req = std::move(interrupt_req_queue_.front());
-            interrupt_req_queue_.pop_front();
-            has_pending = true;
+        if (pending_interrupt_request_.has_value()) {
+            req = std::move(*pending_interrupt_request_);
+            pending_interrupt_request_.reset();
         }
     }
 
-    if (has_pending) {
-        auto* trx = GenericTransfer::from_handle(req.transfer.get());
+    if (req.has_value()) {
+        auto* trx = GenericTransfer::from_handle(req->transfer.get());
         trx->data = std::move(pending_notification_);
         trx->actual_length = trx->data.size();
         pending_notification_.clear();
         session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        req.seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(req.transfer)));
+                        req->seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(req->transfer)));
     }
 }
 
@@ -364,7 +395,7 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
     {
         std::lock_guard lock(interrupt_req_queue_mutex_);
         // TransferHandle 析构时会自动释放
-        interrupt_req_queue_.clear();
+        pending_interrupt_request_.reset();
     }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
@@ -373,8 +404,7 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
 
 CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(
         UsbInterface &handle_interface, StringPool &string_pool) :
-    VirtualInterfaceHandler(handle_interface, string_pool),
-    tx_buffer_(64 * 1024) {
+    VirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
 void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
@@ -389,7 +419,7 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
         disconnected_ = true;
         tx_buffer_.clear();
         // TransferHandle 析构时会自动释放
-        bulk_in_req_queue_.clear();
+        pending_bulk_in_request_.reset();
     }
     tx_cv_.notify_all();
     VirtualInterfaceHandler::on_disconnection(ec);
@@ -402,7 +432,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
 
     if (ep.is_in()) {
         // Bulk IN：主机请求数据
-        // tx_mutex_ 保护 tx_buffer_ 和 bulk_in_req_queue_
+        // tx_mutex_ 保护 tx_buffer_ 和 pending_bulk_in_request_
         std::lock_guard lock(tx_mutex_);
 
         if (tx_buffer_.empty()) {
@@ -418,22 +448,34 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
                                     seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
                 }
                 else {
-                    // 数据大于请求长度，发送部分，剩余写入缓冲区
+                    // 数据大于请求长度，移动整个data，发送部分，剩余写入缓冲区
                     auto* trx = GenericTransfer::from_handle(transfer.get());
-                    trx->data.assign(data.begin(), data.begin() + transfer_buffer_length);
-                    trx->actual_length = trx->data.size();
+                    trx->data = std::move(data);
+                    trx->actual_length = transfer_buffer_length;
+
+                    // 剩余数据写入缓冲区
+                    tx_buffer_.write(trx->data.data() + transfer_buffer_length,
+                                     trx->data.size() - transfer_buffer_length);
+
+                    // 截断到发送长度
+                    trx->data.resize(transfer_buffer_length);
+
                     session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                                     seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-
-                    // 剩余数据写入缓冲区
-                    tx_buffer_.write(data.data() + transfer_buffer_length,
-                                     data.size() - transfer_buffer_length);
                 }
             }
             else {
-                // 没有数据可发送，加入等待队列
-                bulk_in_req_queue_.push_back({seqnum, transfer_buffer_length, std::move(transfer)});
+                // 没有数据可发送，挂起请求
+                if (pending_bulk_in_request_.has_value()) {
+                    // USB协议错误：同一端点已有挂起请求
+                    SPDLOG_WARN("Bulk IN request while another is pending, returning EPIPE");
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                }
+                else {
+                    pending_bulk_in_request_.emplace(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+                }
             }
         }
         else {
@@ -654,16 +696,16 @@ void CdcAcmDataInterfaceHandler::set_comm_handler(CdcAcmCommunicationInterfaceHa
 
 void CdcAcmDataInterfaceHandler::try_send_pending_locked() {
     // 调用者必须已持有 tx_mutex_
-    // 此函数操作 tx_buffer_ 和 bulk_in_req_queue_
+    // 此函数操作 tx_buffer_ 和 pending_bulk_in_request_
 
-    // 检查是否有等待的请求
-    if (bulk_in_req_queue_.empty() || tx_buffer_.empty()) {
+    // 检查是否有挂起的请求
+    if (!pending_bulk_in_request_.has_value() || tx_buffer_.empty()) {
         return;
     }
 
-    // 从队列取出请求
-    BulkInRequest request = std::move(bulk_in_req_queue_.front());
-    bulk_in_req_queue_.pop_front();
+    // 取出挂起的请求
+    auto request = std::move(*pending_bulk_in_request_);
+    pending_bulk_in_request_.reset();
 
     // 从缓冲区读取并发送
     send_from_tx_buffer_locked(request.seqnum, request.length, std::move(request.transfer));

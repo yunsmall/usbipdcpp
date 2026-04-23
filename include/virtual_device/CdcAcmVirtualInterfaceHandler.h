@@ -5,7 +5,8 @@
 #include "constant.h"
 #include "CdcAcmConstants.h"
 #include "protocol.h"
-#include <deque>
+#include <array>
+#include <optional>
 #include <shared_mutex>
 #include <mutex>
 #include <condition_variable>
@@ -23,16 +24,16 @@ struct LineCoding {
     std::uint8_t bParityType = 0;      // 校验: 0=无, 1=奇, 2=偶, 3=标记, 4=空格
     std::uint8_t bDataBits = 8;        // 数据位: 5, 6, 7, 8, 16
 
-    [[nodiscard]] std::vector<std::uint8_t> to_bytes() const {
-        std::vector<std::uint8_t> result;
-        result.push_back(dwDTERate & 0xFF);
-        result.push_back((dwDTERate >> 8) & 0xFF);
-        result.push_back((dwDTERate >> 16) & 0xFF);
-        result.push_back((dwDTERate >> 24) & 0xFF);
-        result.push_back(bCharFormat);
-        result.push_back(bParityType);
-        result.push_back(bDataBits);
-        return result;
+    [[nodiscard]] std::array<std::uint8_t, 7> to_bytes() const {
+        return {{
+            static_cast<std::uint8_t>(dwDTERate & 0xFF),
+            static_cast<std::uint8_t>((dwDTERate >> 8) & 0xFF),
+            static_cast<std::uint8_t>((dwDTERate >> 16) & 0xFF),
+            static_cast<std::uint8_t>((dwDTERate >> 24) & 0xFF),
+            bCharFormat,
+            bParityType,
+            bDataBits
+        }};
     }
 
     static LineCoding from_bytes(const std::vector<std::uint8_t> &data) {
@@ -163,13 +164,13 @@ protected:
     ControlSignalState control_signal_state_;
 
     /**
-     * @brief 中断传输队列
+     * @brief 挂起的中断传输请求（USB协议规定一个端点同一时间只能有一个挂起请求）
      */
     struct IntRequest {
         std::uint32_t seqnum;
         TransferHandle transfer;
     };
-    std::deque<IntRequest> interrupt_req_queue_;
+    std::optional<IntRequest> pending_interrupt_request_;
     std::shared_mutex interrupt_req_queue_mutex_;
 
     /**
@@ -185,7 +186,7 @@ protected:
 };
 
 /**
- * @brief 环形缓冲区，预分配内存避免频繁动态分配
+ * @brief 环形缓冲区，支持延迟分配
  */
 class RingBuffer {
 public:
@@ -405,17 +406,17 @@ protected:
     std::size_t tx_low_watermark_ = 16 * 1024;
 
     /**
-     * @brief 批量 IN 请求队列
+     * @brief 挂起的批量 IN 请求（USB协议规定一个端点同一时间只能有一个挂起请求）
      */
     struct BulkInRequest {
         std::uint32_t seqnum;
         std::uint32_t length;
         TransferHandle transfer;
     };
-    std::deque<BulkInRequest> bulk_in_req_queue_;
+    std::optional<BulkInRequest> pending_bulk_in_request_;
 
     /**
-     * @brief 保护 tx_buffer_ 和 bulk_in_req_queue_ 的互斥锁
+     * @brief 保护 tx_buffer_ 和 pending_bulk_in_request_ 的互斥锁
      * @note 这两个资源需要协同操作，用同一个锁避免嵌套锁问题
      */
     mutable std::mutex tx_mutex_;

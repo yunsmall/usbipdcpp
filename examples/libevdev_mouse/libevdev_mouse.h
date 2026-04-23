@@ -5,11 +5,10 @@
 #include "protocol.h"
 
 #include <mutex>
-#include <condition_variable>
-#include <deque>
-#include <shared_mutex>
 #include <thread>
 #include <atomic>
+#include <array>
+#include <condition_variable>
 
 namespace usbipdcpp {
 
@@ -19,42 +18,15 @@ public:
 
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
-    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   TransferHandle transfer,
-                                   std::error_code &ec) override;
 
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
-
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
+    // 重写：主机请求输入报告时返回当前状态
+    data_type on_input_report_requested(std::uint16_t length) override;
 
     std::uint16_t get_report_descriptor_size() override;
-
     data_type get_report_descriptor() override;
 
-
-    void handle_non_hid_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                                 const SetupPacket &setup_packet,
-                                                 TransferHandle transfer, std::error_code &ec) override;
     data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                  std::uint32_t *p_status) override;
-    void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length, const data_type &data,
-                            std::uint32_t *p_status) override;
     data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                std::uint32_t *p_status) override;
     void request_set_idle(std::uint8_t speed, std::uint32_t *p_status) override;
@@ -151,20 +123,11 @@ X/Y轴相对移动量
 
     std::atomic_bool should_immediately_stop = false;
 
-    State last_state;
     State current_state;
-    std::condition_variable state_cv;
+    State last_state;  // 用于检测状态变化
     std::mutex state_mutex;
-
-    struct IntRequest {
-        std::uint32_t seqnum;
-        TransferHandle transfer;
-    };
-
-    std::deque<IntRequest> int_req_queue;
-    std::shared_mutex int_req_queue_mutex;
-
-    std::thread send_thread;
+    std::condition_variable state_cv;  // 等待状态变化
+    std::thread send_thread;  // 发送线程
 
     std::atomic<std::int16_t> idle_speed = 1;
 };

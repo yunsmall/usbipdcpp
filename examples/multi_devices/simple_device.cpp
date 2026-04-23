@@ -21,75 +21,9 @@ SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &ha
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-void SimpleHidInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
-                                                          std::uint32_t transfer_flags,
-                                                          std::uint32_t transfer_buffer_length,
-                                                          usbipdcpp::TransferHandle transfer,
-                                                          std::error_code &ec) {
-    SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_interrupt_transfer on ep 0x{:02x}", ep.address);
-
-    if (ep.is_in()) {
-        // 返回一个简单的数据
-        auto* trx = usbipdcpp::GenericTransfer::from_handle(transfer.get());
-        trx->data = {0x00};
-        trx->actual_length = trx->data.size();
-
-        session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-    }
-    else {
-        // OUT 传输：actual_length 为设备实际接收的字节数，transfer 析构时自动释放
-        session->submit_ret_submit(
-                usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
-    }
-}
-
-void SimpleHidInterfaceHandler::on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) {
-    HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
-    SPDLOG_INFO("SimpleHidInterfaceHandler connected");
-}
-
-void SimpleHidInterfaceHandler::on_disconnection(usbipdcpp::error_code &ec) {
-    HidVirtualInterfaceHandler::on_disconnection(ec);
-    SPDLOG_INFO("SimpleHidInterfaceHandler disconnected");
-}
-
-void SimpleHidInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-
-void SimpleHidInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                               std::uint32_t *p_status) {
-    *p_status = 0;
-}
-
-std::uint8_t SimpleHidInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
-    *p_status = 0;
-    return 0;
-}
-
-void SimpleHidInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-
-std::uint16_t SimpleHidInterfaceHandler::request_get_status(std::uint32_t *p_status) {
-    *p_status = 0;
-    return 0;
-}
-
-std::uint16_t SimpleHidInterfaceHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
-    *p_status = 0;
-    return 0;
-}
-
-void SimpleHidInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = static_cast<std::uint32_t>(usbipdcpp::UrbStatusType::StatusEPIPE);
-}
-
-void SimpleHidInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                             std::uint32_t *p_status) {
-    *p_status = static_cast<std::uint32_t>(usbipdcpp::UrbStatusType::StatusEPIPE);
+// 主机请求输入报告时返回固定数据
+usbipdcpp::data_type SimpleHidInterfaceHandler::on_input_report_requested(std::uint16_t length) {
+    return {0x00};
 }
 
 std::uint16_t SimpleHidInterfaceHandler::get_report_descriptor_size() {
@@ -98,41 +32,6 @@ std::uint16_t SimpleHidInterfaceHandler::get_report_descriptor_size() {
 
 usbipdcpp::data_type SimpleHidInterfaceHandler::get_report_descriptor() {
     return report_descriptor_;
-}
-
-void SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb(
-        std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
-        std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const usbipdcpp::SetupPacket &setup_packet,
-        usbipdcpp::TransferHandle transfer, std::error_code &ec) {
-    SPDLOG_DEBUG("SimpleHidInterfaceHandler::handle_non_hid_request_type_control_urb");
-    // transfer 析构时自动释放
-    session->submit_ret_submit(
-            usbipdcpp::UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-}
-
-usbipdcpp::data_type SimpleHidInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,
-                                                                   std::uint16_t length,
-                                                                   std::uint32_t *p_status) {
-    *p_status = 0;
-    return {0x00};
-}
-
-void SimpleHidInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                   const usbipdcpp::data_type &data,
-                                                   std::uint32_t *p_status) {
-    *p_status = 0;
-}
-
-usbipdcpp::data_type SimpleHidInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
-                                                                 std::uint16_t length,
-                                                                 std::uint32_t *p_status) {
-    *p_status = 0;
-    return {};
-}
-
-void SimpleHidInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
-    *p_status = 0;
 }
 
 // SimpleDeviceHandler 实现

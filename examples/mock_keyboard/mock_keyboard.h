@@ -3,6 +3,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <array>
 
 #include "virtual_device/SimpleVirtualDeviceHandler.h"
 #include "virtual_device/HidVirtualInterfaceHandler.h"
@@ -15,44 +16,17 @@ class MockKeyboardInterfaceHandler : public usbipdcpp::HidVirtualInterfaceHandle
 public:
     MockKeyboardInterfaceHandler(usbipdcpp::UsbInterface &handle_interface, usbipdcpp::StringPool &string_pool);
 
-    void handle_interrupt_transfer(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
-                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   usbipdcpp::TransferHandle transfer,
-                                   std::error_code &ec) override;
     void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override;
     void on_disconnection(usbipdcpp::error_code &ec) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
-
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
 
     std::uint16_t get_report_descriptor_size() override;
-
     usbipdcpp::data_type get_report_descriptor() override;
 
+    // 重写：主机请求输入报告时返回当前状态
+    usbipdcpp::data_type on_input_report_requested(std::uint16_t length) override;
 
-    void handle_non_hid_request_type_control_urb(std::uint32_t seqnum, const usbipdcpp::UsbEndpoint &ep,
-                                                 std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                                 const usbipdcpp::SetupPacket &setup_packet,
-                                                 usbipdcpp::TransferHandle transfer, std::error_code &ec) override;
     usbipdcpp::data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) override;
-    void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                            const usbipdcpp::data_type &data,
-                            std::uint32_t *p_status) override;
     usbipdcpp::data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                           std::uint32_t *p_status) override;
     void request_set_idle(std::uint8_t speed, std::uint32_t *p_status) override;
@@ -143,19 +117,10 @@ public:
 
     std::atomic_bool should_immediately_stop = false;
 
-    State last_state;
     State current_state;
-    std::condition_variable state_cv;
+    State last_state;  // 用于检测状态变化
     std::mutex state_mutex;
-
-
-    struct IntRequest {
-        std::uint32_t seqnum;
-        usbipdcpp::TransferHandle transfer;
-    };
-
-    std::deque<IntRequest> int_req_queue;
-    std::shared_mutex int_req_queue_mutex;
+    std::condition_variable state_cv;  // 等待状态变化
 
     std::thread send_thread;
     std::atomic<std::int16_t> idle_speed = 1;

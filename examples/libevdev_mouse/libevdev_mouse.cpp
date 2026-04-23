@@ -4,11 +4,10 @@
 namespace usbipdcpp {
 
 void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
-    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
     should_immediately_stop = false;
     last_state = State{};
     current_state = State{};
-    int_req_queue.clear();
     idle_speed = 1;
 
     send_thread = std::thread([this]() {
@@ -20,75 +19,42 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
             });
             if (should_immediately_stop)
                 break;
-            //清空所有发来的中断传输
-            while (true) {
-                IntRequest req{};
-                bool has_req = false;
-                {
-                    std::lock_guard lock(int_req_queue_mutex);
-                    auto at_begin = int_req_queue.begin();
-                    if (at_begin != int_req_queue.end()) {
-                        req = std::move(*at_begin);
-                        int_req_queue.pop_front();
-                        has_req = true;
-                    }
-                }
 
-                //如果有值，则发送
-                if (has_req) {
-                    auto* trx = GenericTransfer::from_handle(req.transfer.get());
-                    trx->data.resize(4);
-                    {
-                        if (current_state.left_pressed) {
-                            trx->data[0] |= 0b00000001;
-                        }
-                        if (current_state.right_pressed) {
-                            trx->data[0] |= 0b00000010;
-                        }
-                        if (current_state.middle_pressed) {
-                            trx->data[0] |= 0b00000100;
-                        }
-                        if (current_state.side_pressed) {
-                            trx->data[0] |= 0b00001000;
-                        }
-                        if (current_state.extra_pressed) {
-                            trx->data[0] |= 0b00010000;
-                        }
-                        trx->data[1] = current_state.move_horizontal;
-                        trx->data[2] = current_state.move_vertical;
-                        trx->data[3] = current_state.wheel_vertical;
-                    }
-                    trx->actual_length = 4;
-
-                    if (!should_immediately_stop) {
-                        session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                        req.seqnum, 4, std::move(req.transfer)));
-                    }
-                    // TransferHandle 析构时自动释放（should_immediately_stop 为 true 时）
-                }
-                //没值了就继续等待
-                else {
-                    break;
-                }
+            // 构造报告数据
+            std::array<std::uint8_t, 4> report{};
+            if (current_state.left_pressed) {
+                report[0] |= 0b00000001;
             }
+            if (current_state.right_pressed) {
+                report[0] |= 0b00000010;
+            }
+            if (current_state.middle_pressed) {
+                report[0] |= 0b00000100;
+            }
+            if (current_state.side_pressed) {
+                report[0] |= 0b00001000;
+            }
+            if (current_state.extra_pressed) {
+                report[0] |= 0b00010000;
+            }
+            report[1] = static_cast<std::uint8_t>(current_state.move_horizontal);
+            report[2] = static_cast<std::uint8_t>(current_state.move_vertical);
+            report[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
+
+            // 使用基类的 send_input_report 发送报告
+            send_input_report(asio::buffer(report));
+
             reset_relative_data();
             last_state = current_state;
         }
     });
-
 }
 
 void LibevdevMouseInterfaceHandler::on_disconnection(error_code &ec) {
+    HidVirtualInterfaceHandler::on_disconnection(ec);
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
-
-    // TransferHandle 析构时自动释放
-    std::lock_guard lock(int_req_queue_mutex);
-    int_req_queue.clear();
-
-    VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void LibevdevMouseInterfaceHandler::reset_relative_data() {
@@ -101,68 +67,33 @@ LibevdevMouseInterfaceHandler::LibevdevMouseInterfaceHandler(UsbInterface &handl
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-void LibevdevMouseInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum,
-                                                              const UsbEndpoint &ep,
-                                                              std::uint32_t transfer_flags,
-                                                              std::uint32_t transfer_buffer_length,
-                                                              TransferHandle transfer,
-                                                              std::error_code &ec) {
-    if (ep.is_in()) {
-        //往队列里添加东西
-        std::lock_guard lock(int_req_queue_mutex);
-        int_req_queue.emplace_back(IntRequest{seqnum, std::move(transfer)});
+// 主机请求输入报告时返回当前状态
+data_type LibevdevMouseInterfaceHandler::on_input_report_requested(std::uint16_t length) {
+    std::lock_guard lock(state_mutex);
+    data_type result(4, 0);
+    if (current_state.left_pressed) {
+        result[0] |= 0b00000001;
     }
-    else {
-        // OUT 传输没有数据阶段，transfer 析构时自动释放
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0)
-                );
+    if (current_state.right_pressed) {
+        result[0] |= 0b00000010;
     }
-
-}
-
-void LibevdevMouseInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void LibevdevMouseInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector,
-                                                                   std::uint8_t ep_address,
-                                                                   std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-std::uint8_t LibevdevMouseInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-
-void LibevdevMouseInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    if (alternate_setting != 0) {
-        SPDLOG_WARN("unhandled request_set_interface");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    if (current_state.middle_pressed) {
+        result[0] |= 0b00000100;
     }
-}
+    if (current_state.side_pressed) {
+        result[0] |= 0b00001000;
+    }
+    if (current_state.extra_pressed) {
+        result[0] |= 0b00010000;
+    }
+    result[1] = static_cast<std::uint8_t>(current_state.move_horizontal);
+    result[2] = static_cast<std::uint8_t>(current_state.move_vertical);
+    result[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
 
-std::uint16_t LibevdevMouseInterfaceHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-
-std::uint16_t LibevdevMouseInterfaceHandler::request_endpoint_get_status(
-        std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
-}
-
-void LibevdevMouseInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void LibevdevMouseInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector,
-                                                                 std::uint8_t ep_address,
-                                                                 std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    if (result.size() > length) {
+        result.resize(length);
+    }
+    return result;
 }
 
 std::uint16_t LibevdevMouseInterfaceHandler::get_report_descriptor_size() {
@@ -171,18 +102,6 @@ std::uint16_t LibevdevMouseInterfaceHandler::get_report_descriptor_size() {
 
 data_type LibevdevMouseInterfaceHandler::get_report_descriptor() {
     return report_descriptor;
-
-}
-
-void LibevdevMouseInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
-                                                                            const UsbEndpoint &ep,
-                                                                            std::uint32_t transfer_flags,
-                                                                            std::uint32_t transfer_buffer_length,
-                                                                            const SetupPacket &setup_packet,
-                                                                            TransferHandle transfer,
-                                                                            std::error_code &ec) {
-    // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 data_type LibevdevMouseInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,
@@ -239,12 +158,6 @@ data_type LibevdevMouseInterfaceHandler::request_get_report(std::uint8_t type, s
     SPDLOG_WARN("unhandled request_get_report");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
-}
-
-void LibevdevMouseInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                       const data_type &data, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_report");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 data_type LibevdevMouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,

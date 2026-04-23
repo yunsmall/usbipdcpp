@@ -7,7 +7,6 @@ void MockKeyboardInterfaceHandler::on_new_connection(Session &current_session, e
     should_immediately_stop = false;
     last_state = State{};
     current_state = State{};
-    int_req_queue.clear();
     idle_speed = 1;
 
     send_thread = std::thread([this]() {
@@ -19,43 +18,17 @@ void MockKeyboardInterfaceHandler::on_new_connection(Session &current_session, e
             });
             if (should_immediately_stop)
                 break;
-            //清空所有发来的中断传输
-            while (true) {
-                IntRequest req{};
-                bool has_req = false;
-                {
-                    std::lock_guard lock(int_req_queue_mutex);
-                    auto at_begin = int_req_queue.begin();
-                    if (at_begin != int_req_queue.end()) {
-                        req = std::move(*at_begin);
-                        int_req_queue.pop_front();
-                        has_req = true;
-                    }
-                }
 
-                //如果有值，则发送
-                if (has_req) {
-                    auto* trx = GenericTransfer::from_handle(req.transfer.get());
-                    trx->data.resize(8);
-                    trx->data[0] = current_state.modifier;
-                    // trx->data[1] = 0; // 保留字节，已经是0
-                    for (size_t i = 0; i < 6; ++i) {
-                        trx->data[2 + i] = current_state.keys[i];
-                    }
-                    trx->actual_length = 8;
-
-                    if (!should_immediately_stop) {
-                        session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                        req.seqnum, 8, std::move(req.transfer)));
-                    }
-                    // TransferHandle 析构时会自动释放（should_immediately_stop 为 true 时）
-                }
-                //没值了就继续等待
-                else {
-                    break;
-                }
+            // 构造报告数据
+            std::array<std::uint8_t, 8> report{};
+            report[0] = current_state.modifier;
+            for (size_t i = 0; i < 6; ++i) {
+                report[2 + i] = current_state.keys[i];
             }
+
+            // 使用基类的 send_input_report 发送报告
+            send_input_report(asio::buffer(report));
+
             last_state = current_state;
         }
     });
@@ -66,75 +39,24 @@ void MockKeyboardInterfaceHandler::on_disconnection(error_code &ec) {
     should_immediately_stop = true;
     state_cv.notify_all();
     send_thread.join();
-
-    // 清理队列中残留的 transfer（TransferHandle 析构时会自动释放）
-    std::lock_guard lock(int_req_queue_mutex);
-    int_req_queue.clear();
 }
 
 MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-void MockKeyboardInterfaceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                             std::uint32_t transfer_flags,
-                                                             std::uint32_t transfer_buffer_length,
-                                                             TransferHandle transfer,
-                                                             std::error_code &ec) {
-    if (ep.is_in()) {
-        //往队列里添加东西
-        std::lock_guard lock(int_req_queue_mutex);
-        int_req_queue.emplace_back(IntRequest{seqnum, std::move(transfer)});
+// 主机请求输入报告时返回当前状态
+data_type MockKeyboardInterfaceHandler::on_input_report_requested(std::uint16_t length) {
+    std::lock_guard lock(state_mutex);
+    data_type result(8, 0);
+    result[0] = current_state.modifier;
+    for (size_t i = 0; i < 6; ++i) {
+        result[2 + i] = current_state.keys[i];
     }
-    else {
-        // OUT 传输没有数据阶段，transfer 析构时自动释放
-        session->submit_ret_submit(
-        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    if (result.size() > length) {
+        result.resize(length);
     }
-
-}
-
-void MockKeyboardInterfaceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockKeyboardInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector,
-                                                                  std::uint8_t ep_address,
-                                                                  std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_clear_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-std::uint8_t MockKeyboardInterfaceHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockKeyboardInterfaceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    if (alternate_setting != 0) {
-        SPDLOG_WARN("unhandled request_set_interface");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    }
-}
-
-std::uint16_t MockKeyboardInterfaceHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-
-std::uint16_t MockKeyboardInterfaceHandler::request_endpoint_get_status(
-        std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
-}
-
-void MockKeyboardInterfaceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
-void MockKeyboardInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                                std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_endpoint_set_feature");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    return result;
 }
 
 std::uint16_t MockKeyboardInterfaceHandler::get_report_descriptor_size() {
@@ -143,18 +65,6 @@ std::uint16_t MockKeyboardInterfaceHandler::get_report_descriptor_size() {
 
 data_type MockKeyboardInterfaceHandler::get_report_descriptor() {
     return report_descriptor;
-
-}
-
-void MockKeyboardInterfaceHandler::handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
-                                                                           const UsbEndpoint &ep,
-                                                                           std::uint32_t transfer_flags,
-                                                                           std::uint32_t transfer_buffer_length,
-                                                                           const SetupPacket &setup_packet,
-                                                                           TransferHandle transfer,
-                                                                           std::error_code &ec) {
-    // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, std::uint8_t report_id,
@@ -173,12 +83,6 @@ data_type MockKeyboardInterfaceHandler::request_get_report(std::uint8_t type, st
     SPDLOG_WARN("unhandled request_get_report");
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
-}
-
-void MockKeyboardInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                                      const data_type &data, std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_report");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 data_type MockKeyboardInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
