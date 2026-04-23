@@ -21,11 +21,6 @@ SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &ha
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-// 主机请求输入报告时返回固定数据
-usbipdcpp::data_type SimpleHidInterfaceHandler::on_input_report_requested(std::uint16_t length) {
-    return {0x00};
-}
-
 std::uint16_t SimpleHidInterfaceHandler::get_report_descriptor_size() {
     return report_descriptor_.size();
 }

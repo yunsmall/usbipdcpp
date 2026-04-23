@@ -233,14 +233,13 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
             // 没有待发送的通知，挂起请求
             std::lock_guard queue_lock(interrupt_req_queue_mutex_);
             if (pending_interrupt_request_.has_value()) {
-                // USB协议错误：同一端点已有挂起请求
-                SPDLOG_WARN("Interrupt request while another is pending, returning EPIPE");
+                // 同一端点已有挂起请求，替换旧请求（响应0长度）
                 session->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+                                pending_interrupt_request_->seqnum, 0));
+                pending_interrupt_request_.reset();
             }
-            else {
-                pending_interrupt_request_.emplace(IntRequest{seqnum, std::move(transfer)});
-            }
+            pending_interrupt_request_.emplace(IntRequest{seqnum, std::move(transfer)});
         }
     }
     else {
@@ -468,14 +467,13 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
             else {
                 // 没有数据可发送，挂起请求
                 if (pending_bulk_in_request_.has_value()) {
-                    // USB协议错误：同一端点已有挂起请求
-                    SPDLOG_WARN("Bulk IN request while another is pending, returning EPIPE");
+                    // 同一端点已有挂起请求，替换旧请求（响应0长度）
                     session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+                                    pending_bulk_in_request_->seqnum, 0));
+                    pending_bulk_in_request_.reset();
                 }
-                else {
-                    pending_bulk_in_request_.emplace(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
-                }
+                pending_bulk_in_request_.emplace(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
             }
         }
         else {

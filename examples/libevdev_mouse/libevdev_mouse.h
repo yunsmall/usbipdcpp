@@ -19,9 +19,6 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
 
-    // 重写：主机请求输入报告时返回当前状态
-    data_type on_input_report_requested(std::uint16_t length) override;
-
     std::uint16_t get_report_descriptor_size() override;
     data_type get_report_descriptor() override;
 
@@ -124,7 +121,7 @@ X/Y轴相对移动量
     std::atomic_bool should_immediately_stop = false;
 
     State current_state;
-    State last_state;  // 用于检测状态变化
+    State last_state;  // 储存上次发送时的状态
     std::mutex state_mutex;
     std::condition_variable state_cv;  // 等待状态变化
     std::thread send_thread;  // 发送线程

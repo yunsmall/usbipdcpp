@@ -19,9 +19,6 @@ public:
     std::uint16_t get_report_descriptor_size() override;
     usbipdcpp::data_type get_report_descriptor() override;
 
-    // 重写：主机请求输入报告时返回固定数据
-    usbipdcpp::data_type on_input_report_requested(std::uint16_t length) override;
-
 private:
     // 简单的HID报告描述符 - 一个按钮
     static const usbipdcpp::data_type report_descriptor_;

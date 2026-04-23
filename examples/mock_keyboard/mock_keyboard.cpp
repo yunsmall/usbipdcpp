@@ -45,20 +45,6 @@ MockKeyboardInterfaceHandler::MockKeyboardInterfaceHandler(UsbInterface &handle_
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-// 主机请求输入报告时返回当前状态
-data_type MockKeyboardInterfaceHandler::on_input_report_requested(std::uint16_t length) {
-    std::lock_guard lock(state_mutex);
-    data_type result(8, 0);
-    result[0] = current_state.modifier;
-    for (size_t i = 0; i < 6; ++i) {
-        result[2 + i] = current_state.keys[i];
-    }
-    if (result.size() > length) {
-        result.resize(length);
-    }
-    return result;
-}
-
 std::uint16_t MockKeyboardInterfaceHandler::get_report_descriptor_size() {
     return report_descriptor.size();
 }

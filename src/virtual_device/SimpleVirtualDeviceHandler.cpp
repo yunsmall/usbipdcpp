@@ -59,6 +59,3 @@ void usbipdcpp::SimpleVirtualDeviceHandler::set_descriptor(std::uint16_t configu
     SPDLOG_WARN("Unimplement set_descriptor to simple device");
 }
 
-void SimpleVirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    SPDLOG_WARN("Unimplemented handle_unlink_seqnum, unlink_seqnum: {}, cmd_seqnum: {}", unlink_seqnum, cmd_seqnum);
-}

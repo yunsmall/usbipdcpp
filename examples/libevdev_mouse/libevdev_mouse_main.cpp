@@ -149,7 +149,9 @@ int main() {
 
             // 读取所有可用事件
             while ((rc = libevdev_next_event(opened_mouse.dev, LIBEVDEV_READ_FLAG_NORMAL, &ev)) == 0) {
+                // std::cout<<"尝试获取锁"<<std::endl;
                 std::lock_guard lock(mouse_interface_handler.state_mutex);
+                // std::cout<<"获取锁"<<std::endl;
                 switch (ev.type) {
                     case EV_REL:
                         // 鼠标移动事件

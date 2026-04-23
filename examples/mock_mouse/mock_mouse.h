@@ -22,9 +22,6 @@ public:
     std::uint16_t get_report_descriptor_size() override;
     usbipdcpp::data_type get_report_descriptor() override;
 
-    // 重写：主机请求输入报告时返回当前状态
-    usbipdcpp::data_type on_input_report_requested(std::uint16_t length) override;
-
     // 重写：支持按报告ID获取报告
     usbipdcpp::data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) override;

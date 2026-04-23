@@ -14,14 +14,17 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
         while (!should_immediately_stop) {
             //等待状态变化通知
             std::unique_lock lock(state_mutex);
+            std::array<std::uint8_t, 4> report;
+
             state_cv.wait(lock, [this]() {
                 return current_state != last_state || should_immediately_stop;
             });
+            // spdlog::info("收到state_cv通知");
             if (should_immediately_stop)
                 break;
 
-            // 构造报告数据
-            std::array<std::uint8_t, 4> report{};
+            // 构造报告数据（在锁内读取状态）
+            report = {};
             if (current_state.left_pressed) {
                 report[0] |= 0b00000001;
             }
@@ -41,11 +44,13 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
             report[2] = static_cast<std::uint8_t>(current_state.move_vertical);
             report[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
 
-            // 使用基类的 send_input_report 发送报告
-            send_input_report(asio::buffer(report));
-
-            reset_relative_data();
-            last_state = current_state;
+            // spdlog::info("尝试发送");
+            if (send_input_report(asio::buffer(report))) {
+                //如果成功发送了，代表主机把数据取走了，因此需要重置相对数据
+                reset_relative_data();
+                last_state = current_state;
+            }
+            // spdlog::info("发送成功");
         }
     });
 }
@@ -65,35 +70,6 @@ void LibevdevMouseInterfaceHandler::reset_relative_data() {
 
 LibevdevMouseInterfaceHandler::LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
-}
-
-// 主机请求输入报告时返回当前状态
-data_type LibevdevMouseInterfaceHandler::on_input_report_requested(std::uint16_t length) {
-    std::lock_guard lock(state_mutex);
-    data_type result(4, 0);
-    if (current_state.left_pressed) {
-        result[0] |= 0b00000001;
-    }
-    if (current_state.right_pressed) {
-        result[0] |= 0b00000010;
-    }
-    if (current_state.middle_pressed) {
-        result[0] |= 0b00000100;
-    }
-    if (current_state.side_pressed) {
-        result[0] |= 0b00001000;
-    }
-    if (current_state.extra_pressed) {
-        result[0] |= 0b00010000;
-    }
-    result[1] = static_cast<std::uint8_t>(current_state.move_horizontal);
-    result[2] = static_cast<std::uint8_t>(current_state.move_vertical);
-    result[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
-
-    if (result.size() > length) {
-        result.resize(length);
-    }
-    return result;
 }
 
 std::uint16_t LibevdevMouseInterfaceHandler::get_report_descriptor_size() {

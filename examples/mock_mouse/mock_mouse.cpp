@@ -59,35 +59,6 @@ MockMouseInterfaceHandler::MockMouseInterfaceHandler(UsbInterface &handle_interf
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
 }
 
-// 主机请求输入报告时返回当前状态
-data_type MockMouseInterfaceHandler::on_input_report_requested(std::uint16_t length) {
-    std::lock_guard lock(state_mutex);
-    data_type result(4, 0);
-    if (current_state.left_pressed) {
-        result[0] |= 0b00000001;
-    }
-    if (current_state.right_pressed) {
-        result[0] |= 0b00000010;
-    }
-    if (current_state.middle_pressed) {
-        result[0] |= 0b00000100;
-    }
-    if (current_state.side_pressed) {
-        result[0] |= 0b00001000;
-    }
-    if (current_state.extra_pressed) {
-        result[0] |= 0b00010000;
-    }
-    result[1] = static_cast<std::uint8_t>(current_state.move_horizontal);
-    result[2] = static_cast<std::uint8_t>(current_state.move_vertical);
-    result[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
-
-    if (result.size() > length) {
-        result.resize(length);
-    }
-    return result;
-}
-
 std::uint16_t MockMouseInterfaceHandler::get_report_descriptor_size() {
     return report_descriptor.size();
 }

@@ -53,7 +53,7 @@ public:
      * @param unlink_seqnum 想要取消的包序号
      * @param cmd_seqnum CMD_UNLINK 命令的序号（用于构造 RET_UNLINK）
      */
-    virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {}
+    virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
 
     virtual ~AbstInterfaceHandler() = default;
 

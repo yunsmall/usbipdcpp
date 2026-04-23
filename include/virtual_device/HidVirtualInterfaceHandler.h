@@ -74,10 +74,13 @@ public:
     /**
      * @brief 主机请求输入报告时回调
      *
-     * 子类可重写以按需生成报告。返回空则使用 send_input_report 设置的数据。
+     * @warning 不推荐使用此函数！
+     *          每次主机轮询中断端点时都会调用此函数，如果返回非空数据，
+     *          主机会立即取走数据并再次轮询，导致 CPU 占用非常高。
+     *          推荐使用 send_input_report() 在有数据时主动推送。
      *
      * @param length 主机请求的数据长度
-     * @return 报告数据，返回空则使用已设置的报告
+     * @return 报告数据，返回空则挂起请求等待 send_input_report
      */
     virtual data_type on_input_report_requested(std::uint16_t length);
 
@@ -163,6 +166,10 @@ public:
     // ========== 连接生命周期 ==========
 
     void on_disconnection(std::error_code &ec) override;
+
+    // ========== UNLINK 处理 ==========
+
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
     /**

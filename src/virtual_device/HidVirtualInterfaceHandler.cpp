@@ -15,11 +15,10 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
 
     if (ep.is_in()) {
         // 中断 IN：主机请求输入报告
-        std::lock_guard lock(interrupt_mutex_);
-
-        // 尝试从子类获取数据
+        // 先调用子类回调获取数据（不持有锁，避免死锁）
         auto data = on_input_report_requested(static_cast<std::uint16_t>(transfer_buffer_length));
 
+        std::lock_guard lock(interrupt_mutex_);
         if (!data.empty()) {
             // 有数据，立即响应
             auto* trx = GenericTransfer::from_handle(transfer.get());
@@ -33,14 +32,13 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
         else {
             // 没有数据，挂起请求
             if (pending_interrupt_request_.has_value()) {
-                // USB协议错误：同一端点已有挂起请求
-                SPDLOG_WARN("Interrupt IN request while another is pending, returning EPIPE");
+                // 同一端点已有挂起请求，替换旧请求（响应0长度）
                 session->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+                                pending_interrupt_request_->seqnum, 0));
+                pending_interrupt_request_.reset();
             }
-            else {
-                pending_interrupt_request_.emplace(IntRequest{seqnum, transfer_buffer_length, std::move(transfer)});
-            }
+            pending_interrupt_request_.emplace(IntRequest{seqnum, transfer_buffer_length, std::move(transfer)});
         }
     }
     else {
@@ -100,6 +98,23 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec
         pending_interrupt_request_.reset();
     }
     VirtualInterfaceHandler::on_disconnection(ec);
+}
+
+// ========== UNLINK 处理 ==========
+
+void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    std::lock_guard lock(interrupt_mutex_);
+    if (pending_interrupt_request_.has_value() && pending_interrupt_request_->seqnum == unlink_seqnum) {
+        // 找到了挂起的请求，取消它
+        pending_interrupt_request_.reset();
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
+    else {
+        // 没找到挂起的请求，返回成功（标准行为）
+        session->submit_ret_unlink(
+                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    }
 }
 
 // ========== 控制请求处理 ==========
