@@ -1,7 +1,7 @@
 #pragma once
 
 
-#include <optional>
+#include <deque>
 #include <mutex>
 
 #include <asio.hpp>
@@ -62,12 +62,11 @@ public:
     /**
      * @brief 发送输入报告（零拷贝）
      *
-     * 如果有挂起的中断请求，立即响应。
+     * 如果有队列中的请求，立即响应第一个；否则存储数据等待下一个请求。
      *
      * @param data 报告数据（可以使用栈上的 std::array + asio::buffer）
-     * @return true 如果数据已发送，false 如果没有挂起请求
      */
-    bool send_input_report(asio::const_buffer data);
+    void send_input_report(asio::const_buffer data);
 
     // ========== 子类可重写的回调 ==========
 
@@ -173,14 +172,19 @@ public:
 
 protected:
     /**
-     * @brief 挂起的中断请求（USB协议规定一个端点同一时间只能有一个挂起请求）
+     * @brief 中断传输请求队列（模拟USB控制器的请求队列）
      */
     struct IntRequest {
         std::uint32_t seqnum;
         std::uint32_t length;
         TransferHandle transfer;
     };
-    std::optional<IntRequest> pending_interrupt_request_;
+    std::deque<IntRequest> interrupt_request_queue_;
     std::mutex interrupt_mutex_;
+
+    /**
+     * @brief 待发送的输入报告数据
+     */
+    data_type pending_input_report_;
 };
 }

@@ -124,6 +124,12 @@ Virtual device handlers should:
 - Process requests in worker threads
 - Submit responses via callbacks
 
+#### Why Request Queues Are Needed
+
+The client only sends URBs, and the server receives them. In the original USBIP, the server stores received URBs and the USB controller sends them to the real device in order, ensuring only one URB is being transferred at a time.
+
+Virtual devices need to simulate this "store URBs in order" behavior, so request queues (`std::deque`) are used to store received requests and process them sequentially.
+
 ---
 
 ## Getting Started

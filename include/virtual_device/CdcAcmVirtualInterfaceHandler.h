@@ -7,7 +7,7 @@
 #include "protocol.h"
 #include "utils/RingBuffer.h"
 #include <array>
-#include <optional>
+#include <deque>
 #include <mutex>
 #include <condition_variable>
 #include <vector>
@@ -167,14 +167,14 @@ protected:
     ControlSignalState control_signal_state_;
 
     /**
-     * @brief 挂起的中断传输请求（USB协议规定一个端点同一时间只能有一个挂起请求）
+     * @brief 中断传输请求队列（模拟USB控制器的请求队列）
      */
     struct IntRequest {
         std::uint32_t seqnum;
         TransferHandle transfer;
     };
-    std::optional<IntRequest> pending_interrupt_request_;
-    std::mutex interrupt_req_queue_mutex_;
+    std::deque<IntRequest> interrupt_request_queue_;
+    std::mutex interrupt_mutex_;
 
     /**
      * @brief 待发送的状态通知数据
@@ -332,14 +332,14 @@ protected:
     std::size_t tx_low_watermark_ = 16 * 1024;
 
     /**
-     * @brief 挂起的批量 IN 请求（USB协议规定一个端点同一时间只能有一个挂起请求）
+     * @brief 批量 IN 请求队列（模拟USB控制器的请求队列）
      */
     struct BulkInRequest {
         std::uint32_t seqnum;
         std::uint32_t length;
         TransferHandle transfer;
     };
-    std::optional<BulkInRequest> pending_bulk_in_request_;
+    std::deque<BulkInRequest> bulk_in_request_queue_;
 
     /**
      * @brief 保护 tx_buffer_ 和 pending_bulk_in_request_ 的互斥锁

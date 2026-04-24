@@ -107,12 +107,12 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
 
     if (ep.is_in()) {
         // 同时锁两个 mutex，避免竞态条件
-        std::lock(notification_mutex_, interrupt_req_queue_mutex_);
+        std::lock(notification_mutex_, interrupt_mutex_);
         std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-        std::lock_guard lock2(interrupt_req_queue_mutex_, std::adopt_lock);
+        std::lock_guard lock2(interrupt_mutex_, std::adopt_lock);
 
-        if (!pending_notification_.empty()) {
-            // 有待发送的通知
+        if (!pending_notification_.empty() && interrupt_request_queue_.empty()) {
+            // 有待发送的通知且没有队列中的请求，立即响应
             auto* trx = GenericTransfer::from_handle(transfer.get());
             trx->data = std::move(pending_notification_);
             trx->actual_length = trx->data.size();
@@ -122,15 +122,8 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
                             seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
         }
         else {
-            // 没有待发送的通知，挂起请求
-            if (pending_interrupt_request_.has_value()) {
-                // 同一端点已有挂起请求，替换旧请求（响应0长度）
-                session->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
-                                pending_interrupt_request_->seqnum, 0));
-                pending_interrupt_request_.reset();
-            }
-            pending_interrupt_request_.emplace(IntRequest{seqnum, std::move(transfer)});
+            // 将请求加入队列，等待处理
+            interrupt_request_queue_.emplace_back(IntRequest{seqnum, std::move(transfer)});
         }
     }
     else {
@@ -254,16 +247,16 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     notification.data = state_bits;
 
     // 同时锁两个 mutex，避免竞态条件
-    std::lock(notification_mutex_, interrupt_req_queue_mutex_);
+    std::lock(notification_mutex_, interrupt_mutex_);
     std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-    std::lock_guard lock2(interrupt_req_queue_mutex_, std::adopt_lock);
+    std::lock_guard lock2(interrupt_mutex_, std::adopt_lock);
 
     pending_notification_ = notification.to_bytes();
 
-    // 如果有挂起的中断请求，立即响应
-    if (pending_interrupt_request_.has_value()) {
-        auto req = std::move(*pending_interrupt_request_);
-        pending_interrupt_request_.reset();
+    // 如果队列中有中断请求，响应第一个
+    if (!interrupt_request_queue_.empty()) {
+        auto req = std::move(interrupt_request_queue_.front());
+        interrupt_request_queue_.pop_front();
 
         auto* trx = GenericTransfer::from_handle(req.transfer.get());
         trx->data = std::move(pending_notification_);
@@ -281,24 +274,24 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
         pending_notification_.clear();
     }
     {
-        std::lock_guard lock(interrupt_req_queue_mutex_);
+        std::lock_guard lock(interrupt_mutex_);
         // TransferHandle 析构时会自动释放
-        pending_interrupt_request_.reset();
+        interrupt_request_queue_.clear();
     }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(interrupt_req_queue_mutex_);
-    if (pending_interrupt_request_.has_value() && pending_interrupt_request_->seqnum == unlink_seqnum) {
-        pending_interrupt_request_.reset();
-        session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    std::lock_guard lock(interrupt_mutex_);
+    // 在队列中查找要取消的请求
+    auto it = std::find_if(interrupt_request_queue_.begin(), interrupt_request_queue_.end(),
+                           [unlink_seqnum](const IntRequest &req) { return req.seqnum == unlink_seqnum; });
+    if (it != interrupt_request_queue_.end()) {
+        interrupt_request_queue_.erase(it);
     }
-    else {
-        session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
-    }
+    // 不管找没找到都返回成功
+    session->submit_ret_unlink(
+            UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
 }
 
 // ==================== CdcAcmDataInterfaceHandler ====================
@@ -320,7 +313,7 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
         disconnected_ = true;
         tx_buffer_.clear();
         // TransferHandle 析构时会自动释放
-        pending_bulk_in_request_.reset();
+        bulk_in_request_queue_.clear();
     }
     tx_cv_.notify_all();
     VirtualInterfaceHandler::on_disconnection(ec);
@@ -328,15 +321,15 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     std::lock_guard lock(tx_mutex_);
-    if (pending_bulk_in_request_.has_value() && pending_bulk_in_request_->seqnum == unlink_seqnum) {
-        pending_bulk_in_request_.reset();
-        session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    // 在队列中查找要取消的请求
+    auto it = std::find_if(bulk_in_request_queue_.begin(), bulk_in_request_queue_.end(),
+                           [unlink_seqnum](const BulkInRequest &req) { return req.seqnum == unlink_seqnum; });
+    if (it != bulk_in_request_queue_.end()) {
+        bulk_in_request_queue_.erase(it);
     }
-    else {
-        session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
-    }
+    // 不管找没找到都返回成功
+    session->submit_ret_unlink(
+            UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
 }
 
 void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
@@ -346,11 +339,11 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
 
     if (ep.is_in()) {
         // Bulk IN：主机请求数据
-        // tx_mutex_ 保护 tx_buffer_ 和 pending_bulk_in_request_
+        // tx_mutex_ 保护 tx_buffer_ 和 bulk_in_request_queue_
         std::lock_guard lock(tx_mutex_);
 
-        if (tx_buffer_.empty()) {
-            // 缓冲区空，回调子类获取数据
+        if (tx_buffer_.empty() && bulk_in_request_queue_.empty()) {
+            // 缓冲区空且没有队列中的请求，回调子类获取数据
             auto data = on_data_requested(transfer_buffer_length);
             if (!data.empty()) {
                 if (data.size() <= transfer_buffer_length) {
@@ -380,20 +373,15 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
                 }
             }
             else {
-                // 没有数据可发送，挂起请求
-                if (pending_bulk_in_request_.has_value()) {
-                    // 同一端点已有挂起请求，替换旧请求（响应0长度）
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
-                                    pending_bulk_in_request_->seqnum, 0));
-                    pending_bulk_in_request_.reset();
-                }
-                pending_bulk_in_request_.emplace(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+                // 没有数据可发送，将请求加入队列
+                bulk_in_request_queue_.emplace_back(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
             }
         }
         else {
-            // 缓冲区有数据，从缓冲区发送
-            send_from_tx_buffer_locked(seqnum, transfer_buffer_length, std::move(transfer));
+            // 缓冲区有数据或有队列中的请求，将请求加入队列
+            bulk_in_request_queue_.emplace_back(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+            // 尝试发送
+            try_send_pending_locked();
         }
     }
     else {
@@ -609,19 +597,17 @@ void CdcAcmDataInterfaceHandler::set_comm_handler(CdcAcmCommunicationInterfaceHa
 
 void CdcAcmDataInterfaceHandler::try_send_pending_locked() {
     // 调用者必须已持有 tx_mutex_
-    // 此函数操作 tx_buffer_ 和 pending_bulk_in_request_
+    // 此函数操作 tx_buffer_ 和 bulk_in_request_queue_
 
-    // 检查是否有挂起的请求
-    if (!pending_bulk_in_request_.has_value() || tx_buffer_.empty()) {
-        return;
+    // 检查是否有队列中的请求且有数据可发
+    while (!bulk_in_request_queue_.empty() && !tx_buffer_.empty()) {
+        // 取出队列中的第一个请求
+        auto request = std::move(bulk_in_request_queue_.front());
+        bulk_in_request_queue_.pop_front();
+
+        // 从缓冲区读取并发送
+        send_from_tx_buffer_locked(request.seqnum, request.length, std::move(request.transfer));
     }
-
-    // 取出挂起的请求
-    auto request = std::move(*pending_bulk_in_request_);
-    pending_bulk_in_request_.reset();
-
-    // 从缓冲区读取并发送
-    send_from_tx_buffer_locked(request.seqnum, request.length, std::move(request.transfer));
 }
 
 // ==================== CdcAcmDataInterfaceHandler 默认实现 ====================

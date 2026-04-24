@@ -44,13 +44,9 @@ void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, 
             report[2] = static_cast<std::uint8_t>(current_state.move_vertical);
             report[3] = static_cast<std::uint8_t>(current_state.wheel_vertical);
 
-            // spdlog::info("尝试发送");
-            if (send_input_report(asio::buffer(report))) {
-                //如果成功发送了，代表主机把数据取走了，因此需要重置相对数据
-                reset_relative_data();
-                last_state = current_state;
-            }
-            // spdlog::info("发送成功");
+            send_input_report(asio::buffer(report));
+            reset_relative_data();
+            last_state = current_state;
         }
     });
 }
