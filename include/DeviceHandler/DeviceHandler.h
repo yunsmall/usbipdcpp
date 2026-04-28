@@ -29,14 +29,19 @@ public:
 
     AbstDeviceHandler(AbstDeviceHandler &&other) noexcept;
 
-    virtual void dispatch_urb(
-            const UsbIpCommand::UsbIpCmdSubmit &cmd,
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            std::optional<UsbInterface> &interface,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+    /**
+     * @brief 处理 URB 请求的统一入口
+     * @param cmd 完整的 CMD_SUBMIT 命令
+     * @param ep 端点信息
+     * @param interface 可选的接口信息（非控制传输必须有）
+     * @param ec 错误码
+     */
+    virtual void receive_urb(
+            UsbIpCommand::UsbIpCmdSubmit cmd,
+            UsbEndpoint ep,
+            std::optional<UsbInterface> interface,
             usbipdcpp::error_code &ec
-            );
+            ) = 0;
 
     /**
      * @brief 新的客户端连接时会调这个函数，可以阻塞。子类实现时请在函数开头调用这个函数
@@ -155,51 +160,6 @@ public:
      * @param transfer_handle
      */
     virtual void free_transfer_handle(void* transfer_handle);
-
-protected:
-    // transfer 中包含数据，通过 get_transfer_buffer 获取
-    // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
-    // 注意：transfer 是移动语义，函数接管后必须要么传给 create_ret_submit_*，要么让它析构自动释放
-    virtual void handle_control_urb(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-            TransferHandle transfer,
-            std::error_code &ec
-            ) =0;
-    // transfer 中包含数据，通过 get_transfer_buffer 获取
-    // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
-    virtual void handle_bulk_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            std::error_code &ec
-            ) =0;
-    // transfer 中包含数据，通过 get_transfer_buffer 获取
-    // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
-    virtual void handle_interrupt_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            std::error_code &ec
-            ) =0;
-    // transfer 中包含数据和 iso 描述符，通过 get_transfer_buffer 和 get_iso_descriptor 获取
-    // 无论发生什么错误都请使用session提交一个返回包，不然session会视为当前urb未处理结束，除非发生无法恢复的错误
-    virtual void handle_isochronous_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags,
-            std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            int num_iso_packets,
-            std::error_code &ec
-            ) =0;
-
 
     virtual ~AbstDeviceHandler() = default;
 

@@ -15,10 +15,13 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
 
     if (ep.is_in()) {
         // 中断 IN：主机请求输入报告
-        std::lock_guard lock(interrupt_mutex_);
+        // 同时锁两个 mutex，避免竞态条件
+        std::lock(input_mutex_, endpoint_requests_mutex_);
+        std::lock_guard lock1(input_mutex_, std::adopt_lock);
+        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
         // 如果队列空且有待发送的报告，立即响应
-        if (interrupt_request_queue_.empty() && !pending_input_report_.empty()) {
+        if (endpoint_requests_.empty(ep.address) && !pending_input_report_.empty()) {
             auto* trx = GenericTransfer::from_handle(transfer.get());
             auto send_len = std::min(pending_input_report_.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(pending_input_report_.begin(), pending_input_report_.begin() + send_len);
@@ -30,7 +33,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
         }
         else {
             // 将请求加入队列
-            interrupt_request_queue_.emplace_back(IntRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
         }
     }
     else {
@@ -48,11 +51,17 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
 // ========== 发送输入报告 ==========
 
 void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer data) {
-    std::lock_guard lock(interrupt_mutex_);
+    // 同时锁两个 mutex
+    std::lock(input_mutex_, endpoint_requests_mutex_);
+    std::lock_guard lock1(input_mutex_, std::adopt_lock);
+    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
-    if (!interrupt_request_queue_.empty()) {
-        // 有队列中的请求，响应第一个
-        auto& req = interrupt_request_queue_.front();
+    // 从任何有请求的端点出队
+    auto req_opt = endpoint_requests_.dequeue_any();
+
+    if (req_opt.has_value()) {
+        // 有队列中的请求，响应它
+        auto& [ep_addr, req] = req_opt.value();
 
         auto* trx = GenericTransfer::from_handle(req.transfer.get());
         auto send_len = std::min(data.size(), static_cast<std::size_t>(req.length));
@@ -63,8 +72,6 @@ void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer
         session->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                         req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
-
-        interrupt_request_queue_.pop_front();
     }
     else {
         // 没有请求，存储数据等待
@@ -88,10 +95,13 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::cons
 
 void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec) {
     {
-        std::lock_guard lock(interrupt_mutex_);
-        // TransferHandle 析构时会自动释放
-        interrupt_request_queue_.clear();
+        std::lock_guard lock(input_mutex_);
         pending_input_report_.clear();
+    }
+    {
+        std::lock_guard lock(endpoint_requests_mutex_);
+        // TransferHandle 析构时会自动释放
+        endpoint_requests_.clear();
     }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
@@ -99,13 +109,8 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec
 // ========== UNLINK 处理 ==========
 
 void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(interrupt_mutex_);
-    // 在队列中查找要取消的请求
-    auto it = std::find_if(interrupt_request_queue_.begin(), interrupt_request_queue_.end(),
-                           [unlink_seqnum](const IntRequest &req) { return req.seqnum == unlink_seqnum; });
-    if (it != interrupt_request_queue_.end()) {
-        interrupt_request_queue_.erase(it);
-    }
+    std::lock_guard lock(endpoint_requests_mutex_);
+    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
     // 不管找没找到都返回成功
     session->submit_ret_unlink(
             UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));

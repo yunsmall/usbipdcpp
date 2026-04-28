@@ -107,11 +107,11 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
 
     if (ep.is_in()) {
         // 同时锁两个 mutex，避免竞态条件
-        std::lock(notification_mutex_, interrupt_mutex_);
+        std::lock(notification_mutex_, endpoint_requests_mutex_);
         std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-        std::lock_guard lock2(interrupt_mutex_, std::adopt_lock);
+        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
-        if (!pending_notification_.empty() && interrupt_request_queue_.empty()) {
+        if (!pending_notification_.empty() && endpoint_requests_.empty(ep.address)) {
             // 有待发送的通知且没有队列中的请求，立即响应
             auto* trx = GenericTransfer::from_handle(transfer.get());
             trx->data = std::move(pending_notification_);
@@ -123,7 +123,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
         }
         else {
             // 将请求加入队列，等待处理
-            interrupt_request_queue_.emplace_back(IntRequest{seqnum, std::move(transfer)});
+            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
         }
     }
     else {
@@ -247,16 +247,16 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     notification.data = state_bits;
 
     // 同时锁两个 mutex，避免竞态条件
-    std::lock(notification_mutex_, interrupt_mutex_);
+    std::lock(notification_mutex_, endpoint_requests_mutex_);
     std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-    std::lock_guard lock2(interrupt_mutex_, std::adopt_lock);
+    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
     pending_notification_ = notification.to_bytes();
 
     // 如果队列中有中断请求，响应第一个
-    if (!interrupt_request_queue_.empty()) {
-        auto req = std::move(interrupt_request_queue_.front());
-        interrupt_request_queue_.pop_front();
+    auto req_opt = endpoint_requests_.dequeue_any();
+    if (req_opt.has_value()) {
+        auto& [ep_addr, req] = req_opt.value();
 
         auto* trx = GenericTransfer::from_handle(req.transfer.get());
         trx->data = std::move(pending_notification_);
@@ -274,21 +274,16 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
         pending_notification_.clear();
     }
     {
-        std::lock_guard lock(interrupt_mutex_);
+        std::lock_guard lock(endpoint_requests_mutex_);
         // TransferHandle 析构时会自动释放
-        interrupt_request_queue_.clear();
+        endpoint_requests_.clear();
     }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(interrupt_mutex_);
-    // 在队列中查找要取消的请求
-    auto it = std::find_if(interrupt_request_queue_.begin(), interrupt_request_queue_.end(),
-                           [unlink_seqnum](const IntRequest &req) { return req.seqnum == unlink_seqnum; });
-    if (it != interrupt_request_queue_.end()) {
-        interrupt_request_queue_.erase(it);
-    }
+    std::lock_guard lock(endpoint_requests_mutex_);
+    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
     // 不管找没找到都返回成功
     session->submit_ret_unlink(
             UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
@@ -312,21 +307,19 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
         std::lock_guard lock(tx_mutex_);
         disconnected_ = true;
         tx_buffer_.clear();
+    }
+    {
+        std::lock_guard lock(endpoint_requests_mutex_);
         // TransferHandle 析构时会自动释放
-        bulk_in_request_queue_.clear();
+        endpoint_requests_.clear();
     }
     tx_cv_.notify_all();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(tx_mutex_);
-    // 在队列中查找要取消的请求
-    auto it = std::find_if(bulk_in_request_queue_.begin(), bulk_in_request_queue_.end(),
-                           [unlink_seqnum](const BulkInRequest &req) { return req.seqnum == unlink_seqnum; });
-    if (it != bulk_in_request_queue_.end()) {
-        bulk_in_request_queue_.erase(it);
-    }
+    std::lock_guard lock(endpoint_requests_mutex_);
+    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
     // 不管找没找到都返回成功
     session->submit_ret_unlink(
             UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
@@ -339,10 +332,12 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
 
     if (ep.is_in()) {
         // Bulk IN：主机请求数据
-        // tx_mutex_ 保护 tx_buffer_ 和 bulk_in_request_queue_
-        std::lock_guard lock(tx_mutex_);
+        // 同时锁 tx_mutex_ 和 endpoint_requests_mutex_，避免竞态条件
+        std::lock(tx_mutex_, endpoint_requests_mutex_);
+        std::lock_guard lock1(tx_mutex_, std::adopt_lock);
+        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
-        if (tx_buffer_.empty() && bulk_in_request_queue_.empty()) {
+        if (tx_buffer_.empty() && endpoint_requests_.empty(ep.address)) {
             // 缓冲区空且没有队列中的请求，回调子类获取数据
             auto data = on_data_requested(transfer_buffer_length);
             if (!data.empty()) {
@@ -374,12 +369,12 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
             }
             else {
                 // 没有数据可发送，将请求加入队列
-                bulk_in_request_queue_.emplace_back(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+                endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
             }
         }
         else {
             // 缓冲区有数据或有队列中的请求，将请求加入队列
-            bulk_in_request_queue_.emplace_back(BulkInRequest{seqnum, transfer_buffer_length, std::move(transfer)});
+            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
             // 尝试发送
             try_send_pending_locked();
         }
@@ -455,12 +450,15 @@ void CdcAcmDataInterfaceHandler::send_from_tx_buffer_locked(std::uint32_t seqnum
 // ===== send_data 实现 =====
 
 std::size_t CdcAcmDataInterfaceHandler::send_data(const std::uint8_t *data, std::size_t size) {
-    std::lock_guard lock(tx_mutex_);
+    // 同时锁两个 mutex
+    std::lock(tx_mutex_, endpoint_requests_mutex_);
+    std::lock_guard lock1(tx_mutex_, std::adopt_lock);
+    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
     // 写入 TX 缓冲区（非阻塞，满时只写入可用空间）
     std::size_t written = tx_buffer_.write(data, size);
 
-    // 尝试发送等待的数据（已持有 tx_mutex_）
+    // 尝试发送等待的数据（已持有两个 mutex）
     try_send_pending_locked();
 
     return written;
@@ -480,60 +478,67 @@ std::size_t CdcAcmDataInterfaceHandler::send_data(std::string_view data) {
 
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const std::uint8_t *data, std::size_t size,
                                                            std::uint32_t timeout_ms) {
-    std::unique_lock lock(tx_mutex_);
     std::size_t total_written = 0;
     std::size_t offset = 0;
 
     while (offset < size) {
-        // 检查是否已断开连接
-        if (disconnected_) {
-            return total_written;
-        }
+        // 阶段1：等待缓冲区有空间
+        {
+            std::unique_lock tx_lock(tx_mutex_);
 
-        // 等待缓冲区有空间
-        if (tx_buffer_.available() == 0) {
-            // 没有空间，尝试触发发送
-            try_send_pending_locked();
-
-            // 再次检查断开连接
+            // 检查是否已断开连接
             if (disconnected_) {
                 return total_written;
             }
 
-            // 仍然没有空间，等待条件变量
+            // 如果缓冲区满，先尝试发送
             if (tx_buffer_.available() == 0) {
-                if (timeout_ms == 0) {
-                    // 无限等待
-                    tx_cv_.wait(lock, [this]() {
-                        return tx_buffer_.available() > 0 || disconnected_;
-                    });
+                // 锁队列并发送
+                {
+                    std::lock_guard queue_lock(endpoint_requests_mutex_);
+                    try_send_pending_locked();
                 }
-                else {
-                    // 带超时等待
-                    auto result = tx_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-                                                  [this]() {
-                                                      return tx_buffer_.available() > 0 || disconnected_;
-                                                  });
-                    if (!result) {
-                        // 超时，返回已写入量
-                        return total_written;
+
+                // 再次检查断开连接
+                if (disconnected_) {
+                    return total_written;
+                }
+
+                // 如果仍然满，等待条件变量
+                while (tx_buffer_.available() == 0 && !disconnected_) {
+                    if (timeout_ms == 0) {
+                        // 无限等待
+                        tx_cv_.wait(tx_lock);
+                    }
+                    else {
+                        // 带超时等待
+                        auto result = tx_cv_.wait_for(tx_lock, std::chrono::milliseconds(timeout_ms));
+                        if (result == std::cv_status::timeout) {
+                            // 超时，返回已写入量
+                            return total_written;
+                        }
                     }
                 }
+
+                // 被唤醒后检查是否断开
+                if (disconnected_) {
+                    return total_written;
+                }
             }
 
-            // 被唤醒后检查是否断开
-            if (disconnected_) {
-                return total_written;
-            }
+            // 写入数据
+            std::size_t written = tx_buffer_.write(data + offset, size - offset);
+            total_written += written;
+            offset += written;
         }
 
-        // 写入数据
-        std::size_t written = tx_buffer_.write(data + offset, size - offset);
-        total_written += written;
-        offset += written;
-
-        // 尝试发送
-        try_send_pending_locked();
+        // 阶段2：尝试发送（锁两个 mutex）
+        {
+            std::lock(tx_mutex_, endpoint_requests_mutex_);
+            std::lock_guard lock1(tx_mutex_, std::adopt_lock);
+            std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
+            try_send_pending_locked();
+        }
     }
 
     return total_written;
@@ -596,17 +601,18 @@ void CdcAcmDataInterfaceHandler::set_comm_handler(CdcAcmCommunicationInterfaceHa
 }
 
 void CdcAcmDataInterfaceHandler::try_send_pending_locked() {
-    // 调用者必须已持有 tx_mutex_
-    // 此函数操作 tx_buffer_ 和 bulk_in_request_queue_
+    // 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_
 
     // 检查是否有队列中的请求且有数据可发
-    while (!bulk_in_request_queue_.empty() && !tx_buffer_.empty()) {
-        // 取出队列中的第一个请求
-        auto request = std::move(bulk_in_request_queue_.front());
-        bulk_in_request_queue_.pop_front();
+    while (!tx_buffer_.empty()) {
+        auto req_opt = endpoint_requests_.dequeue_any();
+        if (!req_opt.has_value()) {
+            break;
+        }
 
+        auto& [ep_addr, req] = req_opt.value();
         // 从缓冲区读取并发送
-        send_from_tx_buffer_locked(request.seqnum, request.length, std::move(request.transfer));
+        send_from_tx_buffer_locked(req.seqnum, req.length, std::move(req.transfer));
     }
 }
 

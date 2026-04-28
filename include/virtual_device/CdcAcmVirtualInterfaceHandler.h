@@ -109,6 +109,8 @@ class CdcAcmCommunicationInterfaceHandler : public VirtualInterfaceHandler {
 public:
     CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
+    // ========== 内部实现（子类无需关心） ==========
+
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                        std::uint32_t transfer_flags,
                                                        std::uint32_t transfer_buffer_length,
@@ -121,7 +123,8 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
-    // 标准请求处理（已提供默认实现，子类可选择性重写）
+    // ========== 标准请求默认实现 ==========
+
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                         std::uint32_t *p_status) override;
@@ -133,33 +136,71 @@ public:
     void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                       std::uint32_t *p_status) override;
 
-    // CDC ACM 特有的虚拟函数，子类可重写
+    // ========== 子类可选重写的回调 ==========
+
+    /**
+     * @brief 主机设置线路编码时回调
+     * @param coding 新的线路编码参数
+     */
     virtual void on_set_line_coding(const LineCoding &coding);
+
+    /**
+     * @brief 主机设置控制信号状态时回调
+     * @param state 控制信号状态（DTR、RTS）
+     */
     virtual void on_set_control_line_state(const ControlSignalState &state);
+
+    /**
+     * @brief 主机请求发送中断时回调
+     * @param duration 中断持续时间
+     */
     virtual void on_send_break(std::uint16_t duration);
 
-    // 处理非 CDC ACM 类请求的控制传输，子类可重写以扩展功能
+    /**
+     * @brief 处理非 CDC ACM 类请求的控制传输，子类可重写以扩展功能
+     */
     virtual void handle_non_cdc_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                           std::uint32_t transfer_flags,
                                                           std::uint32_t transfer_buffer_length,
                                                           const SetupPacket &setup_packet,
                                                           TransferHandle transfer, std::error_code &ec);
 
-    // 获取当前线路编码
+    // ========== 状态查询 API ==========
+
+    /**
+     * @brief 获取当前线路编码
+     */
     [[nodiscard]] const LineCoding& get_line_coding() const { return line_coding_; }
+
+    /**
+     * @brief 获取当前控制信号状态
+     */
     [[nodiscard]] const ControlSignalState& get_control_signal_state() const { return control_signal_state_; }
 
-    // 发送串口状态通知
+    // ========== 发送通知 API ==========
+
+    /**
+     * @brief 发送串口状态通知到主机
+     * @param state_bits 状态位（如 CTS、DSR 等）
+     */
     void send_serial_state_notification(std::uint16_t state_bits);
 
-    // 关联数据接口处理器
+    // ========== 接口关联 API ==========
+
+    /**
+     * @brief 关联数据接口处理器
+     */
     void set_data_handler(CdcAcmDataInterfaceHandler *handler) { data_handler_ = handler; }
+
+    /**
+     * @brief 获取关联的数据接口处理器
+     */
     CdcAcmDataInterfaceHandler* get_data_handler() const { return data_handler_; }
 
-    // 连接生命周期管理
+    // ========== 内部实现（子类无需关心） ==========
+
     void on_disconnection(std::error_code &ec) override;
 
-    // UNLINK 处理
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
@@ -167,19 +208,13 @@ protected:
     ControlSignalState control_signal_state_;
 
     /**
-     * @brief 中断传输请求队列（模拟USB控制器的请求队列）
-     */
-    struct IntRequest {
-        std::uint32_t seqnum;
-        TransferHandle transfer;
-    };
-    std::deque<IntRequest> interrupt_request_queue_;
-    std::mutex interrupt_mutex_;
-
-    /**
      * @brief 待发送的状态通知数据
      */
     std::vector<std::uint8_t> pending_notification_;
+
+    /**
+     * @brief 保护 pending_notification_ 的互斥锁
+     */
     std::mutex notification_mutex_;
 
     /**
@@ -197,6 +232,8 @@ class CdcAcmDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
     CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
+    // ========== 内部实现（子类无需关心） ==========
+
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                               std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                               TransferHandle transfer, std::error_code &ec) override;
@@ -209,7 +246,8 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
-    // 标准请求处理（已提供默认实现，子类可选择性重写）
+    // ========== 标准请求默认实现 ==========
+
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
     void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                         std::uint32_t *p_status) override;
@@ -221,7 +259,7 @@ public:
     void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                       std::uint32_t *p_status) override;
 
-    // ===== 数据收发回调，子类可重写 =====
+    // ========== 子类可选重写的回调 ==========
 
     /**
      * @brief 收到主机发送的数据时回调
@@ -242,7 +280,7 @@ public:
      */
     virtual void on_rts_changed(bool rts);
 
-    // ===== 发送数据到主机 =====
+    // ========== 发送数据 API ==========
 
     /**
      * @brief 非阻塞发送数据到主机
@@ -268,7 +306,7 @@ public:
     std::size_t send_data_blocking(data_type &&data, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(std::string_view data, std::uint32_t timeout_ms = 0);
 
-    // ===== 缓冲区配置 =====
+    // ========== 缓冲区配置 API ==========
 
     /**
      * @brief 设置 TX 缓冲区容量
@@ -295,7 +333,7 @@ public:
      */
     [[nodiscard]] std::size_t get_tx_buffer_available() const;
 
-    // ===== 流控状态 =====
+    // ========== 流控状态 API ==========
 
     /**
      * @brief 设置 CTS 状态通知主机
@@ -315,11 +353,10 @@ public:
      */
     void set_comm_handler(CdcAcmCommunicationInterfaceHandler *handler);
 
-    // 连接生命周期管理
+    // ========== 内部实现（子类无需关心） ==========
+
     void on_new_connection(Session &current_session, std::error_code &ec) override;
     void on_disconnection(std::error_code &ec) override;
-
-    // UNLINK 处理
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
@@ -332,18 +369,7 @@ protected:
     std::size_t tx_low_watermark_ = 16 * 1024;
 
     /**
-     * @brief 批量 IN 请求队列（模拟USB控制器的请求队列）
-     */
-    struct BulkInRequest {
-        std::uint32_t seqnum;
-        std::uint32_t length;
-        TransferHandle transfer;
-    };
-    std::deque<BulkInRequest> bulk_in_request_queue_;
-
-    /**
-     * @brief 保护 tx_buffer_ 和 pending_bulk_in_request_ 的互斥锁
-     * @note 这两个资源需要协同操作，用同一个锁避免嵌套锁问题
+     * @brief 保护 tx_buffer_ 的互斥锁
      */
     mutable std::mutex tx_mutex_;
 
@@ -367,13 +393,13 @@ protected:
      * @param seqnum 请求序号
      * @param max_length 最大发送长度
      * @param transfer 传输句柄
-     * @note 调用者必须已持有 tx_mutex_ 且确保 tx_buffer_ 不为空
+     * @note 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_，且确保 tx_buffer_ 不为空
      */
     void send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length, TransferHandle transfer);
 
     /**
      * @brief 尝试发送等待的数据
-     * @note 调用者必须已持有 tx_mutex_
+     * @note 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_
      */
     void try_send_pending_locked();
 };

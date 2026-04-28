@@ -16,48 +16,6 @@ AbstDeviceHandler::AbstDeviceHandler(AbstDeviceHandler &&other) noexcept :
     handle_device(other.handle_device) {
 }
 
-void AbstDeviceHandler::dispatch_urb(
-        const UsbIpCommand::UsbIpCmdSubmit &cmd,
-        std::uint32_t seqnum,
-        const UsbEndpoint &ep,
-        std::optional<UsbInterface> &interface,
-        std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const SetupPacket &setup_packet,
-        usbipdcpp::error_code &ec) {
-    // 控制传输较少，Bulk/Interrupt 更常见
-    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control))[[unlikely]] {
-        SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()), setup_packet.to_string());
-        handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer), ec);
-    }
-    else if (interface.has_value())[[likely]] {
-        auto &intf = interface.value();
-        // Bulk 和 Interrupt 最常见
-        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk))[[likely]] {
-            SPDLOG_DEBUG("处理块传输");
-            handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
-        }
-        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
-            SPDLOG_DEBUG("处理中断传输");
-            handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
-        }
-        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
-            SPDLOG_DEBUG("处理等时传输");
-            int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
-                          ? static_cast<int>(cmd.number_of_packets) : 0;
-            handle_isochronous_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length,
-                                        std::move(cmd.transfer), num_iso, ec);
-        }
-        else [[unlikely]] {
-            SPDLOG_DEBUG("端口{:02x}的未知传输类型：{}", ep.address, ep.attributes);
-            ec = make_error_code(ErrorType::INVALID_ARG);
-        }
-    }
-    else[[unlikely]] {
-        SPDLOG_ERROR("非控制传输却不存在目标接口");
-        ec = make_error_code(ErrorType::INTERNAL_ERROR);
-    }
-}
-
 void AbstDeviceHandler::trigger_session_stop() {
     std::lock_guard lock(session_mutex_);
     if (session)[[likely]] {

@@ -21,39 +21,10 @@ public:
 
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
 
-protected:
-    void handle_control_urb(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-            TransferHandle transfer,
-            std::error_code &ec) override {}
-
-    void handle_bulk_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            std::error_code &ec) override {}
-
-    void handle_interrupt_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            std::error_code &ec) override {}
-
-    void handle_isochronous_transfer(
-            std::uint32_t seqnum,
-            const UsbEndpoint &ep,
-            UsbInterface &interface,
-            std::uint32_t transfer_flags,
-            std::uint32_t transfer_buffer_length,
-            TransferHandle transfer,
-            int num_iso_packets,
-            std::error_code &ec) override {}
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
+                     UsbEndpoint ep,
+                     std::optional<UsbInterface> interface,
+                     usbipdcpp::error_code &ec) override {}
 };
 
 // 创建测试用的 UsbDevice

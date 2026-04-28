@@ -69,27 +69,11 @@ public:
     void set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
     void free_transfer_handle(void* transfer_handle) override;
 
-protected:
-    void handle_control_urb(
-            std::uint32_t seqnum, const UsbEndpoint &ep,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) override;
-    void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                              UsbInterface &interface, std::uint32_t transfer_flags,
-                              std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                              std::error_code &ec) override;
-    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   UsbInterface &interface, std::uint32_t transfer_flags,
-                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                   std::error_code &ec) override;
-
-    void handle_isochronous_transfer(std::uint32_t seqnum,
-                                     const UsbEndpoint &ep, UsbInterface &interface,
-                                     std::uint32_t transfer_flags,
-                                     std::uint32_t transfer_buffer_length,
-                                     TransferHandle transfer,
-                                     int num_iso_packets,
-                                     std::error_code &ec) override;
+public:
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
+                     UsbEndpoint ep,
+                     std::optional<UsbInterface> interface,
+                     usbipdcpp::error_code &ec) override;
 
     int tweak_clear_halt_cmd(const SetupPacket &setup_packet);
     int tweak_set_interface_cmd(const SetupPacket &setup_packet);

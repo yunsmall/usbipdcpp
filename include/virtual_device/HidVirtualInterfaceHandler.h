@@ -25,6 +25,8 @@ public:
         VirtualInterfaceHandler(handle_interface, string_pool) {
     }
 
+    // ========== 内部实现（子类无需关心） ==========
+
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
@@ -54,10 +56,21 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
+    // ========== 子类必须实现的虚函数 ==========
+
+    /**
+     * @brief 获取 HID 报告描述符
+     * @return 报告描述符数据
+     */
     virtual data_type get_report_descriptor() =0;
+
+    /**
+     * @brief 获取 HID 报告描述符大小
+     * @return 描述符长度（字节）
+     */
     virtual std::uint16_t get_report_descriptor_size() =0;
 
-    // ========== 发送输入报告 ==========
+    // ========== 发送数据 API ==========
 
     /**
      * @brief 发送输入报告（零拷贝）
@@ -68,7 +81,7 @@ public:
      */
     void send_input_report(asio::const_buffer data);
 
-    // ========== 子类可重写的回调 ==========
+    // ========== 子类可选重写的回调 ==========
 
     /**
      * @brief 主机请求输入报告时回调
@@ -90,7 +103,7 @@ public:
      */
     virtual void on_output_report_received(asio::const_buffer data);
 
-    // ========== HID 类特定请求 ==========
+    // ========== HID 类特定请求（子类可选重写） ==========
 
     /**
      * @brief Rarely implemented, this is optional for unbooted devices
@@ -162,25 +175,17 @@ public:
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
 
-    // ========== 连接生命周期 ==========
+    // ========== 内部实现（子类无需关心） ==========
 
     void on_disconnection(std::error_code &ec) override;
-
-    // ========== UNLINK 处理 ==========
 
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
     /**
-     * @brief 中断传输请求队列（模拟USB控制器的请求队列）
+     * @brief 保护 pending_input_report_ 的互斥锁
      */
-    struct IntRequest {
-        std::uint32_t seqnum;
-        std::uint32_t length;
-        TransferHandle transfer;
-    };
-    std::deque<IntRequest> interrupt_request_queue_;
-    std::mutex interrupt_mutex_;
+    mutable std::mutex input_mutex_;
 
     /**
      * @brief 待发送的输入报告数据

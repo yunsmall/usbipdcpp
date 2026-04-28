@@ -302,13 +302,11 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
 
                     usbipdcpp::error_code ec_during_handling_urb;
                     // start_processing_urb();
-                    LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备handle_urb");
-                    current_handler->dispatch_urb(
-                            cmd2,
-                            current_seqnum,
+                    LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备receive_urb");
+                    current_handler->receive_urb(
+                            std::move(cmd2),
                             ep,
-                            intf,
-                            cmd2.transfer_flags, cmd2.transfer_buffer_length, cmd2.setup,
+                            std::move(intf),
                             ec_during_handling_urb
                             );
 

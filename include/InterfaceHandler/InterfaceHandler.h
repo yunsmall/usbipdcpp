@@ -22,21 +22,6 @@ public:
         handle_interface(handle_interface) {
     }
 
-    virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                      std::uint32_t transfer_flags,
-                                      std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                      std::error_code &ec) =0;
-    virtual void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                           std::uint32_t transfer_flags,
-                                           std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                           std::error_code &ec) =0;
-
-    virtual void handle_isochronous_transfer(std::uint32_t seqnum,
-                                             const UsbEndpoint &ep,
-                                             std::uint32_t transfer_flags,
-                                             std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                             int num_iso_packets, std::error_code &ec) =0;
-
     /**
      * @brief 新的客户端连接时会调这个函数
      * @param session
