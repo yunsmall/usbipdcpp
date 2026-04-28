@@ -117,6 +117,19 @@ public:
         }
     }
 
+    /**
+     * @brief 重置池（归还所有对象到池，不删除）
+     */
+    void reset() {
+        if constexpr (ThreadSafe) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            reset_impl();
+        }
+        else {
+            reset_impl();
+        }
+    }
+
 private:
     std::pair<T *, bool> pool_[PoolSize] = {};
     size_t free_stack_[PoolSize] = {};
@@ -157,6 +170,18 @@ private:
             pool_[i] = {nullptr, false};
         }
         free_top_ = 0;
+    }
+
+    void reset_impl() {
+        // 归还所有对象到池，不删除
+        for (size_t i = 0; i < PoolSize; ++i) {
+            pool_[i].second = false;
+        }
+        // 重建空闲索引栈
+        for (size_t i = 0; i < PoolSize; ++i) {
+            free_stack_[i] = i;
+        }
+        free_top_ = PoolSize;
     }
 };
 

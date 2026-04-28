@@ -103,6 +103,113 @@ TEST(ObjectPool, Clear) {
     EXPECT_EQ(pool.alloc(), nullptr);
 }
 
+TEST(ObjectPool, Reset) {
+    ObjectPool<int, 4> pool;
+
+    // 分配部分对象
+    auto* obj1 = pool.alloc();
+    auto* obj2 = pool.alloc();
+    EXPECT_EQ(pool.available(), 2u);
+
+    // reset 归还所有对象到池
+    pool.reset();
+    EXPECT_EQ(pool.available(), 4u);
+
+    // reset 后可以重新分配
+    auto* obj3 = pool.alloc();
+    auto* obj4 = pool.alloc();
+    auto* obj5 = pool.alloc();
+    auto* obj6 = pool.alloc();
+    ASSERT_NE(obj3, nullptr);
+    ASSERT_NE(obj4, nullptr);
+    ASSERT_NE(obj5, nullptr);
+    ASSERT_NE(obj6, nullptr);
+    EXPECT_EQ(pool.available(), 0u);
+
+    // 池空后无法分配
+    EXPECT_EQ(pool.alloc(), nullptr);
+
+    // 归还所有
+    pool.free(obj3);
+    pool.free(obj4);
+    pool.free(obj5);
+    pool.free(obj6);
+    EXPECT_EQ(pool.available(), 4u);
+}
+
+TEST(ObjectPool, ResetPreservesObjects) {
+    ObjectPool<TestObject, 4> pool;
+
+    // 分配并设置值
+    auto* obj1 = pool.alloc();
+    obj1->value = 100;
+    obj1->name = "original";
+
+    // reset 后对象应该还在（地址不变）
+    pool.reset();
+    EXPECT_EQ(pool.available(), 4u);
+
+    // 再次分配应该能得到原来的对象（值被保留）
+    auto* obj2 = pool.alloc();
+    EXPECT_EQ(obj1, obj2);  // 同一个地址
+    EXPECT_EQ(obj2->value, 100);  // 值保留
+    EXPECT_EQ(obj2->name, "original");
+}
+
+TEST(ObjectPool, ResetVsClear) {
+    ObjectPool<int, 4> pool;
+
+    // 分配部分
+    pool.alloc();
+    pool.alloc();
+
+    // reset: 对象保留，可继续使用
+    pool.reset();
+    EXPECT_EQ(pool.available(), 4u);
+    EXPECT_NE(pool.alloc(), nullptr);
+
+    // clear: 对象删除，无法使用
+    pool.clear();
+    EXPECT_EQ(pool.available(), 0u);
+    EXPECT_EQ(pool.alloc(), nullptr);
+}
+
+TEST(ObjectPoolThreadSafe, ResetThreadSafe) {
+    ObjectPool<int, 100, true> pool;
+
+    // 并发分配
+    std::vector<std::thread> threads;
+    std::vector<int*> ptrs;
+    std::mutex ptrs_mutex;
+
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&]() {
+            for (int i = 0; i < 20; ++i) {
+                auto* p = pool.alloc();
+                if (p) {
+                    std::lock_guard<std::mutex> lock(ptrs_mutex);
+                    ptrs.push_back(p);
+                }
+            }
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    EXPECT_LT(pool.available(), pool.capacity());
+
+    // reset 后应该恢复到满状态
+    pool.reset();
+    EXPECT_EQ(pool.available(), pool.capacity());
+
+    // 可以重新分配
+    auto* p = pool.alloc();
+    ASSERT_NE(p, nullptr);
+    pool.free(p);
+}
+
 // ============== ObjectPool Tests (线程安全) ==============
 
 TEST(ObjectPoolThreadSafe, ConcurrentAllocFree) {

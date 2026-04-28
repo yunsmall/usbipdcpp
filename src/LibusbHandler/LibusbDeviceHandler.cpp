@@ -147,8 +147,8 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
         });
     }
 
-    //为下次连接做准备，清空自身状态
-    callback_args_pool_.clear();
+    //为下次连接做准备，重置对象池状态
+    callback_args_pool_.reset();
 
     // 断开连接时释放接口并关闭设备
     if (interfaces_claimed_) {
