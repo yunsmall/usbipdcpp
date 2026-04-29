@@ -21,12 +21,13 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(
         std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
 
         // 如果队列空且有待发送的报告，立即响应
-        if (endpoint_requests_.empty(ep.address) && !pending_input_report_.empty()) {
+        if (endpoint_requests_.empty(ep.address) && !pending_input_reports_.empty()) {
+            auto& front_report = pending_input_reports_.front();
             auto* trx = GenericTransfer::from_handle(transfer.get());
-            auto send_len = std::min(pending_input_report_.size(), static_cast<std::size_t>(transfer_buffer_length));
-            trx->data.assign(pending_input_report_.begin(), pending_input_report_.begin() + send_len);
+            auto send_len = std::min(front_report.size(), static_cast<std::size_t>(transfer_buffer_length));
+            trx->data.assign(front_report.begin(), front_report.begin() + send_len);
             trx->actual_length = send_len;
-            pending_input_report_.clear();
+            pending_input_reports_.pop_front();
             session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                             seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
@@ -74,9 +75,9 @@ void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer
                         req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
     }
     else {
-        // 没有请求，存储数据等待
-        pending_input_report_.assign(static_cast<const std::uint8_t*>(data.data()),
-                                      static_cast<const std::uint8_t*>(data.data()) + data.size());
+        // 没有请求，将报告加入队列等待
+        pending_input_reports_.emplace_back(static_cast<const std::uint8_t*>(data.data()),
+                                             static_cast<const std::uint8_t*>(data.data()) + data.size());
     }
 }
 
@@ -96,7 +97,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::cons
 void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec) {
     {
         std::lock_guard lock(input_mutex_);
-        pending_input_report_.clear();
+        pending_input_reports_.clear();
     }
     {
         std::lock_guard lock(endpoint_requests_mutex_);

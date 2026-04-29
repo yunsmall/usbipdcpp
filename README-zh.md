@@ -185,13 +185,14 @@ AbstDeviceHandler
 4. multi_devices
 
    包含10个虚拟HID设备的示例。展示了如何使用工厂模式创建多个设备。
-5. advanced_mouse
+5. absolute_mouse
 
-   高级鼠标虚拟设备示例，提供完整的鼠标操作API：
+   绝对坐标鼠标虚拟设备示例，提供完整的鼠标操作API：
    - **屏幕坐标API**：使用像素坐标定位，通过 `set_screen_bounds()` 设置屏幕边界
    - **HID原始坐标API**：使用 `_raw` 后缀的方法直接操作HID坐标（0-32767）
+   - **移动函数**：`move(from, to)` 和 `humanized_move(from, to)` 接受起点终点参数
+   - **拖动功能**：`drag(from, to)` 和 `humanized_drag(from, to)` 按下左键移动
    - **按钮操作**：左键、右键、中键、点击、双击
-   - **平滑移动**：`smooth_move_to()` 实现平滑动画
    
    `set_screen_bounds(x1, y1, x2, y2)` 工作原理：
    - 定义屏幕坐标的有效范围边界，如 `bounds(0, 0, 1920, 1080)` 表示屏幕范围 [0, 1920] × [0, 1080]

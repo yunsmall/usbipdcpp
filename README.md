@@ -187,13 +187,14 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 4. multi_devices
 
    A demonstration with 10 virtual HID devices. Shows how to create multiple devices using a factory pattern.
-5. advanced_mouse
+5. absolute_mouse
 
-   Advanced mouse virtual device example providing complete mouse operation API:
+   Absolute coordinate mouse virtual device example providing complete mouse operation API:
    - **Screen coordinate API**: Position using pixel coordinates, set screen bounds via `set_screen_bounds()`
    - **HID raw coordinate API**: Methods with `_raw` suffix for direct HID coordinate manipulation (0-32767)
+   - **Movement functions**: `move(from, to)` and `humanized_move(from, to)` accept start and end points
+   - **Drag functionality**: `drag(from, to)` and `humanized_drag(from, to)` with left button pressed
    - **Button operations**: Left, right, middle button, click, double-click
-   - **Smooth movement**: `smooth_move_to()` for animated transitions
    
    `set_screen_bounds(x1, y1, x2, y2)` working principle:
    - Defines screen coordinate boundary range, e.g. `bounds(0, 0, 1920, 1080)` means screen range [0, 1920] × [0, 1080]

@@ -188,8 +188,8 @@ protected:
     mutable std::mutex input_mutex_;
 
     /**
-     * @brief 待发送的输入报告数据
+     * @brief 待发送的输入报告队列
      */
-    data_type pending_input_report_;
+    std::deque<data_type> pending_input_reports_;
 };
 }
