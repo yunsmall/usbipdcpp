@@ -31,9 +31,9 @@ int main() {
 
     auto mock_keyboard = std::make_shared<UsbDevice>(UsbDevice{
             .path = "/usbipdcpp/mock_keyboard",
-            .busid = "1-2",
+            .busid = "1-1",
             .bus_num = 1,
-            .dev_num = 2,
+            .dev_num = 1,
             .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
             .vendor_id = 0x1234,
             .product_id = 0x5679,
@@ -63,8 +63,8 @@ int main() {
 
     SPDLOG_INFO("Mock keyboard started");
     SPDLOG_INFO("Port: 54325");
-    SPDLOG_INFO("Busid: 1-2");
-    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-2");
+    SPDLOG_INFO("Busid: 1-1");
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
     SPDLOG_INFO("Press Enter to exit...");
 
     // 后台线程模拟按键

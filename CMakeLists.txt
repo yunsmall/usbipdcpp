@@ -45,6 +45,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_ADVANCED_MOUSE "Build example advanced mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_VIRTUAL_DEVICE "Build virtual device component" ON)
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
@@ -87,6 +88,7 @@ file(GLOB UTILS_SRC_FILES src/utils/*.cpp)
 file(GLOB DEVICE_HANDLER_SRC_FILES src/DeviceHandler/*.cpp)
 file(GLOB INTERFACE_HANDLER_SRC_FILES src/InterfaceHandler/*.cpp)
 file(GLOB VIRTUAL_DEVICE_SRC_FILES src/virtual_device/*.cpp)
+file(GLOB VIRTUAL_DEVICE_DEVICES_SRC_FILES src/virtual_device/devices/*.cpp)
 file(GLOB LIBUSB_SRC_FILES src/LibusbHandler/*.cpp)
 
 # 核心库（不含虚拟设备）
@@ -101,7 +103,7 @@ endif()
 
 # 虚拟设备库
 if(USBIPDCPP_BUILD_VIRTUAL_DEVICE)
-    add_library(${PROJECT_NAME}_virtual_device STATIC ${VIRTUAL_DEVICE_SRC_FILES})
+    add_library(${PROJECT_NAME}_virtual_device STATIC ${VIRTUAL_DEVICE_SRC_FILES} ${VIRTUAL_DEVICE_DEVICES_SRC_FILES})
     target_link_libraries(${PROJECT_NAME}_virtual_device PUBLIC ${PROJECT_NAME})
     target_include_directories(${PROJECT_NAME}_virtual_device PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 endif()
@@ -157,6 +159,13 @@ if (USBIPDCPP_BUILD_EXAMPLES)
         add_executable(multi_devices ${MULTI_DEVICES_SRC})
         target_link_libraries(multi_devices ${PROJECT_NAME}_virtual_device)
         target_include_directories(multi_devices PRIVATE examples/multi_devices)
+    endif ()
+
+    if (USBIPDCPP_BUILD_EXAMPLE_ADVANCED_MOUSE)
+        file(GLOB_RECURSE ADVANCED_MOUSE_SRC examples/advanced_mouse/*.cpp)
+        add_executable(advanced_mouse ${ADVANCED_MOUSE_SRC})
+        target_link_libraries(advanced_mouse ${PROJECT_NAME}_virtual_device)
+        target_include_directories(advanced_mouse PRIVATE examples/advanced_mouse)
     endif ()
 
     if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS AND USBIPDCPP_BUILD_EXAMPLE_LIBUSB_SERVER)

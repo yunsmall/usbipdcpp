@@ -185,11 +185,24 @@ AbstDeviceHandler
 4. multi_devices
 
    包含10个虚拟HID设备的示例。展示了如何使用工厂模式创建多个设备。
-5. libusb_server
+5. advanced_mouse
+
+   高级鼠标虚拟设备示例，提供完整的鼠标操作API：
+   - **屏幕坐标API**：使用像素坐标定位，通过 `set_screen_bounds()` 设置屏幕边界
+   - **HID原始坐标API**：使用 `_raw` 后缀的方法直接操作HID坐标（0-32767）
+   - **按钮操作**：左键、右键、中键、点击、双击
+   - **平滑移动**：`smooth_move_to()` 实现平滑动画
+   
+   `set_screen_bounds(x1, y1, x2, y2)` 工作原理：
+   - 定义屏幕坐标的有效范围边界，如 `bounds(0, 0, 1920, 1080)` 表示屏幕范围 [0, 1920] × [0, 1080]
+   - 屏幕坐标通过线性映射转换为 HID 坐标 [0, 32767]
+   - 超出 bounds 的坐标会被 clamp 到边界值
+   - 注意：Windows 主机不接受 HID (0, 0)，建议屏幕坐标避开 (x1, y1) 边界
+6. libusb_server
 
    转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
    通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
-6. termux_libusb_server
+7. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。

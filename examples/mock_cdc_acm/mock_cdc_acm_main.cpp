@@ -58,9 +58,9 @@ int main() {
     // 创建设备
     auto mock_cdc_acm = std::make_shared<UsbDevice>(UsbDevice{
         .path = "/usbipdcpp/mock_cdc_acm",
-        .busid = "1-3",
+        .busid = "1-1",
         .bus_num = 1,
-        .dev_num = 3,
+        .dev_num = 1,
         .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
         .vendor_id = 0x1234,
         .product_id = 0x5680,  // CDC ACM device
@@ -94,9 +94,9 @@ int main() {
 
     SPDLOG_INFO("Mock CDC ACM (virtual serial port) started");
     SPDLOG_INFO("Port: 54326");
-    SPDLOG_INFO("Busid: 1-3");
+    SPDLOG_INFO("Busid: 1-1");
     SPDLOG_INFO("This is an echo serial port - data sent will be echoed back");
-    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-3");
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
     SPDLOG_INFO("Then use: screen /dev/ttyACMx or minicom");
     SPDLOG_INFO("Press Enter to exit...");
 
