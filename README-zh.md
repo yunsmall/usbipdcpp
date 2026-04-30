@@ -231,6 +231,57 @@ AbstDeviceHandler
 
 更多选项详见 `CMakeLists.txt`
 
+### Python 绑定
+
+Python 绑定使用 pybind11，需要先安装 `pybind11`（vcpkg 或 pip 均可）。
+
+**编译：**
+```bash
+cmake -B build -DUSBIPDCPP_BUILD_PYTHON_BINDINGS=ON
+cmake --build build
+```
+
+编译后设置 PYTHONPATH 并测试：
+```bash
+# Windows
+set PYTHONPATH=build/python_package
+python examples/python/test_absolute_mouse.py
+# Linux/macOS
+export PYTHONPATH=build/python_package
+python examples/python/test_absolute_mouse.py
+```
+
+**依赖：**
+- pybind11（vcpkg 安装：`./vcpkg install pybind11`，或 pip：`pip install pybind11`）
+- 可选，用于生成 `.pyi` 存根文件：`pip install pybind11-stubgen`
+
+**注意事项：**
+- `send_input_report()` 接收 `bytes`：`handler.send_input_report(b'\x01\x00\x00\x00')`
+- Python 可继承 `HidVirtualInterfaceHandler` 实现自定义 HID 设备（参考 `examples/python/flip_left_button.py`）
+- `start()` 和 `stop()` 会释放 Python GIL，可在主线程安全调用
+
+### Python 绑定开发状态 🚧
+
+Python 绑定正在**积极开发中**，可能存在 bug 或崩溃问题。
+
+如果你遇到报错：
+
+1. **提 issue**，附上完整的 Python 回溯（traceback）
+2. **获取 C++ 堆栈**：在 CLion 中调试原生应用程序
+   - Run → Edit Configurations → Add New → **Native Application**
+   - Target：选择 `usbipdcpp_python`
+   - Executable：选择 `python.exe` 路径
+   - Program arguments：目标脚本路径（如 `examples/python/flip_left_button.py`）
+   - Working directory：项目根目录
+   
+   CLion 会在崩溃时断住，显示完整的 C++ 调用栈。
+
+3. 请提供：
+   - Python 版本和操作系统
+   - 使用的构建配置
+   - 完整的错误输出（Python 回溯 + C++ 堆栈）
+   - 最小可复现代码
+
 ### 完整编译命令：
 
 #### 使用vcpkg包管理器

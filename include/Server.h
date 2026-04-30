@@ -70,8 +70,9 @@ public:
     /**
      * @brief 添加一个device，线程安全。不管server是否启动都可以调用
      * @param device 待添加的设备
+     * @return 添加的设备
      */
-    void add_device(std::shared_ptr<UsbDevice> &&device);
+    std::shared_ptr<UsbDevice> add_device(std::shared_ptr<UsbDevice> &&device);
 
     bool has_bound_device(const std::string &busid);
 

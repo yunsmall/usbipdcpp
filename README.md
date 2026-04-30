@@ -236,6 +236,57 @@ There are multiple CMake options to control which parts are compiled:
 
 See `CMakeLists.txt` for more options and details.
 
+### Python Bindings
+
+Python bindings use pybind11 and require `pybind11` installed via vcpkg or pip.
+
+**Build:**
+```bash
+cmake -B build -DUSBIPDCPP_BUILD_PYTHON_BINDINGS=ON
+cmake --build build
+```
+
+After build, set PYTHONPATH and test:
+```bash
+# Windows
+set PYTHONPATH=build/python_package
+python examples/python/test_absolute_mouse.py
+# Linux/macOS
+export PYTHONPATH=build/python_package
+python examples/python/test_absolute_mouse.py
+```
+
+**Dependencies:**
+- pybind11 (via vcpkg `./vcpkg install pybind11` or `pip install pybind11`)
+- For `.pyi` stub generation (optional): `pip install pybind11-stubgen`
+
+**Usage notes:**
+- `send_input_report()` takes `bytes`: `handler.send_input_report(b'\x01\x00\x00\x00')`
+- Python can inherit from `HidVirtualInterfaceHandler` for custom HID devices (see `examples/python/flip_left_button.py`)
+- `start()` and `stop()` release the Python GIL, safe to call from main thread
+
+### Python Bindings Status 🚧
+
+Python bindings are **under active development** and may have bugs or crashes.
+
+If you encounter an error:
+
+1. **Report an issue** with the full Python traceback
+2. **Get a C++ stack trace** by debugging in CLion:
+   - Run → Edit Configurations → Add New → **Native Application**
+   - Target: `usbipdcpp_python`
+   - Executable: path to `python.exe`
+   - Program arguments: path to your script (e.g., `examples/python/flip_left_button.py`)
+   - Working directory: project root
+   
+   CLion will break on crash and show the full C++ call stack.
+
+3. Include:
+   - Python version and OS
+   - Build configuration used
+   - Full error output (both Python and C++ stack trace)
+   - Minimal reproduction script
+
 ### Full compile commands:
 
 #### Use vcpkg as the package manager:

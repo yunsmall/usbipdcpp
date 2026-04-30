@@ -106,6 +106,10 @@ std::pair<int, int> AbsoluteMouseHandler::hid_to_screen(std::int16_t hid_x, std:
 
 void AbsoluteMouseHandler::on_new_connection(Session &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
+
+    client_connected_ = true;
+    client_connected_.notify_all();
+
     should_stop_ = false;
     state_changed_ = true;
 
@@ -129,6 +133,9 @@ void AbsoluteMouseHandler::on_disconnection(error_code &ec) {
     if (send_thread_.joinable()) {
         send_thread_.join();
     }
+    client_connected_ = false;
+    client_connected_.notify_all();
+
     HidVirtualInterfaceHandler::on_disconnection(ec);
 }
 
@@ -395,6 +402,20 @@ AbsoluteMouseHandler::ButtonState AbsoluteMouseHandler::get_button_state() const
         .middle_button = middle_button_,
         .wheel = wheel_,
     };
+}
+
+bool AbsoluteMouseHandler::wait_for_client(int timeout_ms) {
+    if (timeout_ms < 0) {
+        client_connected_.wait(false);
+        return true;
+    }
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (!client_connected_.load()) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return true;
 }
 
 } // namespace usbipdcpp

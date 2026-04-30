@@ -49,6 +49,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_ABSOLUTE_MOUSE "Build example absolute mouse appl
 option(USBIPDCPP_BUILD_VIRTUAL_DEVICE "Build virtual device component" ON)
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 
 option(USBIPDCPP_ENABLE_BUSY_WAIT "Enable busy-wait mode for lower latency" OFF)
 option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
@@ -251,6 +252,11 @@ if (USBIPDCPP_BUILD_TESTS)
     target_link_libraries(test_generic_transfer PRIVATE ${PROJECT_NAME})
     target_link_libraries(test_generic_transfer PRIVATE GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_generic_transfer)
+endif ()
+
+# Python bindings
+if (USBIPDCPP_BUILD_PYTHON_BINDINGS AND USBIPDCPP_BUILD_VIRTUAL_DEVICE)
+    add_subdirectory(bindings)
 endif ()
 
 if (IS_TOP_LEVEL)

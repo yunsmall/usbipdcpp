@@ -237,6 +237,13 @@ public:
 
     ButtonState get_button_state() const;
 
+    /**
+     * @brief 等待客户端连接
+     * @param timeout_ms 超时时间（毫秒），负数表示无限等待
+     * @return true 如果客户端已连接，false 如果超时
+     */
+    bool wait_for_client(int timeout_ms = -1);
+
 private:
     int screen_x1_ = 0;      ///< 屏幕左上角X坐标
     int screen_y1_ = 0;      ///< 屏幕左上角Y坐标
@@ -258,6 +265,8 @@ private:
     std::atomic_bool should_stop_{false};
     std::condition_variable state_cv_;
     bool state_changed_{false};
+
+    std::atomic_bool client_connected_{false};
 
     data_type report_descriptor_;
 
