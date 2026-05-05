@@ -103,7 +103,7 @@ public:
         TransferHandle transfer;                       // 拥有 libusb_transfer* 的所有权
     };
 
-    static void transfer_callback(libusb_transfer *trx);
+    static void LIBUSB_CALL transfer_callback(libusb_transfer *trx);
 
     // 对象池：64个
     using CallbackArgsPool = ObjectPool<libusb_callback_args, 256, true>;

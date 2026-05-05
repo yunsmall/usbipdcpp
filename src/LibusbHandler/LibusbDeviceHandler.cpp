@@ -507,7 +507,7 @@ enum libusb_transfer_status usbipdcpp::LibusbDeviceHandler::error2trxstat(int e)
     }
 }
 
-void usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
+void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transfer *trx) {
     auto &callback_arg = *static_cast<libusb_callback_args *>(trx->user_data);
 
     LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
