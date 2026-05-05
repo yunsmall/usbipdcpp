@@ -29,6 +29,15 @@ public:
         return string_pool[index];
     }
 
+    void change_string(std::uint8_t index, const std::wstring &new_str) {
+        std::lock_guard lock(string_pool_mutex);
+        if (!string_pool.contains(index)) {
+            SPDLOG_CRITICAL("字符串索引 {} 无效", index);
+            throw std::system_error(std::make_error_code(std::errc::invalid_argument));
+        }
+        string_pool[index] = new_str;
+    }
+
     void remove_string(std::uint8_t index) {
         std::lock_guard lock(string_pool_mutex);
         string_pool.erase(index);

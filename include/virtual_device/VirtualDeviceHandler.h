@@ -125,47 +125,19 @@ protected:
 
 public:
     void change_string_configuration(const std::wstring &new_str) {
-        auto ret = string_pool.get_string(string_configuration_value);
-        if (ret) {
-            string_pool.remove_string(string_configuration_value);
-            string_configuration_value = string_pool.new_string(new_str);
-            return;
-        }
-        SPDLOG_CRITICAL("string_configuration_value无效");
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
+        string_pool.change_string(string_configuration_value, new_str);
     }
 
     void change_string_manufacturer(const std::wstring &new_str) {
-        auto ret = string_pool.get_string(string_manufacturer_value);
-        if (ret) {
-            string_pool.remove_string(string_manufacturer_value);
-            string_manufacturer_value = string_pool.new_string(new_str);
-            return;
-        }
-        SPDLOG_CRITICAL("string_manufacturer_value无效");
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
+        string_pool.change_string(string_manufacturer_value, new_str);
     }
 
     void change_string_product(const std::wstring &new_str) {
-        auto ret = string_pool.get_string(string_product_value);
-        if (ret) {
-            string_pool.remove_string(string_product_value);
-            string_product_value = string_pool.new_string(new_str);
-            return;
-        }
-        SPDLOG_CRITICAL("string_product_value无效");
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
+        string_pool.change_string(string_product_value, new_str);
     }
 
     void change_string_serial(const std::wstring &new_str) {
-        auto ret = string_pool.get_string(string_serial_value);
-        if (ret) {
-            string_pool.remove_string(string_serial_value);
-            string_serial_value = string_pool.new_string(new_str);
-            return;
-        }
-        SPDLOG_CRITICAL("string_serial_value无效");
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
+        string_pool.change_string(string_serial_value, new_str);
     }
 
 protected:

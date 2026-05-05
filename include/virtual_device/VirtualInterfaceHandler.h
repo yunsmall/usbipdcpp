@@ -228,6 +228,10 @@ public:
         return string_pool.get_string(string_interface).value_or(L"");
     }
 
+    void change_string_interface(const std::wstring &new_str) {
+        string_pool.change_string(string_interface, new_str);
+    }
+
 protected:
     Session *session = nullptr;
     AbstDeviceHandler* device_handler = nullptr;

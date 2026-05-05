@@ -134,7 +134,9 @@ void bind_virtual_device(py::module_ &m) {
             // 实际清理由 trampoline 在 Python 回调后自动执行
         })
         .def("get_string_interface_value", &usbipdcpp::VirtualInterfaceHandler::get_string_interface_value)
-        .def("get_string_interface", &usbipdcpp::VirtualInterfaceHandler::get_string_interface);
+        .def("get_string_interface", &usbipdcpp::VirtualInterfaceHandler::get_string_interface)
+        .def("change_string_interface", &usbipdcpp::VirtualInterfaceHandler::change_string_interface,
+             py::arg("new_str"));
 
     // HidVirtualInterfaceHandler - 支持继承
     py::class_<usbipdcpp::HidVirtualInterfaceHandler, PyHidVirtualInterfaceHandler,
@@ -159,5 +161,13 @@ void bind_virtual_device(py::module_ &m) {
         m, "SimpleVirtualDeviceHandler")
         .def(py::init<usbipdcpp::UsbDevice &, usbipdcpp::StringPool &>(),
              py::arg("handle_device"), py::arg("string_pool"))
-        .def("setup_interface_handlers", &usbipdcpp::SimpleVirtualDeviceHandler::setup_interface_handlers);
+        .def("setup_interface_handlers", &usbipdcpp::SimpleVirtualDeviceHandler::setup_interface_handlers)
+        .def("change_string_manufacturer", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_manufacturer,
+             py::arg("new_str"))
+        .def("change_string_product", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_product,
+             py::arg("new_str"))
+        .def("change_string_serial", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_serial,
+             py::arg("new_str"))
+        .def("change_string_configuration", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_configuration,
+             py::arg("new_str"));
 }

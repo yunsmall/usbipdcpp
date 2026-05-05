@@ -143,6 +143,9 @@ def main():
     iface_in_device.set_handler(mouse)
 
     device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device, string_pool)
+    device_handler.change_string_manufacturer("Usbipdcpp Python")
+    device_handler.change_string_product("Flip Mouse (Python)")
+    device_handler.change_string_serial("python-flip-001")
     device.set_handler(device_handler)
     device_handler.setup_interface_handlers()
 

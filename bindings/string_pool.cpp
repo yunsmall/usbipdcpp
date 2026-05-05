@@ -9,5 +9,7 @@ void bind_string_pool(py::module_ &m) {
         .def(py::init<>())
         .def("new_string", &usbipdcpp::StringPool::new_string, py::arg("str"))
         .def("get_string", &usbipdcpp::StringPool::get_string, py::arg("index"))
-        .def("remove_string", &usbipdcpp::StringPool::remove_string, py::arg("index"));
+        .def("remove_string", &usbipdcpp::StringPool::remove_string, py::arg("index"))
+        .def("change_string", &usbipdcpp::StringPool::change_string,
+             py::arg("index"), py::arg("new_str"));
 }

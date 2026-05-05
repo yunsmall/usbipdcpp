@@ -152,6 +152,25 @@ For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op impleme
 
 > ⚠️ **Important**: When overriding `VirtualInterfaceHandler::on_new_connection()` and `on_disconnection()`, you **must** call the parent class implementation. The parent class sets/clears the `session` pointer which is required for submitting responses.
 
+### Customizing USB Strings
+
+Call `change_string_*` on your device handler or interface handler **before** starting the server:
+
+**Device-level strings** (via `VirtualDeviceHandler`):
+```cpp
+device_handler->change_string_manufacturer(L"My Company");
+device_handler->change_string_product(L"My USB Device");
+device_handler->change_string_serial(L"1234567890");
+device_handler->change_string_configuration(L"My Configuration");
+```
+
+**Interface string** (via `VirtualInterfaceHandler`):
+```cpp
+interface_handler->change_string_interface(L"My HID Interface");
+```
+
+All `change_string_*` methods delegate to `StringPool::change_string()` and will throw if the string index is invalid.
+
 ---
 
 ## ⚠️ Important Windows Notice

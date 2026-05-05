@@ -57,6 +57,9 @@ def main():
 
     # 设置设备 handler 并初始化接口
     device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device, string_pool)
+    device_handler.change_string_manufacturer("Usbipdcpp Python")
+    device_handler.change_string_product("Absolute Mouse (Python)")
+    device_handler.change_string_serial("python-abs-mouse-001")
     device.set_handler(device_handler)
     device_handler.setup_interface_handlers()
 

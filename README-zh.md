@@ -153,6 +153,25 @@ AbstDeviceHandler
 
 > ⚠️ **重要提示**：重写 `VirtualInterfaceHandler::on_new_connection()` 和 `on_disconnection()` 时，**必须**调用父类实现。父类会设置/清除 `session` 指针，该指针用于提交响应数据。
 
+### 自定义 USB 字符串
+
+在启动服务器**之前**调用 `change_string_*` 修改设备字符串：
+
+**设备级字符串**（通过 `VirtualDeviceHandler`）：
+```cpp
+device_handler->change_string_manufacturer(L"我的公司");
+device_handler->change_string_product(L"我的 USB 设备");
+device_handler->change_string_serial(L"1234567890");
+device_handler->change_string_configuration(L"我的配置");
+```
+
+**接口字符串**（通过 `VirtualInterfaceHandler`）：
+```cpp
+interface_handler->change_string_interface(L"我的 HID 接口");
+```
+
+所有 `change_string_*` 方法最终调用 `StringPool::change_string()`，若字符串索引无效会抛异常。
+
 ---
 
 ## ⚠️ Windows 使用提示
