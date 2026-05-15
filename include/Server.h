@@ -100,7 +100,7 @@ public:
      * @brief 操作设备数据请调用这个函数获取锁后使用
      * @return
      */
-    [[nodiscard]] std::shared_mutex &get_devices_mutex() {
+    [[nodiscard]] std::shared_mutex &get_devices_mutex() const {
         return devices_mutex;
     }
 
@@ -168,7 +168,7 @@ protected:
 # endif
 
     std::list<std::weak_ptr<Session>> sessions;
-    std::shared_mutex session_list_mutex;
+    mutable std::shared_mutex session_list_mutex;
     std::condition_variable_any all_sessions_closed_cv;
 
     //网络通信请异步使用这个io_context
@@ -180,13 +180,13 @@ private:
     void on_session_exit();
 
     std::list<std::function<void()>> session_exit_callbacks;
-    std::shared_mutex exit_callbacks_mutex;
+    mutable std::shared_mutex exit_callbacks_mutex;
 
     //可供导入的设备
     std::vector<std::shared_ptr<UsbDevice>> available_devices;
     //正在使用的设备，busid做索引只供索引使用，与usbip协议无关
     std::map<std::string, std::shared_ptr<UsbDevice>> using_devices;
     //锁available_devices和using_devices两个变量
-    std::shared_mutex devices_mutex;
+    mutable std::shared_mutex devices_mutex;
 };
 }

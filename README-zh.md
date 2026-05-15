@@ -336,6 +336,14 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ---
 
+## 许可证
+
+本项目使用 [LGPLv3](LICENSE) 许可证。
+
+如需闭源或商业授权，请联系：yun_small@163.com
+
+---
+
 ## 致谢
 
 本项目受益于以下开源项目：
