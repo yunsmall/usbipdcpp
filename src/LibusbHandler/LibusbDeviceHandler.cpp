@@ -726,8 +726,13 @@ bool usbipdcpp::LibusbDeviceHandler::wrap_fd_and_claim_interfaces() {
     int num_interfaces = active_config_desc->bNumInterfaces;
     SPDLOG_DEBUG("设备有 {} 个接口", num_interfaces);
 
-    // 声明所有接口（Android 模式下通常不需要 detach kernel driver）
+    // 尝试 detach kernel driver 后再声明接口
     for (int intf_i = 0; intf_i < num_interfaces; intf_i++) {
+        int detach_err = libusb_detach_kernel_driver(native_handle, intf_i);
+        if (detach_err && detach_err != LIBUSB_ERROR_NOT_FOUND) {
+            SPDLOG_WARN("Android 模式下 detach kernel driver 接口 {} 失败: {}",
+                        intf_i, libusb_strerror(detach_err));
+        }
         err = libusb_claim_interface(native_handle, intf_i);
         if (err) {
             SPDLOG_ERROR("无法声明接口 {}: {}", intf_i, libusb_strerror(err));
