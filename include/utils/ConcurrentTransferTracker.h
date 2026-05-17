@@ -32,8 +32,14 @@ public:
         std::uint32_t seqnum;
         TransferPtr transfer;
         std::uint8_t endpoint;
-        bool is_unlinked = false;           // 是否被 unlink
-        std::uint32_t unlink_cmd_seqnum;    // CMD_UNLINK 的 seqnum
+
+        // unlink 正在取消中（unlink 到达时 URB 还在 pending）
+        bool cancelling = false;
+        std::uint32_t unlink_cmd_seqnum;    // 对应的 CMD_UNLINK seqnum
+
+        // 响应是否已发送，用于保证 RET_SUBMIT 先于 RET_UNLINK
+        bool submit_sent = false;
+        bool unlink_sent = false;
     };
 
     ConcurrentTransferTracker() = default;

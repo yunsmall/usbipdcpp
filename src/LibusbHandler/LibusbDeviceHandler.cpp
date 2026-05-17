@@ -316,28 +316,43 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_s
     if (device_removed)[[unlikely]]
             return;
 
-    libusb_transfer *transfer_to_cancel = nullptr;
+    bool send_now = false;
 
     transfer_tracker_.with_transfer(unlink_seqnum, [&](auto *info) {
-        if (info) {
-            // transfer 还在进行中，在锁保护下标记为 unlinking
-            info->is_unlinked = true;
-            info->unlink_cmd_seqnum = cmd_seqnum;
-            transfer_to_cancel = info->transfer;
+        if (!info) {
+            // tracker 中已不存在 → 回调已完全处理完毕（submit_sent || unlink_sent 为真时才会移除）。
+            // RET_SUBMIT 一定已经发送，可以直接发 RET_UNLINK(0)。
+            send_now = true;
+            return;
         }
-    });
 
-    if (transfer_to_cancel)[[likely]] {
-        int err = libusb_cancel_transfer(transfer_to_cancel);
-        if (err == LIBUSB_ERROR_NOT_FOUND)[[unlikely]]{
+        if (info->submit_sent || info->unlink_sent) {
+            // 回调已经发了 RET_SUBMIT 或 RET_UNLINK，现在发 RET_UNLINK(0) 不会乱序。
+            send_now = true;
+            return;
+        }
+
+        if (info->cancelling) {
+            // 已有另一个 unlink 正在取消此 transfer，回调会发 RET_UNLINK。
+            return;
+        }
+
+        // transfer 仍在 pending，在锁内标记并取消（防止 transfer 被回调释放后 UAF）。
+        info->cancelling = true;
+        info->unlink_cmd_seqnum = cmd_seqnum;
+        int err = libusb_cancel_transfer(info->transfer);
+        if (err == LIBUSB_ERROR_NOT_FOUND)[[unlikely]] {
+            // transfer 在 libusb 层已完成后回调尚未执行。cancelling 已置位，
+            // 回调会走 unlink 分支发送 RET_UNLINK（带实际传输状态码）。
         }
         else if (err)[[unlikely]] {
             SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
         }
-    }
-    else {
-        // transfer 已经完成，立即发送 ret_unlink
-        SPDLOG_DEBUG("transfer {} 已完成，立即发送 ret_unlink {}", unlink_seqnum, cmd_seqnum);
+    });
+
+    if (send_now) {
+        // 对应 usbipd-libusb 中 priv 已不在 priv_init 的路径：URB 已完成或响应已发送。
+        SPDLOG_DEBUG("transfer {} 已不在 tracker 或已发送响应，立即发送 ret_unlink {}", unlink_seqnum, cmd_seqnum);
         session->submit_ret_unlink(
                 UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(cmd_seqnum, 0)
                 );
@@ -513,22 +528,23 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
     LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
                   "LibusbDeviceHandler::transfer_callback调用");
 
-    // 在锁保护下检查 is_unlinked 并从 tracker 移除
-    bool is_unlinked = false;
+    // step1: 仅读取 cancelling 状态，不移除 tracker。这样 handle_unlink_seqnum 在
+    // step2（发送）和 step3（标记 sent）之间仍能通过 with_transfer 找到此 transfer，
+    // 从而设置 cancelling，由本回调在 step3 补发 RET_UNLINK(0)。
+    bool cancelling = false;
     std::uint32_t unlink_cmd_seqnum = 0;
 
-    callback_arg.handler->transfer_tracker_.check_and_remove(callback_arg.seqnum, [&](auto *info) {
+    callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
         if (info) {
-            is_unlinked = info->is_unlinked;
+            cancelling = info->cancelling;
             unlink_cmd_seqnum = info->unlink_cmd_seqnum;
-            return true; // 移除
         }
-        return false;
     });
 
     // 如果断连了，直接清理并返回（不发送响应）
     // 这是在传输完成后检查，断连是特殊情况
     if (callback_arg.handler->client_disconnection)[[unlikely]] {
+        callback_arg.handler->transfer_tracker_.remove(callback_arg.seqnum);
         if (callback_arg.handler->transfer_tracker_.concurrent_count() == 0) {
             std::lock_guard lock(callback_arg.handler->transfer_complete_mutex_);
             callback_arg.handler->transfer_complete_cv_.notify_one();
@@ -587,7 +603,7 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
         actual_length = static_cast<std::uint32_t>(iso_actual_length);
     }
 
-    if (!is_unlinked)[[likely]] {
+    if (!cancelling)[[likely]] {
         // 发送 ret_submit
         // OUT 传输不需要发送数据回客户端，只发送 header（无 transfer_handle）
         // IN 传输需要发送 header + 数据（有 transfer_handle）
@@ -619,6 +635,29 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
         LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
                       "LibusbDeviceHandler::transfer_callback submit_ret_submit");
         callback_arg.handler->session->submit_ret_submit(std::move(ret));
+
+        // step3: 标记 submit_sent，同时二次检查 cancelling。handle_unlink_seqnum 可能
+        // 在 step1 之后设置了 cancelling（此时 libusb_cancel_transfer 返回 NOT_FOUND），
+        // 本回调需要补发 RET_UNLINK(0) 且保证它紧跟在 RET_SUBMIT 之后入队。
+        bool need_defer_unlink = false;
+        std::uint32_t defer_unlink_cmd = 0;
+        callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
+            if (info) {
+                info->submit_sent = true;
+                if (info->cancelling && !info->unlink_sent) {
+                    need_defer_unlink = true;
+                    defer_unlink_cmd = info->unlink_cmd_seqnum;
+                    info->unlink_sent = true;
+                }
+            }
+        });
+        if (need_defer_unlink) {
+            SPDLOG_DEBUG("transfer {} 在 submit 后检测到 cancelling，补发 ret_unlink {}",
+                         callback_arg.seqnum, defer_unlink_cmd);
+            callback_arg.handler->session->submit_ret_unlink(
+                    UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(defer_unlink_cmd, 0)
+                    );
+        }
     }
     else {
         // unlink 情况：发送 ret_unlink
@@ -633,7 +672,18 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
                 );
         // unlink 情况：释放 transfer
         callback_arg.transfer.reset();
+
+        // 标记 unlink_sent
+        callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
+            if (info) info->unlink_sent = true;
+        });
     }
+
+    // step4: submit_sent 或 unlink_sent 为真时即可从 tracker 移除
+    callback_arg.handler->transfer_tracker_.check_and_remove(callback_arg.seqnum, [&](auto *info) {
+        if (!info) return false;
+        return info->submit_sent || info->unlink_sent;
+    });
 
     // 释放 callback_arg
     // TransferHandle 已被转移或重置，可以安全归还到池
