@@ -105,7 +105,7 @@ class CdcAcmDataInterfaceHandler;
  *
  * 用于处理 CDC ACM 设备的通信接口，响应控制请求并发送状态通知。
  */
-class CdcAcmCommunicationInterfaceHandler : public VirtualInterfaceHandler {
+class USBIPDCPP_API CdcAcmCommunicationInterfaceHandler : public VirtualInterfaceHandler {
 public:
     CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
@@ -228,7 +228,7 @@ protected:
  *
  * 用于处理 CDC ACM 设备的数据接口，处理批量数据传输。
  */
-class CdcAcmDataInterfaceHandler : public VirtualInterfaceHandler {
+class USBIPDCPP_API CdcAcmDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
     CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 

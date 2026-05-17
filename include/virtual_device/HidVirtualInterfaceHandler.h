@@ -19,7 +19,7 @@ namespace usbipdcpp {
  *
  * 提供中断传输的默认实现，用户只需实现报告描述符和控制请求处理。
  */
-class HidVirtualInterfaceHandler : public VirtualInterfaceHandler {
+class USBIPDCPP_API HidVirtualInterfaceHandler : public VirtualInterfaceHandler {
 public:
     HidVirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         VirtualInterfaceHandler(handle_interface, string_pool) {

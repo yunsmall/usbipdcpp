@@ -14,7 +14,7 @@
 #include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
-class LibusbDeviceHandler : public AbstDeviceHandler {
+class USBIPDCPP_API LibusbDeviceHandler : public AbstDeviceHandler {
     friend class LibusbServer;
 
 public:

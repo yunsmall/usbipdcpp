@@ -82,17 +82,17 @@ enum class UrbStatusType {
     StatusEEOVERFLOW = -75
 };
 
-class TransferErrorCategory : public std::error_category {
+class USBIPDCPP_API TransferErrorCategory : public std::error_category {
 public:
     [[nodiscard]] const char *name() const noexcept override;
     [[nodiscard]] std::string message(int _Errval) const override;
 };
 
 const TransferErrorCategory g_error_category;
-std::error_code make_error_code(ErrorType e);
+USBIPDCPP_API std::error_code make_error_code(ErrorType e);
 
 
-struct UsbIpHeaderBasic {
+struct USBIPDCPP_API UsbIpHeaderBasic {
     /**
      * 这个字段并不需要从socket里面读，由子命令设置。
      * 根据先读的字段判断应该创建哪个包
@@ -130,7 +130,7 @@ struct UsbIpHeaderBasic {
 static_assert(Serializable<UsbIpHeaderBasic>);
 
 
-struct UsbIpIsoPacketDescriptor {
+struct USBIPDCPP_API UsbIpIsoPacketDescriptor {
     std::uint32_t offset;
     std::uint32_t length;
     std::uint32_t actual_length;
@@ -180,7 +180,7 @@ struct GenericTransfer {
  *   // 函数结束时 handle 析构，自动调用 handler->free_transfer_handle(ptr)
  * @endcode
  */
-class TransferHandle {
+class USBIPDCPP_API TransferHandle {
     void* handle_ = nullptr;
     AbstDeviceHandler* handler_ = nullptr;
 
@@ -274,7 +274,7 @@ public:
 };
 
 namespace UsbIpCommand {
-    struct OpReqDevlist {
+    struct USBIPDCPP_API OpReqDevlist {
         std::uint32_t status;
 
         [[nodiscard]] array_data_type<calculate_total_size_with_array<
@@ -285,7 +285,7 @@ namespace UsbIpCommand {
 
     static_assert(Serializable<OpReqDevlist>);
 
-    struct OpReqImport {
+    struct USBIPDCPP_API OpReqImport {
         std::uint32_t status;
         array_data_type<32> busid;
 
@@ -298,7 +298,7 @@ namespace UsbIpCommand {
 
     static_assert(SerializableFromSocket<OpReqImport>);
 
-    struct UsbIpCmdSubmit {
+    struct USBIPDCPP_API UsbIpCmdSubmit {
         UsbIpHeaderBasic header;
         std::uint32_t transfer_flags;
         //表明了传输数据的最大值
@@ -322,7 +322,7 @@ namespace UsbIpCommand {
 
     static_assert(SerializableFromSocket<UsbIpCmdSubmit>);
 
-    struct UsbIpCmdUnlink {
+    struct USBIPDCPP_API UsbIpCmdUnlink {
         UsbIpHeaderBasic header;
         std::uint32_t unlink_seqnum;
 
@@ -348,7 +348,7 @@ namespace UsbIpCommand {
      * @param ec
      * @return 获取到的命令
      */
-    usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(
             asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
 
 
@@ -359,14 +359,14 @@ namespace UsbIpCommand {
      * @param ec
      * @return 获取到的命令
      */
-    usbipdcpp::UsbIpCommand::CmdVariant get_cmd_from_socket(
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant get_cmd_from_socket(
             asio::ip::tcp::socket &sock, AbstDeviceHandler* handler, usbipdcpp::error_code &ec);
 
-    std::vector<std::uint8_t> to_bytes(const AllCmdVariant &cmd);
+    USBIPDCPP_API std::vector<std::uint8_t> to_bytes(const AllCmdVariant &cmd);
 }
 
 namespace UsbIpResponse {
-    struct OpRepDevlist {
+    struct USBIPDCPP_API OpRepDevlist {
         std::uint32_t status;
         std::uint32_t device_count;
         std::vector<UsbDevice> devices;
@@ -380,7 +380,7 @@ namespace UsbIpResponse {
 
     static_assert(SerializableFromSocket<OpRepDevlist>);
 
-    struct OpRepImport {
+    struct USBIPDCPP_API OpRepImport {
         std::uint32_t status;
         std::shared_ptr<UsbDevice> device;
 
@@ -400,7 +400,7 @@ namespace UsbIpResponse {
 
     static_assert(SerializableFromSocket<OpRepImport>);
 
-    struct UsbIpRetSubmit {
+    struct USBIPDCPP_API UsbIpRetSubmit {
         UsbIpHeaderBasic header;
         std::uint32_t status;
         std::uint32_t actual_length;
@@ -468,7 +468,7 @@ namespace UsbIpResponse {
 
     static_assert(SerializableFromSocket<UsbIpRetSubmit>);
 
-    struct UsbIpRetUnlink {
+    struct USBIPDCPP_API UsbIpRetUnlink {
         UsbIpHeaderBasic header;
         std::uint32_t status;
 

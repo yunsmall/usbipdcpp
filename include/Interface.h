@@ -2,13 +2,14 @@
 
 #include <cstdint>
 
+#include "Export.h"
 #include "Endpoint.h"
 #include "network.h"
 
 namespace usbipdcpp {
 class VirtualInterfaceHandler;
 
-struct UsbInterface {
+struct USBIPDCPP_API UsbInterface {
     std::uint8_t interface_class;
     std::uint8_t interface_subclass;
     std::uint8_t interface_protocol;

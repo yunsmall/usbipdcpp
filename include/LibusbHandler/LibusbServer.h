@@ -27,7 +27,7 @@ enum class DeviceOperationResult {
  * @note 所有对 LibusbServer 的公共方法调用（如 start、stop、bind_host_device 等）
  *       必须在同一个线程中进行，不支持跨线程调用。
  */
-class LibusbServer {
+class USBIPDCPP_API LibusbServer {
 public:
     LibusbServer();
 

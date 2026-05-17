@@ -112,7 +112,7 @@ private:
     std::unordered_map<std::uint8_t, std::deque<Request>> queues_;
 };
 
-class VirtualInterfaceHandler : public AbstInterfaceHandler {
+class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
     explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         AbstInterfaceHandler(handle_interface), string_pool(string_pool) {

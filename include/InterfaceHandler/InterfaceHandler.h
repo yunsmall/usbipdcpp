@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Export.h"
 #include "type.h"
 #include "utils/StringPool.h"
 
@@ -16,7 +17,7 @@ class TransferHandle;
 /**
  * @brief 继承 VirtualInterfaceHandler 类，不要继承这个类
  */
-class AbstInterfaceHandler {
+class USBIPDCPP_API AbstInterfaceHandler {
 public:
     explicit AbstInterfaceHandler(UsbInterface &handle_interface) :
         handle_interface(handle_interface) {

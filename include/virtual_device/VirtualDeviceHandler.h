@@ -5,7 +5,7 @@
 
 namespace usbipdcpp {
 
-class VirtualDeviceHandler : public AbstDeviceHandler {
+class USBIPDCPP_API VirtualDeviceHandler : public AbstDeviceHandler {
 public:
     explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                   const Version &usb_version = {2, 0, 0}) :

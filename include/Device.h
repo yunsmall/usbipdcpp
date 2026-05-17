@@ -10,6 +10,7 @@
 #include "network.h"
 #include "Interface.h"
 #include "type.h"
+#include "Export.h"
 
 
 namespace usbipdcpp {
@@ -27,7 +28,7 @@ namespace UsbIpCommand {
     using AllCmdVariant = std::variant<OpReqDevlist, OpReqImport, UsbIpCmdSubmit, UsbIpCmdUnlink>;
 }
 
-struct UsbDevice {
+struct USBIPDCPP_API UsbDevice {
     std::filesystem::path path{};
     std::string busid{};
     std::uint32_t bus_num;

@@ -11,6 +11,7 @@
 
 #include <asio/ip/tcp.hpp>
 
+#include "Export.h"
 #include "utils/LatencyTracker.h"
 #include "protocol.h"
 #include "type.h"
@@ -23,7 +24,7 @@ class AbstDeviceHandler;
  * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
  * 请确保Session存活的时候Server未被析构，不然是未定义行为
  */
-class Session final : public std::enable_shared_from_this<Session> {
+class USBIPDCPP_API Session final : public std::enable_shared_from_this<Session> {
     friend class Server;
 
 public:

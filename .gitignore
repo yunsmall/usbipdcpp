@@ -7,5 +7,5 @@
 /.claude/settings.local.json
 compile_commands.json
 CMakeUserPresets.json
-CLAUDE.md
+CLAUDE.local.md
 /tmp

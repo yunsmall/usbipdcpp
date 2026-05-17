@@ -21,7 +21,7 @@ struct SetupPacket;
 
 class Session;
 
-class AbstDeviceHandler {
+class USBIPDCPP_API AbstDeviceHandler {
 public:
     explicit AbstDeviceHandler(UsbDevice &handle_device) :
         handle_device(handle_device) {

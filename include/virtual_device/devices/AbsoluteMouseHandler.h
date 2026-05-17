@@ -21,7 +21,7 @@ namespace usbipdcpp {
  * HID 原始坐标范围：[0, 32767]
  * 屏幕坐标范围：通过 set_screen_bounds 设置
  */
-class AbsoluteMouseHandler : public HidVirtualInterfaceHandler {
+class USBIPDCPP_API AbsoluteMouseHandler : public HidVirtualInterfaceHandler {
 public:
     /// HID 坐标最大值
     static constexpr std::int16_t HID_MAX = 32767;

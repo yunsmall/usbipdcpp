@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <libusb-1.0/libusb.h>
 #include <constant.h>
+#include "Export.h"
 
 
 namespace usbipdcpp {
@@ -19,7 +20,7 @@ inline std::string get_device_busid(libusb_device *device, bool include_address 
                        libusb_get_port_number(device));
 }
 
-UsbSpeed libusb_speed_to_usb_speed(int speed);
+USBIPDCPP_API UsbSpeed libusb_speed_to_usb_speed(int speed);
 }
 
 

@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "Export.h"
+
 namespace usbipdcpp {
 
 /**
  * @brief 环形缓冲区，支持延迟分配
  */
-class RingBuffer {
+class USBIPDCPP_API RingBuffer {
 public:
     explicit RingBuffer(std::size_t capacity = 64 * 1024);
 
