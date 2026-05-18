@@ -161,6 +161,47 @@ public:
      */
     virtual void free_transfer_handle(void* transfer_handle);
 
+    /**
+     * @brief 设为 true 表示 handler 需要分块读写 transfer 数据。
+     *
+     * 适用场景：嵌入式设备内存受限，无法分配与主机 transfer_buffer_length 等长的连续缓冲区。
+     * 置 true 后 to_socket / from_socket 会调用 send_transfer_data / recv_transfer_data，
+     * 而非 get_transfer_buffer + 一次性 asio::write/read。
+     *
+     * 默认 false，走原连续内存路径，零虚函数开销。
+     */
+    bool custom_transfer_io = false;
+
+    /**
+     * @brief 自定义发送（custom_transfer_io == true 时由 UsbIpRetSubmit::to_socket 调用）
+     *
+     * 默认实现走 get_transfer_buffer + asio::write。嵌入式可重写为分块发送：
+     * 每次从设备填充一小块数据写入 socket，循环直到 length 字节全部发送。
+     *
+     * @param handle transfer_handle
+     * @param sock 目标 socket
+     * @param offset 数据在逻辑缓冲区中的起始偏移（跳过 setup 包等）
+     * @param length 需要发送的总字节数
+     * @param ec 错误码
+     */
+    virtual void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
+                                     std::size_t offset, std::size_t length, std::error_code& ec);
+
+    /**
+     * @brief 自定义接收（custom_transfer_io == true 时由 UsbIpCmdSubmit::from_socket 调用）
+     *
+     * 默认实现走 get_transfer_buffer + asio::read。嵌入式可重写为分块接收：
+     * 每次从 socket 读取一小块数据交给设备处理，循环直到 length 字节全部接收。
+     *
+     * @param handle transfer_handle
+     * @param sock 来源 socket
+     * @param offset 数据在逻辑缓冲区中的起始偏移（跳过 setup 包等）
+     * @param length 需要接收的总字节数
+     * @param ec 错误码
+     */
+    virtual void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
+                                     std::size_t offset, std::size_t length, std::error_code& ec);
+
     virtual ~AbstDeviceHandler() = default;
 
 protected:

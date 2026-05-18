@@ -270,10 +270,18 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
         if (num_iso == 0)[[likely]] {
             // 非等时传输：header + data
-            std::array<asio::const_buffer, 2> buffers;
-            buffers[0] = asio::buffer(data1);
-            buffers[1] = asio::buffer(static_cast<const char*>(buffer) + offset, actual_length);
-            asio::write(sock, buffers, ec);
+            if (handler->custom_transfer_io) {
+                // 自定义分块发送：先发 header，再逐块发数据
+                asio::write(sock, asio::buffer(data1), ec);
+                if (!ec) handler->send_transfer_data(raw_handle, sock, offset, actual_length, ec);
+            }
+            else {
+                // 默认路径：header + data 一次 scatter-gather write
+                std::array<asio::const_buffer, 2> buffers;
+                buffers[0] = asio::buffer(data1);
+                buffers[1] = asio::buffer(static_cast<const char*>(buffer) + offset, actual_length);
+                asio::write(sock, buffers, ec);
+            }
         }
         else {
             // 等时传输：header + scatter-gather data + scatter-gather iso descriptors
@@ -581,11 +589,18 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         // IN 传输不需要从 socket 读取数据
     }
     else {
-        // OUT 传输：读入到 buffer + write_offset 位置（跳过 setup 空间）
-        asio::read(sock, asio::buffer(
-            static_cast<std::uint8_t*>(buffer) + write_offset,
-            transfer_buffer_length
-        ));
+        // OUT 传输：将数据从 socket 读到 transfer buffer
+        if (transfer.handler()->custom_transfer_io) {
+            std::error_code ec;
+            transfer.handler()->recv_transfer_data(raw_handle, sock, write_offset, transfer_buffer_length, ec);
+            if (ec) throw std::system_error(ec);
+        }
+        else {
+            asio::read(sock, asio::buffer(
+                static_cast<std::uint8_t*>(buffer) + write_offset,
+                transfer_buffer_length
+            ));
+        }
     }
 
     // 读取等时包描述符
