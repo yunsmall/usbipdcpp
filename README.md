@@ -83,7 +83,6 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | Class | Description |
 |-------|-------------|
 | `ObjectPool<T, PoolSize, ThreadSafe>` | Fixed-size object pool for memory-efficient allocation. Supports pointer validation and duplicate-free detection. alloc O(1), free O(log n). |
-| `ConcurrentTransferTracker<TransferPtr, SegmentCount>` | Sharded lock-based transfer tracker for efficient concurrent transfer management. Uses atomic counters for fast-path operations. |
 
 ### Class Hierarchy
 
@@ -248,7 +247,6 @@ There are multiple CMake options to control which parts are compiled:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `USBIPDCPP_ENABLE_BUSY_WAIT` | OFF | Enable busy-wait mode for lower latency |
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |

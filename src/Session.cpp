@@ -6,7 +6,6 @@
 #include <spdlog/spdlog.h>
 
 #include "DeviceHandler/DeviceHandler.h"
-#include "utils/SmallVector.h"
 
 #include "Server.h"
 #include "Device.h"
@@ -19,32 +18,29 @@ usbipdcpp::Session::Session(Server &server) :
     socket(session_io_context) {
 }
 
-void usbipdcpp::Session::submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
+void usbipdcpp::Session::enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
     std::lock_guard lock(swap_mutex);
     write_buffer.emplace_back(std::move(submit));
-    has_data.store(true, std::memory_order_release);
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-    data_available_cv.notify_one();
-# endif
 }
 
-void usbipdcpp::Session::submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    // 多线程并发或 busy-wait 模式下都需要加锁保护 write_buffer
+void usbipdcpp::Session::enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
     std::lock_guard lock(swap_mutex);
     write_buffer.emplace_back(std::move(unlink));
+}
+
+void usbipdcpp::Session::wakeup_sender() {
     has_data.store(true, std::memory_order_release);
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     data_available_cv.notify_one();
-# endif
 }
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    submit_ret_unlink_impl(std::move(unlink));
+    enqueue_ret_unlink(std::move(unlink));
+    wakeup_sender();
 }
 
 void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    submit_ret_submit_impl(std::move(submit));
+    enqueue_ret_submit(std::move(submit));
+    wakeup_sender();
 }
 
 usbipdcpp::Session::~Session() {
@@ -236,12 +232,9 @@ std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_g
     // 如果 read_buffer 为空，尝试交换
     if (read_buffer.empty())[[likely]] {
         std::unique_lock lock(swap_mutex);
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
-        // 非 busy-wait: 使用条件变量等待数据
         data_available_cv.wait(lock, [this]() {
             return has_data.load(std::memory_order_acquire) || should_immediately_stop;
         });
-# endif
         if (!write_buffer.empty()) {
             read_buffer.swap(write_buffer);
             has_data.store(false, std::memory_order_release);
@@ -348,9 +341,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     current_handler->on_disconnection(receiver_ec);
     //然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
     should_immediately_stop = true;
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     data_available_cv.notify_one();
-# endif
 
     /* 这里先标记为可用是可行的
      * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
@@ -372,72 +363,14 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
 }
 
 void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    // busy-wait 模式：批量发送所有完成的数据
-    while (!should_immediately_stop) {
-        // 执行回调（如 libusb 事件处理）
-        if (server.busy_wait_callback) {
-            server.busy_wait_callback();
-        }
-
-        // 批量获取所有待发送数据（双缓冲交换）
-        SmallVector<UsbIpResponse::RetVariant, 32> batch;
-        {
-            std::lock_guard lock(swap_mutex);
-            if (!write_buffer.empty()) {
-                read_buffer.swap(write_buffer);
-                has_data.store(false, std::memory_order_release);
-            }
-        }
-        // 从 read_buffer 批量获取数据
-        while (!read_buffer.empty()) {
-            batch.emplace_back(std::move(read_buffer.front()));
-            read_buffer.pop_front();
-        }
-
-        // 发送所有数据，每发送一个就处理一次事件以捕获新完成的 transfer
-        for (auto &send_data: batch) {
-            error_code sending_ec;
-            std::visit([&](auto &&cmd) {
-                using T = std::remove_cvref_t<decltype(cmd)>;
-                if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
-                    cmd.to_socket(socket, sending_ec);
-                    LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
-                }
-                else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
-                    cmd.to_socket(socket, sending_ec);
-                    LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
-                }
-                else if constexpr (std::is_same_v<std::monostate, T>) {
-                    SPDLOG_ERROR("收到未知包");
-                    sending_ec = make_error_code(ErrorType::UNKNOWN_CMD);
-                }
-                else {
-                    static_assert(!std::is_same_v<T, T>);
-                }
-            }, send_data);
-
-            if (sending_ec) {
-                break;
-            }
-
-            // 发送完后立即处理事件，确保新完成的 transfer 能被及时捕获
-            if (server.busy_wait_callback) {
-                server.busy_wait_callback();
-            }
-        }
-
-        if (batch.empty()) {
-            continue;
-        }
-    }
-
-    // 退出后继续处理事件，直到所有传输完成
-    while (current_handler->has_pending_transfers() && server.busy_wait_callback) {
-        server.busy_wait_callback();
-    }
-# else
-    // 非 busy-wait 模式：原有逻辑
+    // RET_SUBMIT 和 RET_UNLINK 共用一个 write_buffer 队列，入队顺序即是发送顺序，
+    // FIFO 发送即可。不像内核/usbipd-libusb 中分成 priv_tx 和 unlink_tx 两个独立
+    // 队列无法分辨先后，必须手动先发 SUBMIT 再发 UNLINK。
+    //
+    // 以 libusb 后端为例：transfer_callback 在 transfers_mutex_ 锁内同时完成
+    //「从 map 移除 → 入队 RET_SUBMIT」，handle_unlink_seqnum 想介入必须等锁释放。
+    // 等它拿到锁时 map 里已无此传输，此时入队的 RET_UNLINK 天然排在 RET_SUBMIT
+    // 之后，顺序正确。
     while (!should_immediately_stop) {
         auto send_data_opt = sender_get_data(ec);
         if (ec || should_immediately_stop)[[unlikely]] {
@@ -475,5 +408,4 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             break;
         }
     }
-# endif
 }

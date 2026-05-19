@@ -131,11 +131,13 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
     // 不检查 device_removed，因为 libusb 会在设备拔出时正确触发回调（LIBUSB_TRANSFER_NO_DEVICE）
 
     // 取消所有传输
-    auto transfers = transfer_tracker_.get_all_transfers();
-    for (auto &info: transfers) {
-        auto err = libusb_cancel_transfer(info.transfer);
-        if (err) {
-            SPDLOG_ERROR("libusb_cancel_transfer failed on seqnum {}: {}", info.seqnum, libusb_strerror(err));
+    {
+        std::shared_lock lock(transfers_mutex_);
+        for (auto &[seqnum, cb] : transfers_) {
+            auto err = libusb_cancel_transfer(static_cast<libusb_transfer*>(cb->transfer.get()));
+            if (err) {
+                SPDLOG_ERROR("libusb_cancel_transfer failed on seqnum {}: {}", cb->seqnum, libusb_strerror(err));
+            }
         }
     }
 
@@ -143,7 +145,7 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
     {
         std::unique_lock lock(transfer_complete_mutex_);
         transfer_complete_cv_.wait(lock, [this]() {
-            return transfer_tracker_.concurrent_count() == 0;
+            return pending_count_.load(std::memory_order_acquire) == 0;
         });
     }
 
@@ -204,7 +206,11 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(
             trx->flags = get_libusb_transfer_flags(transfer_flags);
             masking_bogus_flags(setup_packet.is_out(), trx);
 
-            transfer_tracker_.register_transfer(seqnum, trx, ep.address);
+            {
+                std::lock_guard lock(transfers_mutex_);
+                transfers_.emplace(seqnum, callback_args);
+                pending_count_.fetch_add(1, std::memory_order_release);
+            }
 
             LATENCY_TRACK(session->latency_tracker, seqnum,
                           "LibusbDeviceHandler::receive_urb libusb_submit_transfer");
@@ -212,7 +218,12 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(
 
             if (err < 0)[[unlikely]] {
                 SPDLOG_ERROR("控制传输给设备失败：{}", libusb_strerror(err));
-                transfer_tracker_.remove(seqnum);
+                {
+                    std::lock_guard lock(transfers_mutex_);
+                    if (transfers_.erase(seqnum)) {
+                        pending_count_.fetch_sub(1, std::memory_order_release);
+                    }
+                }
                 callback_args->transfer.reset();
                 if (!callback_args_pool_.free(callback_args)) {
                     delete callback_args;
@@ -287,12 +298,21 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(
         trx->flags = get_libusb_transfer_flags(transfer_flags);
         masking_bogus_flags(is_out, trx);
 
-        transfer_tracker_.register_transfer(seqnum, trx, ep.address);
+        {
+            std::lock_guard lock(transfers_mutex_);
+            transfers_.emplace(seqnum, callback_args);
+            pending_count_.fetch_add(1, std::memory_order_release);
+        }
 
         auto err = libusb_submit_transfer(trx);
         if (err < 0)[[unlikely]] {
             SPDLOG_ERROR("传输失败，{}", libusb_strerror(err));
-            transfer_tracker_.remove(seqnum);
+            {
+                std::lock_guard lock(transfers_mutex_);
+                if (transfers_.erase(seqnum)) {
+                    pending_count_.fetch_sub(1, std::memory_order_release);
+                }
+            }
             callback_args->transfer.reset();
             if (!callback_args_pool_.free(callback_args)) {
                 delete callback_args;
@@ -316,46 +336,34 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_s
     if (device_removed)[[unlikely]]
             return;
 
-    bool send_now = false;
-
-    transfer_tracker_.with_transfer(unlink_seqnum, [&](auto *info) {
-        if (!info) {
-            // tracker 中已不存在 → 回调已完全处理完毕（submit_sent || unlink_sent 为真时才会移除）。
-            // RET_SUBMIT 一定已经发送，可以直接发 RET_UNLINK(0)。
-            send_now = true;
-            return;
+    {
+        std::shared_lock lock(transfers_mutex_);
+        auto it = transfers_.find(unlink_seqnum);
+        if (it != transfers_.end()) {
+            auto *cb = it->second;
+            // transfer 仍在 tracker 中，在锁内标记 unlinking 并 cancel。
+            // 回调执行时会看到 unlinking==true，走 RET_UNLINK 分支，并负责唤醒 sender。
+            cb->unlinking = true;
+            cb->unlink_cmd_seqnum = cmd_seqnum;
+            int err = libusb_cancel_transfer(static_cast<libusb_transfer*>(cb->transfer.get()));
+            if (err == LIBUSB_ERROR_NOT_FOUND)[[unlikely]] {
+                // transfer 在 libusb 层已完成但回调尚未执行。unlinking 已置位，
+                // 回调会走 unlink 分支入队 RET_UNLINK（带实际状态码）并唤醒 sender。
+            }
+            else if (err)[[unlikely]] {
+                SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
+            }
         }
-
-        if (info->submit_sent || info->unlink_sent) {
-            // 回调已经发了 RET_SUBMIT 或 RET_UNLINK，现在发 RET_UNLINK(0) 不会乱序。
-            send_now = true;
-            return;
+        else {
+            // transfer 已被 transfer_callback 从 map 移除，说明回调已决定发送 RET_SUBMIT
+            // 还是 RET_UNLINK 并已入队。此时主机即将收到（或已经收到）该传输的完成通知，
+            // 这个 CMD_UNLINK 已经无关紧要——传输已经完成了，unlink 天然晚了。
+            // 因此 RET_UNLINK(0) 不需要保证马上发出，入队即可，不唤醒 sender。
+            // 等待下一次 callback 的 wakeup_sender() 顺带发出，或者 session 清理时发出。
+            lock.unlock();
+            session->enqueue_ret_unlink(
+                    UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(cmd_seqnum, 0));
         }
-
-        if (info->cancelling) {
-            // 已有另一个 unlink 正在取消此 transfer，回调会发 RET_UNLINK。
-            return;
-        }
-
-        // transfer 仍在 pending，在锁内标记并取消（防止 transfer 被回调释放后 UAF）。
-        info->cancelling = true;
-        info->unlink_cmd_seqnum = cmd_seqnum;
-        int err = libusb_cancel_transfer(info->transfer);
-        if (err == LIBUSB_ERROR_NOT_FOUND)[[unlikely]] {
-            // transfer 在 libusb 层已完成后回调尚未执行。cancelling 已置位，
-            // 回调会走 unlink 分支发送 RET_UNLINK（带实际传输状态码）。
-        }
-        else if (err)[[unlikely]] {
-            SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
-        }
-    });
-
-    if (send_now) {
-        // 对应 usbipd-libusb 中 priv 已不在 priv_init 的路径：URB 已完成或响应已发送。
-        SPDLOG_DEBUG("transfer {} 已不在 tracker 或已发送响应，立即发送 ret_unlink {}", unlink_seqnum, cmd_seqnum);
-        session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(cmd_seqnum, 0)
-                );
     }
 }
 
@@ -528,32 +536,18 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
     LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
                   "LibusbDeviceHandler::transfer_callback调用");
 
-    // step1: 仅读取 cancelling 状态，不移除 tracker。这样 handle_unlink_seqnum 在
-    // step2（发送）和 step3（标记 sent）之间仍能通过 with_transfer 找到此 transfer，
-    // 从而设置 cancelling，由本回调在 step3 补发 RET_UNLINK(0)。
-    bool cancelling = false;
-    std::uint32_t unlink_cmd_seqnum = 0;
-
-    callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
-        if (info) {
-            cancelling = info->cancelling;
-            unlink_cmd_seqnum = info->unlink_cmd_seqnum;
-        }
-    });
-
     // 如果断连了，直接清理并返回（不发送响应）
     // 这是在传输完成后检查，断连是特殊情况
     if (callback_arg.handler->client_disconnection)[[unlikely]] {
-        callback_arg.handler->transfer_tracker_.remove(callback_arg.seqnum);
-        if (callback_arg.handler->transfer_tracker_.concurrent_count() == 0) {
-            std::lock_guard lock(callback_arg.handler->transfer_complete_mutex_);
-            callback_arg.handler->transfer_complete_cv_.notify_one();
-        }
-        // TransferHandle 析构时自动释放
-        callback_arg.transfer.reset();  // 提前释放，避免 pool 问题
+        callback_arg.handler->transfers_mutex_.lock();
+        callback_arg.handler->transfers_.erase(callback_arg.seqnum);
+        callback_arg.handler->pending_count_.fetch_sub(1, std::memory_order_release);
+        callback_arg.handler->transfers_mutex_.unlock();
+        callback_arg.transfer.reset();
         if (!callback_arg.handler->callback_args_pool_.free(&callback_arg)) {
             delete &callback_arg;
         }
+        callback_arg.handler->transfer_complete_cv_.notify_one();
         return;
     }
 
@@ -603,93 +597,77 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
         actual_length = static_cast<std::uint32_t>(iso_actual_length);
     }
 
-    if (!cancelling)[[likely]] {
-        // 发送 ret_submit
-        // OUT 传输不需要发送数据回客户端，只发送 header（无 transfer_handle）
-        // IN 传输需要发送 header + 数据（有 transfer_handle）
-        UsbIpResponse::UsbIpRetSubmit ret;
-        if (callback_arg.is_out) {
-            // OUT 传输：无数据阶段
-            ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                    callback_arg.seqnum,
-                    trxstat2error(trx->status),
-                    actual_length
+    // 在锁内检查 unlinking、入队响应、移除追踪——三个操作原子完成。
+    // handle_unlink_seqnum 若在此之前执行，会看到 map 中有此 entry 并设置 unlinking；
+    // 若在此之后，则看不到，自行入队 RET_UNLINK(0)。
+    bool unlinking = false;
+    std::uint32_t unlink_cmd_seqnum = 0;
+
+    {
+        auto *handler = callback_arg.handler;
+        std::unique_lock lock(handler->transfers_mutex_);
+        unlinking = callback_arg.unlinking;
+        unlink_cmd_seqnum = callback_arg.unlink_cmd_seqnum;
+        handler->transfers_.erase(callback_arg.seqnum);
+        handler->pending_count_.fetch_sub(1, std::memory_order_release);
+
+        if (unlinking)[[unlikely]] {
+            // URB 被 unlink 取消，入队 RET_UNLINK（带实际传输状态码）
+            callback_arg.handler->session->enqueue_ret_unlink(
+                    UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+                            unlink_cmd_seqnum,
+                            trxstat2error(trx->status)
+                            )
                     );
-            // OUT 传输：释放 transfer
+            // unlink 情况：释放 transfer
             callback_arg.transfer.reset();
         }
         else {
-            // IN 传输：有数据，转移所有权
-            ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-                    callback_arg.seqnum,
-                    trxstat2error(trx->status),
-                    actual_length,
-                    0,  // start_frame
-                    trx->num_iso_packets,
-                    std::move(callback_arg.transfer)  // 转移所有权
-                    );
-        }
-
-        SPDLOG_DEBUG("libusb传输actual_length为{}个字节", actual_length);
-
-        LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
-                      "LibusbDeviceHandler::transfer_callback submit_ret_submit");
-        callback_arg.handler->session->submit_ret_submit(std::move(ret));
-
-        // step3: 标记 submit_sent，同时二次检查 cancelling。handle_unlink_seqnum 可能
-        // 在 step1 之后设置了 cancelling（此时 libusb_cancel_transfer 返回 NOT_FOUND），
-        // 本回调需要补发 RET_UNLINK(0) 且保证它紧跟在 RET_SUBMIT 之后入队。
-        bool need_defer_unlink = false;
-        std::uint32_t defer_unlink_cmd = 0;
-        callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
-            if (info) {
-                info->submit_sent = true;
-                if (info->cancelling && !info->unlink_sent) {
-                    need_defer_unlink = true;
-                    defer_unlink_cmd = info->unlink_cmd_seqnum;
-                    info->unlink_sent = true;
-                }
+            // 发送 ret_submit
+            // OUT 传输不需要发送数据回客户端，只发送 header（无 transfer_handle）
+            // IN 传输需要发送 header + 数据（有 transfer_handle）
+            UsbIpResponse::UsbIpRetSubmit ret;
+            if (callback_arg.is_out) {
+                // OUT 传输：无数据阶段
+                ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                        callback_arg.seqnum,
+                        trxstat2error(trx->status),
+                        actual_length
+                        );
+                // OUT 传输：释放 transfer
+                callback_arg.transfer.reset();
             }
-        });
-        if (need_defer_unlink) {
-            SPDLOG_DEBUG("transfer {} 在 submit 后检测到 cancelling，补发 ret_unlink {}",
-                         callback_arg.seqnum, defer_unlink_cmd);
-            callback_arg.handler->session->submit_ret_unlink(
-                    UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(defer_unlink_cmd, 0)
-                    );
+            else {
+                // IN 传输：有数据，转移所有权
+                ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+                        callback_arg.seqnum,
+                        trxstat2error(trx->status),
+                        actual_length,
+                        0,  // start_frame
+                        trx->num_iso_packets,
+                        std::move(callback_arg.transfer)  // 转移所有权
+                        );
+            }
+            callback_arg.handler->session->enqueue_ret_submit(std::move(ret));
         }
     }
-    else {
-        // unlink 情况：发送 ret_unlink
-        LATENCY_TRACK_END_MSG(callback_arg.handler->session->latency_tracker, unlink_cmd_seqnum,
-                              "被unlink");
 
-        callback_arg.handler->session->submit_ret_unlink(
-                UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-                        unlink_cmd_seqnum,
-                        trxstat2error(trx->status)
-                        )
-                );
-        // unlink 情况：释放 transfer
-        callback_arg.transfer.reset();
+    SPDLOG_DEBUG("libusb传输actual_length为{}个字节", actual_length);
 
-        // 标记 unlink_sent
-        callback_arg.handler->transfer_tracker_.with_transfer(callback_arg.seqnum, [&](auto *info) {
-            if (info) info->unlink_sent = true;
-        });
-    }
+    LATENCY_TRACK(callback_arg.handler->session->latency_tracker, callback_arg.seqnum,
+                  "LibusbDeviceHandler::transfer_callback submit_ret_submit");
 
-    // step4: submit_sent 或 unlink_sent 为真时即可从 tracker 移除
-    callback_arg.handler->transfer_tracker_.check_and_remove(callback_arg.seqnum, [&](auto *info) {
-        if (!info) return false;
-        return info->submit_sent || info->unlink_sent;
-    });
+    // 入队完成，唤醒 sender 线程统一发送
+    callback_arg.handler->session->wakeup_sender();
 
     // 释放 callback_arg
     // TransferHandle 已被转移或重置，可以安全归还到池
     if (!callback_arg.handler->callback_args_pool_.free(&callback_arg)) {
         delete &callback_arg;
     }
+    // 无条件通知，覆盖正常路径与 on_disconnection 的竞态。
+    // CV 谓词 pending_count_==0 确保只有最后一个 callback 真正唤醒 wait。
+    callback_arg.handler->transfer_complete_cv_.notify_one();
 }
 
 bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {

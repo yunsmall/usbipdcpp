@@ -62,16 +62,6 @@ public:
         session = nullptr;
     }
 
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    /**
-     * @brief 检查是否还有传输在进行
-     * @return true 表示还有传输未完成
-     */
-    virtual bool has_pending_transfers() const {
-        return false;  // 默认实现
-    }
-# endif
-
     /**
      * @brief 检查设备是否已被移除
      * @return true 表示设备已物理拔出
@@ -91,9 +81,33 @@ public:
     void trigger_session_stop();
 
     /**
-     * @brief 处理unlink。传入想要取消的序号和UNLINK命令的序号。
-     * @param unlink_seqnum 想要取消的包序号
-     * @param cmd_seqnum CMD_UNLINK 命令的序号（用于构造 RET_UNLINK）
+     * @brief 处理 USBIP_CMD_UNLINK（客户端要求取消一个未完成的传输）。
+     *
+     * 协议约定：
+     * - 每个 CMD_UNLINK 必须对应一个 RET_UNLINK，status 为 USBIP 错误码。
+     * - 如果目标传输已经正常完成，RET_UNLINK 的 status 必须为 0（URB 已完成）。
+     * - RET_SUBMIT 必须在 RET_UNLINK 之前发送。客户端先收到 URB 的实际结果，
+     *   再收到 unlink 的确认，不能反过来。如果实现中同一个传输可能既发 RET_SUBMIT
+     *   又发 RET_UNLINK，必须保证 RET_SUBMIT 先于 RET_UNLINK 到达客户端。
+     *
+     * @param unlink_seqnum 要取消的 CMD_SUBMIT 的 seqnum
+     * @param cmd_seqnum    CMD_UNLINK 自己的 seqnum（用在 RET_UNLINK 里原样返回）
+     *
+     * 目标传输在 unlink 到达时可能处于以下几种状态，实现需要分别处理：
+     *
+     * 状态 1 —— 传输尚未开始或仍在进行中：
+     *   取消该传输。如果取消成功，传输完成时发送 RET_UNLINK(cmd_seqnum, -ECONNRESET)
+     *   （表示 URB 被取消），并且不再发送 RET_SUBMIT。
+     *
+     * 状态 2 —— 传输已经完成，但 RET_SUBMIT 还未发送：
+     *   发送 RET_UNLINK(cmd_seqnum, 实际完成状态码)，如无错误则为 0。
+     *   不再发送 RET_SUBMIT。
+     *
+     * 状态 3 —— RET_SUBMIT 已经发送：
+     *   直接发送 RET_UNLINK(cmd_seqnum, 0)。RET_SUBMIT 已先行发送，顺序正确。
+     *
+     * 状态 4 —— 传输已完全处理完毕（RET_SUBMIT 及可能的 RET_UNLINK 均已发出）：
+     *   直接发送 RET_UNLINK(cmd_seqnum, 0)。
      */
     virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) = 0;
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(usbipdcpp VERSION 1.0.1)
+project(usbipdcpp VERSION 1.0.3)
 
 set(CMAKE_CXX_STANDARD 23)
 
@@ -52,7 +52,6 @@ option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 option(USBIPDCPP_BUILD_SHARED_LIBS "Build as shared library (recommended for LGPL compliance)" ON)
 
-option(USBIPDCPP_ENABLE_BUSY_WAIT "Enable busy-wait mode for lower latency" OFF)
 option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
 
 find_package(asio CONFIG REQUIRED)
@@ -62,10 +61,7 @@ if (MSVC)
     add_compile_options("/Zc:preprocessor")
 endif ()
 
-if(USBIPDCPP_ENABLE_BUSY_WAIT)
-    message(STATUS "USBIPDCPP: Busy-wait mode enabled")
-    add_compile_definitions(USBIPDCPP_ENABLE_BUSY_WAIT)
-endif()
+
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_definitions(
@@ -236,12 +232,6 @@ if (USBIPDCPP_BUILD_TESTS)
     gtest_discover_tests(test_usbip_response)
 
     # 工具类测试
-    add_executable(test_concurrent_tracker tests/test_concurrent_tracker.cpp)
-    target_include_directories(test_concurrent_tracker PRIVATE tests)
-    target_link_libraries(test_concurrent_tracker PRIVATE ${PROJECT_NAME})
-    target_link_libraries(test_concurrent_tracker PRIVATE GTest::gtest GTest::gtest_main)
-    gtest_discover_tests(test_concurrent_tracker)
-
     add_executable(test_object_pool tests/test_object_pool.cpp)
     target_include_directories(test_object_pool PRIVATE tests)
     target_link_libraries(test_object_pool PRIVATE ${PROJECT_NAME})

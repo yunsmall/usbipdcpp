@@ -128,12 +128,6 @@ public:
      */
     void remove_session(Session *session);
 
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    void set_busy_wait_callback(std::function<void()> &&callback) {
-        busy_wait_callback = std::move(callback);
-    }
-#endif
-
     ~Server();
 
 protected:
@@ -161,11 +155,6 @@ protected:
     std::function<void(ThreadPurpose)> before_thread_create_callback;
     // 线程创建后回调
     std::function<void(ThreadPurpose, std::thread&)> after_thread_create_callback;
-
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    // busy-wait 回调，由 LibusbServer 设置，在 sender 的 busy-wait 循环中调用
-    std::function<void()> busy_wait_callback;
-# endif
 
     std::list<std::weak_ptr<Session>> sessions;
     mutable std::shared_mutex session_list_mutex;

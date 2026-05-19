@@ -92,7 +92,7 @@ void LibusbServer::print_device(libusb_device *dev) {
     }
     // 打印设备信息
     auto device_name = get_device_names(dev);
-    auto busid = get_device_busid(dev, busid_include_address_);
+    auto busid = get_device_busid(dev);
     bool is_used = false;
     bool is_available = false;
     {
@@ -154,10 +154,7 @@ libusb_device *LibusbServer::find_by_busid(const std::string &busid) {
     libusb_device **devs;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
-        // 尝试两种格式匹配：带地址和不带地址
-        auto current_bus_without_addr = get_device_busid(devs[dev_i], false);
-        auto current_bus_with_addr = get_device_busid(devs[dev_i], true);
-        if (current_bus_without_addr == busid || current_bus_with_addr == busid) {
+        if (get_device_busid(devs[dev_i]) == busid) {
             auto ret_dev = libusb_ref_device(devs[dev_i]);
             libusb_free_device_list(devs, 1);
             return ret_dev;
@@ -225,7 +222,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
                 .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
                                     libusb_get_device_address(dev), libusb_get_port_number(dev)),
-                .busid = get_device_busid(dev, busid_include_address_),
+                .busid = get_device_busid(dev),
                 .bus_num = libusb_get_bus_number(dev),
                 .dev_num = libusb_get_port_number(dev),
                 .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
@@ -248,7 +245,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
     }
 
     libusb_free_config_descriptor(active_config_desc);
-    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(dev, busid_include_address_));
+    SPDLOG_INFO("设备 {} 已添加到可用列表", get_device_busid(dev));
     log_device_state(server);
     return DeviceOperationResult::Success;
 }
@@ -322,7 +319,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     }
 
     // 保存设备信息
-    auto busid = get_device_busid(device_for_info, busid_include_address_);
+    auto busid = get_device_busid(device_for_info);
     auto bus_num = libusb_get_bus_number(device_for_info);
     auto dev_addr = libusb_get_device_address(device_for_info);
     auto dev_num = libusb_get_port_number(device_for_info);
@@ -366,7 +363,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
 }
 
 DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
-    auto target_busid = get_device_busid(device, busid_include_address_);
+    auto target_busid = get_device_busid(device);
     auto result = DeviceOperationResult::DeviceNotFound;
     {
         std::lock_guard lock(server.get_devices_mutex());
@@ -592,7 +589,7 @@ int LIBUSB_CALL LibusbServer::hotplug_callback(
         server->handle_device_arrived(device);
     }
     else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
-        auto busid = get_device_busid(device, server->busid_include_address_);
+        auto busid = get_device_busid(device);
         server->handle_device_left(busid);
     }
 
@@ -600,7 +597,7 @@ int LIBUSB_CALL LibusbServer::hotplug_callback(
 }
 
 void LibusbServer::handle_device_arrived(libusb_device *device) {
-    auto busid = get_device_busid(device, busid_include_address_);
+    auto busid = get_device_busid(device);
 
     // 检查是否已绑定
     {
@@ -664,30 +661,13 @@ void LibusbServer::handle_device_left(const std::string &busid) {
 void LibusbServer::start(asio::ip::tcp::endpoint &ep) {
     start_hotplug_monitor();
 
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     should_exit_libusb_event_thread = false;
-# endif
 
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    // busy-wait 模式：设置回调，不创建独立线程
-    server.set_busy_wait_callback([]() {
-        struct timeval tv = {0, 0};
-        libusb_handle_events_timeout(nullptr, &tv);
-    });
-    SPDLOG_INFO("启用 busy-wait 模式，libusb 事件将在 sender 线程中处理");
-    server.start(ep);
-# else
-    // 原有逻辑：创建独立的 libusb 事件线程
     libusb_event_thread = std::thread([this]() {
         try {
             SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
             while (!should_exit_libusb_event_thread) {
-                // usbipd-libusb说libusb_handle_events有性能问题，看了一下会慢100多微秒，没啥大关系吧？？
                 auto ret = libusb_handle_events(nullptr);
-
-                // usbipd-libusb采用下面的形式，这是个忙等待，会占用100%的cpu，大部分使用情况不支持这么写
-                // struct timeval tv = {0, 0};
-                // auto ret = libusb_handle_events_timeout(nullptr, &tv);
 
                 if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread)[[unlikely]] {
                     SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
@@ -705,7 +685,6 @@ void LibusbServer::start(asio::ip::tcp::endpoint &ep) {
         }
     });
     server.start(ep);
-# endif
 }
 
 void LibusbServer::stop() {
@@ -746,13 +725,11 @@ void LibusbServer::stop() {
         server_using_devices.clear();
     }
 
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     should_exit_libusb_event_thread = true;
     libusb_interrupt_event_handler(nullptr);
     spdlog::info("等待libusb事件线程结束");
     libusb_event_thread.join();
     spdlog::info("libusb事件线程结束");
-# endif
 }
 
 // void usbipcpp::LibusbServer::add_device(std::shared_ptr<UsbDevice> &&device) {

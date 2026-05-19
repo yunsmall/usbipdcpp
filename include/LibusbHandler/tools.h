@@ -10,14 +10,15 @@
 
 
 namespace usbipdcpp {
-inline std::string get_device_busid(libusb_device *device, bool include_address = false) {
-    if (include_address) {
-        return std::format("{}-{}-{}", libusb_get_bus_number(device),
-                           libusb_get_device_address(device),
-                           libusb_get_port_number(device));
+inline std::string get_device_busid(libusb_device *device) {
+    uint8_t ports[8];
+    int n = libusb_get_port_numbers(device, ports, 8);
+    auto busid = std::to_string(libusb_get_bus_number(device));
+    for (int i = 0; i < n; i++) {
+        busid += (i == 0 ? "-" : ".");
+        busid += std::to_string(ports[i]);
     }
-    return std::format("{}-{}", libusb_get_bus_number(device),
-                       libusb_get_port_number(device));
+    return busid;
 }
 
 USBIPDCPP_API UsbSpeed libusb_speed_to_usb_speed(int speed);

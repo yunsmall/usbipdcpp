@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <shared_mutex>
+#include <unordered_map>
 
 #include <asio.hpp>
 #include <libusb-1.0/libusb.h>
@@ -9,7 +11,6 @@
 #include "SetupPacket.h"
 #include "constant.h"
 #include "protocol.h"
-#include "utils/ConcurrentTransferTracker.h"
 #include "utils/ObjectPool.h"
 #include "LibusbHandler/tools.h"
 
@@ -44,12 +45,6 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
-
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    bool has_pending_transfers() const override {
-        return transfer_tracker_.concurrent_count() > 0;
-    }
-# endif
 
     bool is_device_removed() const override {
         return device_removed;
@@ -101,6 +96,8 @@ public:
         std::uint32_t seqnum;                          // CMD_SUBMIT 的 seqnum
         bool is_out;
         TransferHandle transfer;                       // 拥有 libusb_transfer* 的所有权
+        bool unlinking = false;                        // unlink 正在取消中
+        std::uint32_t unlink_cmd_seqnum = 0;           // 对应的 CMD_UNLINK seqnum
     };
 
     static void LIBUSB_CALL transfer_callback(libusb_transfer *trx);
@@ -117,8 +114,10 @@ public:
     std::atomic_bool client_disconnection = false;
     std::atomic_bool device_removed = false;
 
-    // 分段锁传输追踪器
-    ConcurrentTransferTracker<libusb_transfer *> transfer_tracker_;
+    // 正在进行的传输：seqnum → callback_args*
+    std::shared_mutex transfers_mutex_;
+    std::unordered_map<std::uint32_t, libusb_callback_args *> transfers_;
+    std::atomic<std::size_t> pending_count_{0};
 
     // 设备句柄
     // - 普通模式：在 on_new_connection 时赋值

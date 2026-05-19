@@ -190,45 +190,18 @@ public:
         return hotplug_enabled_by_user_;
     }
 
-    /**
-     * @brief Set whether busid should include device address.
-     *
-     * When true, busid format is "bus-address-port" (e.g., "1-2-3").
-     * When false, busid format is "bus-port" (e.g., "1-3").
-     * Default is false.
-     *
-     * @param include_address true to include address in busid.
-     */
-    void set_busid_include_address(bool include_address) {
-        busid_include_address_ = include_address;
-    }
-
-    /**
-     * @brief Check if busid includes device address.
-     *
-     * @return true if busid includes address, false otherwise.
-     */
-    bool is_busid_include_address() const {
-        return busid_include_address_;
-    }
-
 protected:
     Server server;
 
-# ifndef USBIPDCPP_ENABLE_BUSY_WAIT
     std::atomic<bool> should_exit_libusb_event_thread = false;
 
     //不可在这个线程发送网络包
     std::thread libusb_event_thread;
-# endif
 
     // 热插拔相关
     libusb_hotplug_callback_handle hotplug_handle_ = 0;
     bool hotplug_enabled_ = false;
     bool hotplug_enabled_by_user_ = true;  // 用户设置的开关，默认启用
-
-    // busid 格式控制
-    bool busid_include_address_ = false;  // 是否在 busid 中包含设备地址
 
     void start_hotplug_monitor();
     void stop_hotplug_monitor();

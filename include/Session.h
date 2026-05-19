@@ -47,6 +47,19 @@ public:
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
 
     /**
+     * @brief 只入队 write_buffer，不唤醒 sender。
+     * 用于需要连续入队多条响应再统一唤醒的场景。
+     */
+    void enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);
+    void enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit);
+
+    /**
+     * @brief 唤醒 sender 线程，不塞任何数据。
+     * 与 enqueue_ret_* 配合使用：先连续 enqueue，最后调一次 wakeup_sender。
+     */
+    void wakeup_sender();
+
+    /**
      * @brief 置停止标志位，并且关闭socket。只能由Server和AbstDeviceHandler::trigger_session_stop调用。
      * 内部不会关闭线程，只会通知线程关闭
      */
@@ -57,9 +70,6 @@ public:
     LATENCY_TRACKER_MEMBER(latency_tracker);
 
 private:
-    void submit_ret_submit_impl(UsbIpResponse::UsbIpRetSubmit &&submit);
-    void submit_ret_unlink_impl(UsbIpResponse::UsbIpRetUnlink &&unlink);
-
     /**
      * @brief 新建Session时由Server调用
      */

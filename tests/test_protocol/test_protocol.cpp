@@ -19,10 +19,6 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override {}
     void on_disconnection(error_code &ec) override {}
 
-# ifdef USBIPDCPP_ENABLE_BUSY_WAIT
-    bool has_pending_transfers() const override { return false; }
-# endif
-
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
 
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
