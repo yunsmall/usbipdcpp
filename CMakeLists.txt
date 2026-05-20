@@ -259,6 +259,11 @@ if (USBIPDCPP_BUILD_TESTS)
     target_link_libraries(test_reuse_map PRIVATE ${PROJECT_NAME})
     target_link_libraries(test_reuse_map PRIVATE GTest::gtest GTest::gtest_main)
     gtest_discover_tests(test_reuse_map)
+
+    add_executable(test_reuse_set tests/test_reuse_set.cpp)
+    target_link_libraries(test_reuse_set PRIVATE ${PROJECT_NAME})
+    target_link_libraries(test_reuse_set PRIVATE GTest::gtest GTest::gtest_main)
+    gtest_discover_tests(test_reuse_set)
 endif ()
 
 # Python bindings
