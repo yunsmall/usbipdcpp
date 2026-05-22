@@ -216,6 +216,10 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     sender_thread.join();
     SPDLOG_INFO("sender thread退出");
 
+    // 在 handler 存活时清空队列，确保 TransferHandle 析构时 handler 仍有效
+    write_buffer.clear();
+    read_buffer.clear();
+
     if (sender_ec) {
         SPDLOG_ERROR("An error occur during sending: {}", sender_ec.message());
         transferring_ec = sender_ec;
