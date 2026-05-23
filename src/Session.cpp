@@ -286,7 +286,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                                            ? static_cast<std::uint8_t>(cmd2.header.ep)
                                            : (static_cast<std::uint8_t>(cmd2.header.ep) | 0x80);
                 SPDLOG_TRACE("传输的真实端口为 {:02x}", real_ep);
-                auto current_seqnum = cmd2.header.seqnum;
+                [[maybe_unused]] auto current_seqnum = cmd2.header.seqnum;
 
                 auto ep_find_ret = current_import_device->find_ep(real_ep);
                 if (ep_find_ret.has_value())[[likely]] {
@@ -381,7 +381,10 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             break;
         }
         if (!send_data_opt.has_value())[[unlikely]] {
-            break;
+            // 虚假唤醒（入队与唤醒分离后，has_data 为 true 但数据已被前一轮消费）。
+            // 仅当 should_immediately_stop 时才退出，否则回去继续等。
+            if (should_immediately_stop) break;
+            continue;
         }
         auto send_data = std::move(send_data_opt.value());
 
