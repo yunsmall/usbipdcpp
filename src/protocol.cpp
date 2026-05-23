@@ -264,7 +264,6 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
         auto* handler = transfer.handler();
         void* raw_handle = transfer.get();
         void* buffer = handler->get_transfer_buffer(raw_handle);
-        auto offset = handler->get_read_data_offset(raw_handle);
 
         int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
 
@@ -273,10 +272,11 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
             if (handler->custom_transfer_io) {
                 // 自定义分块发送：先发 header，再逐块发数据
                 asio::write(sock, asio::buffer(data1), ec);
-                if (!ec) handler->send_transfer_data(raw_handle, sock, offset, actual_length, ec);
+                if (!ec) handler->send_transfer_data(raw_handle, sock, actual_length, ec);
             }
             else {
                 // 默认路径：header + data 一次 scatter-gather write
+                auto offset = handler->get_read_data_offset(raw_handle);
                 std::array<asio::const_buffer, 2> buffers;
                 buffers[0] = asio::buffer(data1);
                 buffers[1] = asio::buffer(static_cast<const char*>(buffer) + offset, actual_length);
@@ -581,9 +581,8 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     auto* raw_handle = transfer.handler()->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
     transfer.set_handle(raw_handle);
 
-    // 获取 buffer 头指针和写入偏移量
+    // 获取 buffer 头指针
     void* buffer = transfer.handler()->get_transfer_buffer(raw_handle);
-    std::size_t write_offset = transfer.handler()->get_write_data_offset(header);
 
     if (header.direction == UsbIpDirection::In)[[likely]] {
         // IN 传输不需要从 socket 读取数据
@@ -592,10 +591,11 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         // OUT 传输：将数据从 socket 读到 transfer buffer
         if (transfer.handler()->custom_transfer_io) {
             std::error_code ec;
-            transfer.handler()->recv_transfer_data(raw_handle, sock, write_offset, transfer_buffer_length, ec);
+            transfer.handler()->recv_transfer_data(raw_handle, sock, transfer_buffer_length, ec);
             if (ec) throw std::system_error(ec);
         }
         else {
+            auto write_offset = transfer.handler()->get_write_data_offset(header);
             asio::read(sock, asio::buffer(
                 static_cast<std::uint8_t*>(buffer) + write_offset,
                 transfer_buffer_length

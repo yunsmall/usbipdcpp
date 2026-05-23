@@ -21,6 +21,28 @@ struct SetupPacket;
 
 class Session;
 
+/**
+ * @brief USB 设备处理抽象基类。
+ *
+ * 每个导入的设备对应一个 DeviceHandler 实例，负责处理协议命令（CMD_SUBMIT、
+ * CMD_UNLINK）并生成响应（RET_SUBMIT、RET_UNLINK）。传输数据的读写通过
+ * transfer_handle 接口完成，to_socket / from_socket 通过这套接口操作数据。
+ *
+ * 默认模式下传输数据在内存中连续存放，to_socket / from_socket 一次 scatter-gather
+ * 发送/接收。需实现以下 transfer_handle 接口：
+ *   - alloc_transfer_handle / free_transfer_handle
+ *   - get_transfer_buffer / get_actual_length
+ *   - get_read_data_offset / get_write_data_offset
+ *   - get_iso_descriptor / set_iso_descriptor
+ * 基类提供基于 GenericTransfer 的默认实现，虚拟设备后端可直接复用。
+ * libusb 后端重写全套以对接 libusb_transfer。
+ *
+ * 若设备端内存受限无法分配连续大缓冲区，设 custom_transfer_io = true 并实现：
+ *   - alloc_transfer_handle / free_transfer_handle
+ *   - send_transfer_data / recv_transfer_data
+ * to_socket / from_socket 会调用这两个函数逐块发送/接收，不再走 scatter-gather。
+ * 其余 get_* / set_* / iso_* 函数在自定义路径下不会被调用，无需实现。
+ */
 class USBIPDCPP_API AbstDeviceHandler {
 public:
     explicit AbstDeviceHandler(UsbDevice &handle_device) :
@@ -189,32 +211,30 @@ public:
     /**
      * @brief 自定义发送（custom_transfer_io == true 时由 UsbIpRetSubmit::to_socket 调用）
      *
-     * 默认实现走 get_transfer_buffer + asio::write。嵌入式可重写为分块发送：
-     * 每次从设备填充一小块数据写入 socket，循环直到 length 字节全部发送。
+     * 默认实现将 get_transfer_buffer 指向的 buffer 从头开始发送 length 字节。
+     * 若需要跳过 setup 包头等偏移，重写时通过 get_read_data_offset 自行处理。
      *
      * @param handle transfer_handle
      * @param sock 目标 socket
-     * @param offset 数据在逻辑缓冲区中的起始偏移（跳过 setup 包等）
      * @param length 需要发送的总字节数
      * @param ec 错误码
      */
     virtual void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t offset, std::size_t length, std::error_code& ec);
+                                     std::size_t length, std::error_code& ec);
 
     /**
      * @brief 自定义接收（custom_transfer_io == true 时由 UsbIpCmdSubmit::from_socket 调用）
      *
-     * 默认实现走 get_transfer_buffer + asio::read。嵌入式可重写为分块接收：
-     * 每次从 socket 读取一小块数据交给设备处理，循环直到 length 字节全部接收。
+     * 默认实现从 socket 读取 length 字节到 get_transfer_buffer 指向的 buffer 开头。
+     * 若需要跳过 setup 包头等偏移，重写时通过 get_write_data_offset 自行处理。
      *
      * @param handle transfer_handle
      * @param sock 来源 socket
-     * @param offset 数据在逻辑缓冲区中的起始偏移（跳过 setup 包等）
      * @param length 需要接收的总字节数
      * @param ec 错误码
      */
     virtual void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t offset, std::size_t length, std::error_code& ec);
+                                     std::size_t length, std::error_code& ec);
 
     virtual ~AbstDeviceHandler() = default;
 

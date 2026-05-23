@@ -68,15 +68,15 @@ void AbstDeviceHandler::free_transfer_handle(void* transfer_handle) {
 }
 
 void AbstDeviceHandler::send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                            std::size_t offset, std::size_t length,
+                                            std::size_t length,
                                             std::error_code& ec) {
     void* buffer = get_transfer_buffer(handle);
-    asio::write(sock, asio::buffer(static_cast<const char*>(buffer) + offset, length), ec);
+    asio::write(sock, asio::buffer(static_cast<const char*>(buffer), length), ec);
 }
 
 void AbstDeviceHandler::recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                            std::size_t offset, std::size_t length,
+                                            std::size_t length,
                                             std::error_code& ec) {
     void* buffer = get_transfer_buffer(handle);
-    asio::read(sock, asio::buffer(static_cast<std::uint8_t*>(buffer) + offset, length), ec);
+    asio::read(sock, asio::buffer(static_cast<std::uint8_t*>(buffer), length), ec);
 }
