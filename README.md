@@ -5,7 +5,7 @@ A C++ library for creating usbip servers
 > [中文文档](README-zh.md)
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
-> ✅ Virtual HID devices: Create virtual USB devices on any platform without libusb dependency (see `examples/`)
+> ✅ Virtual devices: HID (mouse, keyboard), MSC (USB flash drive), CDC ACM (serial port) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -69,13 +69,8 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `Server` | Main server class that manages device list and accepts connections |
 | `Session` | Represents a client connection, handles USBIP protocol |
 | `UsbDevice` | USB device descriptor and configuration |
+| `AbstDeviceHandler` | Abstract base class for all device handlers |
 | `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
-| `AbstDeviceHandler` | Abstract base class for all device handlers. Provides `is_device_removed()`, `on_device_removed()`, and `trigger_session_stop()` for device lifecycle management |
-| `VirtualDeviceHandler` | Base class for implementing virtual USB devices |
-| `LibusbDeviceHandler` | Handler for physical USB devices using libusb |
-| `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
-| `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
-| `SimpleVirtualDeviceHandler` | Simple device handler with no-op standard request implementations |
 | `StringPool` | Manages USB string descriptors (limited to 255 strings) |
 
 ### Utility Classes
@@ -83,6 +78,20 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | Class | Description |
 |-------|-------------|
 | `ObjectPool<T, PoolSize, ThreadSafe>` | Fixed-size object pool for memory-efficient allocation. Supports pointer validation and duplicate-free detection. alloc O(1), free O(log n). |
+
+### Virtual Device Classes
+
+| Class | Description |
+|-------|-------------|
+| `VirtualDeviceHandler` | Base class for implementing virtual USB devices |
+| `SimpleVirtualDeviceHandler` | Simple device handler with no-op standard request implementations |
+| `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
+| `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
+| `MscBulkOnlyHandler` | USB Mass Storage BOT handler with SCSI command support |
+| `StorageBackend` | Abstract block storage backend interface for MSC devices |
+| `RawImageBackend` | Memory-mapped file storage backend (cross-platform) |
+| `CdcAcmCommunicationInterfaceHandler` | CDC ACM communication interface handler |
+| `CdcAcmDataInterfaceHandler` | CDC ACM data interface handler |
 
 ### Class Hierarchy
 
@@ -224,7 +233,17 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
-7. termux_libusb_server
+7. mock_msc
+
+   A virtual USB Mass Storage (flash drive) device backed by a disk image file.
+   Supports BOT (Bulk-Only Transport) protocol and common SCSI commands (INQUIRY, READ CAPACITY,
+   READ(10), WRITE(10), MODE SENSE, etc.). The `StorageBackend` abstraction allows swapping the
+   underlying storage — the example uses `RawImageBackend` with memory-mapped file I/O, but
+   custom backends (e.g. qcow2) can be plugged in via polymorphism.
+
+   Usage: `mock_msc [disk.img]` (defaults to `disk.img`, 4096 blocks × 512 bytes = 2 MiB)
+
+8. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
