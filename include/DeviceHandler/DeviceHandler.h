@@ -12,6 +12,7 @@
 #include "Device.h"
 #include "type.h"
 #include "protocol.h"
+#include "DeviceHandler/TransferOperator.h"
 
 
 namespace usbipdcpp {
@@ -24,29 +25,15 @@ class Session;
 /**
  * @brief USB 设备处理抽象基类。
  *
- * 每个导入的设备对应一个 DeviceHandler 实例，负责处理协议命令（CMD_SUBMIT、
- * CMD_UNLINK）并生成响应（RET_SUBMIT、RET_UNLINK）。传输数据的读写通过
- * transfer_handle 接口完成，to_socket / from_socket 通过这套接口操作数据。
- *
- * 默认模式下传输数据在内存中连续存放，to_socket / from_socket 一次 scatter-gather
- * 发送/接收。需实现以下 transfer_handle 接口：
- *   - alloc_transfer_handle / free_transfer_handle
- *   - get_transfer_buffer / get_actual_length
- *   - get_read_data_offset / get_write_data_offset
- *   - get_iso_descriptor / set_iso_descriptor
- * 基类提供基于 GenericTransfer 的默认实现，虚拟设备后端可直接复用。
- * libusb 后端重写全套以对接 libusb_transfer。
- *
- * 若设备端内存受限无法分配连续大缓冲区，设 custom_transfer_io = true 并实现：
- *   - alloc_transfer_handle / free_transfer_handle
- *   - send_transfer_data / recv_transfer_data
- * to_socket / from_socket 会调用这两个函数逐块发送/接收，不再走 scatter-gather。
- * 其余 get_* / set_* / iso_* 函数在自定义路径下不会被调用，无需实现。
+ * 每个导入的设备对应一个 DeviceHandler 实例。传输数据的读写通过
+ * TransferOperator 完成，由 get_transfer_operator() 获取。
+ * 默认使用 GenericTransferOperator，子类可替换。
  */
 class USBIPDCPP_API AbstDeviceHandler {
 public:
-    explicit AbstDeviceHandler(UsbDevice &handle_device) :
-        handle_device(handle_device) {
+    explicit AbstDeviceHandler(UsbDevice &handle_device, std::unique_ptr<TransferOperator> op = nullptr) :
+        handle_device(handle_device),
+        transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
     }
 
     AbstDeviceHandler(AbstDeviceHandler &&other) noexcept;
@@ -133,108 +120,28 @@ public:
      */
     virtual void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) = 0;
 
-    // ========== transfer_handle 操作接口 ==========
+    // ========== TransferOperator 接口 ==========
 
     /**
-     * @brief 创建 transfer_handle
-     * @param buffer_length 数据缓冲区长度
-     * @param num_iso_packets 等时包数量
-     * @param header
-     * @param setup_packet
-     * @return 创建的 transfer_handle
+     * @brief 获取传输操作器（子类可重写以替换默认实现）
      */
-    virtual void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic& header, const SetupPacket& setup_packet);
+    TransferOperator* get_transfer_operator() const {
+        return transfer_op_.get();
+    }
 
     /**
-     * @brief 获取 buffer 头指针
-     * @param transfer_handle
-     * @return buffer 头指针
+     * @brief 替换传输操作器（所有权转移）
      */
-    virtual void* get_transfer_buffer(void* transfer_handle);
+    void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
+        transfer_op_ = std::move(op);
+    }
 
     /**
-     * @brief 获取实际传输长度
-     * @param transfer_handle
-     * @return 实际长度
+     * @brief 查询 handle 是否使用自定义 I/O 路径（send/recv_transfer_data）
      */
-    virtual std::size_t get_actual_length(void* transfer_handle);
-
-    /**
-     * @brief 获取读取数据时的偏移量
-     * 用于 RET_SUBMIT 响应，控制传输需要跳过 setup 包（8字节）
-     * @param transfer_handle
-     * @return 偏移量
-     */
-    virtual std::size_t get_read_data_offset(void* transfer_handle);
-
-    /**
-     * @brief 获取写入数据时的偏移量
-     * 用于 alloc_transfer_handle 时计算 buffer 位置，控制传输需要跳过 setup 包
-     * @param header 用于判断是否为控制传输
-     * @return 偏移量
-     */
-    virtual std::size_t get_write_data_offset(const UsbIpHeaderBasic& header);
-
-    /**
-     * @brief 获取等时包描述符
-     * @param transfer_handle
-     * @param index 索引
-     * @return 描述符
-     */
-    virtual UsbIpIsoPacketDescriptor get_iso_descriptor(void* transfer_handle, int index);
-
-    /**
-     * @brief 设置等时包描述符
-     * @param transfer_handle
-     * @param index 索引
-     * @param desc 描述符
-     */
-    virtual void set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc);
-
-    /**
-     * @brief 释放 transfer_handle
-     * @param transfer_handle
-     */
-    virtual void free_transfer_handle(void* transfer_handle);
-
-    /**
-     * @brief 设为 true 表示 handler 需要分块读写 transfer 数据。
-     *
-     * 适用场景：嵌入式设备内存受限，无法分配与主机 transfer_buffer_length 等长的连续缓冲区。
-     * 置 true 后 to_socket / from_socket 会调用 send_transfer_data / recv_transfer_data，
-     * 而非 get_transfer_buffer + 一次性 asio::write/read。
-     *
-     * 默认 false，走原连续内存路径，零虚函数开销。
-     */
-    bool custom_transfer_io = false;
-
-    /**
-     * @brief 自定义发送（custom_transfer_io == true 时由 UsbIpRetSubmit::to_socket 调用）
-     *
-     * 默认实现将 get_transfer_buffer 指向的 buffer 从头开始发送 length 字节。
-     * 若需要跳过 setup 包头等偏移，重写时通过 get_read_data_offset 自行处理。
-     *
-     * @param handle transfer_handle
-     * @param sock 目标 socket
-     * @param length 需要发送的总字节数
-     * @param ec 错误码
-     */
-    virtual void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t length, std::error_code& ec);
-
-    /**
-     * @brief 自定义接收（custom_transfer_io == true 时由 UsbIpCmdSubmit::from_socket 调用）
-     *
-     * 默认实现从 socket 读取 length 字节到 get_transfer_buffer 指向的 buffer 开头。
-     * 若需要跳过 setup 包头等偏移，重写时通过 get_write_data_offset 自行处理。
-     *
-     * @param handle transfer_handle
-     * @param sock 来源 socket
-     * @param length 需要接收的总字节数
-     * @param ec 错误码
-     */
-    virtual void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t length, std::error_code& ec);
+    bool is_custom_transfer_io(void* handle) const {
+        return get_transfer_operator()->is_custom_io(handle);
+    }
 
     virtual ~AbstDeviceHandler() = default;
 
@@ -242,5 +149,6 @@ protected:
     UsbDevice &handle_device;
     Session *session = nullptr;
     mutable std::mutex session_mutex_;
+    std::unique_ptr<TransferOperator> transfer_op_ = std::make_unique<GenericTransferOperator>();
 };
 }

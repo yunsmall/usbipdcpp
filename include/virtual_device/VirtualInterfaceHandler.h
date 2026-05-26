@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "InterfaceHandler/InterfaceHandler.h"
+#include "DeviceHandler/TransferOperator.h"
 #include "protocol.h"
 
 namespace usbipdcpp {
@@ -114,8 +115,10 @@ private:
 
 class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
-    explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        AbstInterfaceHandler(handle_interface), string_pool(string_pool) {
+    explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+                                      std::unique_ptr<TransferOperator> op = nullptr) :
+        AbstInterfaceHandler(handle_interface), string_pool(string_pool),
+        transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
 
         string_interface = string_pool.new_string(L"Usbipdcpp Virtual Interface");
     }
@@ -218,6 +221,14 @@ public:
 
     [[nodiscard]] virtual data_type get_class_specific_descriptor() =0;
 
+    // ========== TransferOperator ==========
+
+    TransferOperator* get_transfer_operator() { return transfer_op_.get(); }
+
+    void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
+        transfer_op_ = std::move(op);
+    }
+
     // ========== 工具函数 ==========
 
     [[nodiscard]] virtual std::uint8_t get_string_interface_value() const {
@@ -235,6 +246,7 @@ public:
 protected:
     Session *session = nullptr;
     AbstDeviceHandler* device_handler = nullptr;
+    std::unique_ptr<TransferOperator> transfer_op_;
 
     std::uint8_t string_interface;
 

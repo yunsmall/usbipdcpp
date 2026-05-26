@@ -159,7 +159,7 @@ void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
     // 清零映射内存：mmap 进程页表不感知 fallocate 打洞，必须手动清零
     std::memset(static_cast<char *>(mapped_data_) + offset, 0, length);
 #ifdef _WIN32
-    FILE_ZERO_DATA_INFO zero{};
+    FILE_ZERO_DATA_INFORMATION zero{};
     zero.FileOffset.QuadPart = static_cast<LONGLONG>(offset);
     zero.BeyondFinalZero.QuadPart = static_cast<LONGLONG>(offset + length);
     DeviceIoControl(file_handle_, FSCTL_SET_ZERO_DATA, &zero, sizeof(zero), nullptr, 0, nullptr, nullptr);

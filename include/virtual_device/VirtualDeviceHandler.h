@@ -2,6 +2,7 @@
 
 #include "utils/StringPool.h"
 #include "DeviceHandler/DeviceHandler.h"
+#include "virtual_device/VirtualDeviceTransferOperator.h"
 
 namespace usbipdcpp {
 
@@ -9,7 +10,8 @@ class USBIPDCPP_API VirtualDeviceHandler : public AbstDeviceHandler {
 public:
     explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                   const Version &usb_version = {2, 0, 0}) :
-        AbstDeviceHandler(handle_device), string_pool(string_pool), usb_version(usb_version) {
+        AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()),
+        string_pool(string_pool), usb_version(usb_version) {
         change_device_ep0_max_size_by_speed();
 
         string_configuration_value = string_pool.new_string(L"Default Configuration");

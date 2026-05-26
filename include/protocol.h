@@ -23,6 +23,7 @@ constexpr std::uint16_t USBIP_VERSION = 0x0111;
 
 
 class AbstDeviceHandler;  // 前向声明
+class TransferOperator;    // 前向声明
 
 
 constexpr std::uint16_t OP_REQ_DEVLIST = 0x8005;

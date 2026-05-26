@@ -54,16 +54,6 @@ public:
         device_removed = true;
     }
 
-    // ========== transfer_handle 操作覆盖实现 ==========
-    void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic& header, const SetupPacket& setup_packet) override;
-    void* get_transfer_buffer(void* transfer_handle) override;
-    std::size_t get_actual_length(void* transfer_handle) override;
-    std::size_t get_read_data_offset(void* transfer_handle) override;
-    std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) override;
-    UsbIpIsoPacketDescriptor get_iso_descriptor(void* transfer_handle, int index) override;
-    void set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
-    void free_transfer_handle(void* transfer_handle) override;
-
 public:
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
                      UsbEndpoint ep,

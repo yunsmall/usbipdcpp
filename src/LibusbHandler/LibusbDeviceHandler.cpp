@@ -6,18 +6,19 @@
 #include "SetupPacket.h"
 #include "constant.h"
 #include "Endpoint.h"
+#include "LibusbHandler/LibusbTransferOperator.h"
 
 using namespace usbipdcpp;
 
 // 普通模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device) :
-    AbstDeviceHandler(handle_device), native_device_(native_device) {
+    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()), native_device_(native_device) {
     // 设备尚未打开，将在 on_new_connection 时打开
 }
 
 // Android 模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd) :
-    AbstDeviceHandler(handle_device), wrapped_fd_(fd) {
+    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()), wrapped_fd_(fd) {
     // fd 将在 on_new_connection 时通过 libusb_wrap_sys_device 包装
 }
 
@@ -26,80 +27,6 @@ usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
         libusb_unref_device(native_device_);
         native_device_ = nullptr;
     }
-}
-
-// ========== transfer_handle 操作实现 ==========
-
-void* usbipdcpp::LibusbDeviceHandler::alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic& header, const SetupPacket& setup_packet) {
-    auto* trx = libusb_alloc_transfer(num_iso_packets);
-    if (!trx) [[unlikely]] {
-        return nullptr;
-    }
-
-    // 控制传输需要额外的 setup 空间（8 字节）
-    std::size_t write_offset = get_write_data_offset(header);
-    std::size_t actual_buffer_length = buffer_length + write_offset;
-
-    trx->buffer = static_cast<unsigned char*>(malloc(actual_buffer_length));
-    if (!trx->buffer) [[unlikely]] {
-        libusb_free_transfer(trx);
-        return nullptr;
-    }
-    trx->length = static_cast<int>(actual_buffer_length);
-    return trx;
-}
-
-void* usbipdcpp::LibusbDeviceHandler::get_transfer_buffer(void* transfer_handle) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    return trx->buffer;
-}
-
-std::size_t usbipdcpp::LibusbDeviceHandler::get_actual_length(void* transfer_handle) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    return trx->actual_length;
-}
-
-std::size_t usbipdcpp::LibusbDeviceHandler::get_read_data_offset(void* transfer_handle) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    // 控制传输的数据从 setup 包之后开始
-    if (trx->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
-        return LIBUSB_CONTROL_SETUP_SIZE;
-    }
-    return 0;
-}
-
-std::size_t usbipdcpp::LibusbDeviceHandler::get_write_data_offset(const UsbIpHeaderBasic& header) {
-    // 控制传输 (ep == 0) 需要跳过 setup 包
-    if (header.ep == 0) {
-        return LIBUSB_CONTROL_SETUP_SIZE;
-    }
-    return 0;
-}
-
-UsbIpIsoPacketDescriptor usbipdcpp::LibusbDeviceHandler::get_iso_descriptor(void* transfer_handle, int index) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    auto& iso = trx->iso_packet_desc[index];
-    return UsbIpIsoPacketDescriptor{
-        .offset = 0, // 需要调用方计算
-        .length = iso.length,
-        .actual_length = iso.actual_length,
-        .status = static_cast<std::uint32_t>(trxstat2error(iso.status)),
-        .length_in_transfer_buffer_only_for_send = iso.length
-    };
-}
-
-void usbipdcpp::LibusbDeviceHandler::set_iso_descriptor(void* transfer_handle, int index, const UsbIpIsoPacketDescriptor& desc) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    auto& iso = trx->iso_packet_desc[index];
-    iso.status = error2trxstat(desc.status);
-    iso.actual_length = desc.actual_length;
-    iso.length = desc.length;
-}
-
-void usbipdcpp::LibusbDeviceHandler::free_transfer_handle(void* transfer_handle) {
-    auto* trx = static_cast<libusb_transfer*>(transfer_handle);
-    free(trx->buffer);
-    libusb_free_transfer(trx);
 }
 
 void usbipdcpp::LibusbDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {

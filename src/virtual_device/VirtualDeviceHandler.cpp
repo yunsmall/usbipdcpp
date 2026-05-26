@@ -59,11 +59,19 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
 }
 
 void VirtualDeviceHandler::setup_interface_handlers() {
+    // 将各接口的 TransferOperator 注册到设备级路由表，按端点分发
+    auto* device_op = static_cast<VirtualDeviceTransferOperator*>(get_transfer_operator());
+
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
             auto* virtual_handler = dynamic_cast<VirtualInterfaceHandler*>(intf.handler.get());
             if (virtual_handler) {
                 virtual_handler->set_device_handler(this);
+                // 把接口级 TransferOperator 注册到该接口所有端点
+                auto* if_op = virtual_handler->get_transfer_operator();
+                for (auto &ep: intf.endpoints) {
+                    device_op->register_endpoint_operator(ep.address, if_op);
+                }
             }
         }
     }
