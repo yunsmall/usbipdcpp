@@ -40,6 +40,7 @@ private:
     bool command_failed_ = false;
     std::uint64_t write_lba_ = 0;
     std::uint16_t write_count_ = 0;
+    bool data_out_unmap_ = false; // DataOut 阶段是 UNMAP 参数数据而非 WRITE 数据
 
     void do_cbw(std::uint32_t seqnum, TransferHandle &transfer);
     void send_stall(std::uint32_t seqnum);

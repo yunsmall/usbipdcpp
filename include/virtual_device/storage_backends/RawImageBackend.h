@@ -30,8 +30,9 @@ public:
                              std::uint32_t block_size = 512);
     ~RawImageBackend() override;
 
-    std::vector<std::uint8_t> read(std::uint64_t lba, std::uint16_t count) override;
+    void read(std::uint64_t lba, std::uint16_t count, void *buffer) override;
     bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) override;
+    void punch_hole(std::uint64_t lba, std::uint64_t count) override;
 
     std::uint64_t block_count() const override {
         return block_count_;

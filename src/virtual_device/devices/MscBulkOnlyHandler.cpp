@@ -108,16 +108,40 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
                 break;
             }
             case BotState::DataOut: {
-                // 接收 WRITE 数据流，累积到完整块数后写入
                 auto *trx = GenericTransfer::from_handle(transfer.get());
                 auto &rx = trx->data;
-                if (write_lba_ + write_count_ <= backend_->block_count()) {
-                    staging_data_.insert(staging_data_.end(), rx.begin(), rx.end());
-                    if (staging_data_.size() >= static_cast<std::size_t>(write_count_) * backend_->block_size()) {
-                        backend_->write(write_lba_, write_count_, staging_data_.data());
+                staging_data_.insert(staging_data_.end(), rx.begin(), rx.end());
+
+                if (data_out_unmap_) {
+                    // UNMAP 参数列表：累积到期望长度后解析描述符并打洞
+                    if (staging_data_.size() >= write_count_) {
+                        // 跳过前 4 字节（data length 和 descriptor data length）
+                        // 描述符从偏移 8 开始，每个 16 字节
+                        auto &d = staging_data_;
+                        for (std::size_t i = 8; i + 16 <= d.size(); i += 16) {
+                            auto lba = (std::uint64_t(d[i]) << 56) | (std::uint64_t(d[i + 1]) << 48) |
+                                       (std::uint64_t(d[i + 2]) << 40) | (std::uint64_t(d[i + 3]) << 32) |
+                                       (std::uint64_t(d[i + 4]) << 24) | (std::uint64_t(d[i + 5]) << 16) |
+                                       (std::uint64_t(d[i + 6]) << 8) | (std::uint64_t(d[i + 7]));
+                            auto count = (std::uint32_t(d[i + 8]) << 24) | (std::uint32_t(d[i + 9]) << 16) |
+                                         (std::uint32_t(d[i + 10]) << 8) | (std::uint32_t(d[i + 11]));
+                            backend_->punch_hole(lba, count);
+                        }
                         staging_data_.clear();
+                        data_out_unmap_ = false;
                         data_residue_ = 0;
                         state_ = BotState::Status;
+                    }
+                }
+                else {
+                    // WRITE 数据流：累积到完整块数后写入
+                    if (write_lba_ + write_count_ <= backend_->block_count()) {
+                        if (staging_data_.size() >= static_cast<std::size_t>(write_count_) * backend_->block_size()) {
+                            backend_->write(write_lba_, write_count_, staging_data_.data());
+                            staging_data_.clear();
+                            data_residue_ = 0;
+                            state_ = BotState::Status;
+                        }
                     }
                 }
                 session->submit_ret_submit(
@@ -241,7 +265,9 @@ void MscBulkOnlyHandler::do_cbw(std::uint32_t seqnum, TransferHandle &transfer) 
 
             if (cmd == 0x28) {
                 // READ
-                staging_data_ = backend_->read(lba, count);
+                staging_offset_ = 0;
+                staging_data_.resize(static_cast<std::size_t>(count) * backend_->block_size());
+                backend_->read(lba, count, staging_data_.data());
                 state_ = BotState::DataIn;
             }
             else if (read_only_) {
@@ -253,6 +279,7 @@ void MscBulkOnlyHandler::do_cbw(std::uint32_t seqnum, TransferHandle &transfer) 
                 write_count_ = count;
                 staging_offset_ = 0;
                 staging_data_.clear();
+                staging_data_.reserve(static_cast<std::size_t>(count) * backend_->block_size());
                 state_ = BotState::DataOut;
             }
             break;
@@ -260,6 +287,25 @@ void MscBulkOnlyHandler::do_cbw(std::uint32_t seqnum, TransferHandle &transfer) 
         case 0x1B: // START STOP UNIT
         case 0x2F: // VERIFY
             break;
+        case 0x85: // ATA PASS-THROUGH — 内核 SAT 探测，返回 Failed 让内核降级
+            command_failed_ = true;
+            break;
+        case 0x42: { // UNMAP
+            if (read_only_) {
+                command_failed_ = true;
+                break;
+            }
+            // 参数列表长度从 CBWCB[6..7] 读取（大端序）
+            auto param_len = (std::uint16_t(current_cbw_.CBWCB[6]) << 8) |
+                             (std::uint16_t(current_cbw_.CBWCB[7]));
+            if (param_len == 0) break; // 空 UNMAP
+            write_count_ = param_len;  // 复用 write_count_ 记录期望字节数
+            data_out_unmap_ = true;
+            staging_offset_ = 0;
+            staging_data_.clear();
+            state_ = BotState::DataOut;
+            break;
+        }
         default:
             SPDLOG_WARN("不支持的 SCSI 命令: 0x{:02X}", cmd);
             command_failed_ = true;

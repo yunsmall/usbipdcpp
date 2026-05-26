@@ -15,8 +15,11 @@ class StorageBackend {
 public:
     virtual ~StorageBackend() = default;
 
-    virtual std::vector<std::uint8_t> read(std::uint64_t lba, std::uint16_t count) = 0;
+    virtual void read(std::uint64_t lba, std::uint16_t count, void *buffer) = 0;
     virtual bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) = 0;
+
+    // 释放 LBA 范围的物理存储（可选，默认空实现）
+    virtual void punch_hole(std::uint64_t lba, std::uint64_t count) {}
 
     virtual std::uint64_t block_count() const = 0;
 

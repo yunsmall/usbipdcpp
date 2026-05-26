@@ -33,6 +33,9 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
         return;
     }
 
+    // 标记为稀疏文件，允许后续 punch_hole 释放空间
+    DeviceIoControl(fh, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, nullptr, nullptr);
+
     // 判断文件是否为新创建：已有文件大小 > 0 则使用实际大小
     LARGE_INTEGER existing_size;
     if (GetFileSizeEx(fh, &existing_size) && existing_size.QuadPart > 0) {
@@ -133,13 +136,11 @@ RawImageBackend::~RawImageBackend() {
     }
 }
 
-std::vector<std::uint8_t> RawImageBackend::read(std::uint64_t lba, std::uint16_t count) {
+void RawImageBackend::read(std::uint64_t lba, std::uint16_t count, void *buffer) {
     std::lock_guard lock(mutex_);
     auto total = static_cast<std::size_t>(count) * block_size_;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
-    std::vector<std::uint8_t> data(total);
-    std::memcpy(data.data(), static_cast<const char *>(mapped_data_) + offset, total);
-    return data;
+    std::memcpy(buffer, static_cast<const char *>(mapped_data_) + offset, total);
 }
 
 bool RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) {
@@ -149,6 +150,25 @@ bool RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const std::u
     // 直接写入映射内存，OS 负责写回磁盘
     std::memcpy(static_cast<char *>(mapped_data_) + offset, data, total);
     return true;
+}
+
+void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
+    std::lock_guard lock(mutex_);
+    auto offset = static_cast<std::size_t>(lba) * block_size_;
+    auto length = static_cast<std::size_t>(count) * block_size_;
+    // 清零映射内存：mmap 进程页表不感知 fallocate 打洞，必须手动清零
+    std::memset(static_cast<char *>(mapped_data_) + offset, 0, length);
+#ifdef _WIN32
+    FILE_ZERO_DATA_INFO zero{};
+    zero.FileOffset.QuadPart = static_cast<LONGLONG>(offset);
+    zero.BeyondFinalZero.QuadPart = static_cast<LONGLONG>(offset + length);
+    DeviceIoControl(file_handle_, FSCTL_SET_ZERO_DATA, &zero, sizeof(zero), nullptr, 0, nullptr, nullptr);
+#else
+    if (fallocate(fd_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                  static_cast<off_t>(offset), static_cast<off_t>(length)) != 0) {
+        SPDLOG_WARN("punch_hole 失败: LBA={} count={}", lba, count);
+    }
+#endif
 }
 
 } // namespace usbipdcpp
