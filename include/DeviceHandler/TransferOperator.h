@@ -40,6 +40,15 @@ public:
                                      std::size_t length, std::error_code& ec) = 0;
 
     virtual bool is_custom_io(void* handle) const = 0;
+
+    /**
+     * @brief 返回指定端点的 leaf TransferOperator
+     *
+     * 用于 from_socket 中的端点路由：路由层 op（如 VirtualDeviceTransferOperator）通过此方法
+     * 按 ep 返回最终的 leaf op，然后 caller 直接在 leaf op 上 alloc / I/O，不再需要 map 查找。
+     * 非路由层的 op 直接返回 this。
+     */
+    virtual TransferOperator* get_operator_for_ep(std::uint8_t ep) { return this; }
 };
 
 /**

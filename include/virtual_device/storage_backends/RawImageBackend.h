@@ -33,6 +33,11 @@ public:
     void read(std::uint64_t lba, std::uint16_t count, void *buffer) override;
     bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) override;
     void punch_hole(std::uint64_t lba, std::uint64_t count) override;
+    void* get_direct_buffer(std::uint64_t lba) override;
+    bool send_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
+                     intptr_t sock_fd, std::error_code& ec) override;
+    bool recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
+                     intptr_t sock_fd, std::error_code& ec) override;
 
     std::uint64_t block_count() const override {
         return block_count_;
@@ -62,7 +67,9 @@ private:
     void *file_handle_ = nullptr;    // CreateFile 返回的 HANDLE
     void *mapping_handle_ = nullptr; // CreateFileMapping 返回的 HANDLE
 #else
-    int fd_ = -1; // open 返回的文件描述符
+    int fd_ = -1;                    // open 返回的文件描述符
+    int splice_pipe_[2] = {-1, -1};  // splice 用管道
+    int fs_block_size_ = 4096;       // 文件系统块大小，punch_hole 对齐用
 #endif
 };
 

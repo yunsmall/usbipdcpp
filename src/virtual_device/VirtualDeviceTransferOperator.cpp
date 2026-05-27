@@ -1,83 +1,67 @@
+// #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_DEBUG
+
 #include "virtual_device/VirtualDeviceTransferOperator.h"
 
+#include <spdlog/spdlog.h>
 #include "constant.h"
 
 using namespace usbipdcpp;
 
-TransferOperator* VirtualDeviceTransferOperator::find_op(void* handle) const {
-    auto it = handle_operators_.find(handle);
-    return (it != handle_operators_.end()) ? it->second : nullptr;
+TransferOperator* VirtualDeviceTransferOperator::get_operator_for_ep(std::uint8_t ep) {
+    auto it = ep_operators_.find(ep);
+    return (it != ep_operators_.end()) ? it->second : &generic_op_;
 }
 
 void* VirtualDeviceTransferOperator::alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
                                                             const UsbIpHeaderBasic& header,
                                                             const SetupPacket& setup_packet) {
-    auto it = ep_operators_.find(static_cast<std::uint8_t>(header.ep));
-    TransferOperator* op = (it != ep_operators_.end()) ? it->second : &generic_op_;
-    void* handle = op->alloc_transfer_handle(buffer_length, num_iso_packets, header, setup_packet);
-    handle_operators_[handle] = op;
-    return handle;
+    auto* leaf_op = get_operator_for_ep(static_cast<std::uint8_t>(header.ep));
+    return leaf_op->alloc_transfer_handle(buffer_length, num_iso_packets, header, setup_packet);
 }
 
 void VirtualDeviceTransferOperator::free_transfer_handle(void* handle) {
-    auto it = handle_operators_.find(handle);
-    if (it != handle_operators_.end()) {
-        it->second->free_transfer_handle(handle);
-        handle_operators_.erase(it);
-    }
+    // leaf op 已存入 TransferHandle，正常路径不会走到这里。
+    // 如果走了，说明 caller 没有正确使用 TransferHandle::get_operator()。
+    SPDLOG_ERROR("VDTO::free_transfer_handle handle={:p} 不应被调用", static_cast<const void*>(handle));
 }
 
 void* VirtualDeviceTransferOperator::get_transfer_buffer(void* handle) {
-    auto* op = find_op(handle);
-    return op ? op->get_transfer_buffer(handle) : nullptr;
+    SPDLOG_WARN("VDTO::get_transfer_buffer 不应被调用，请通过 TransferHandle::get_operator() 直调 leaf op");
+    return generic_op_.get_transfer_buffer(handle);
 }
 
 std::size_t VirtualDeviceTransferOperator::get_actual_length(void* handle) {
-    auto* op = find_op(handle);
-    return op ? op->get_actual_length(handle) : 0;
+    return generic_op_.get_actual_length(handle);
 }
 
 std::size_t VirtualDeviceTransferOperator::get_read_data_offset(void* handle) {
-    auto* op = find_op(handle);
-    return op ? op->get_read_data_offset(handle) : 0;
+    return generic_op_.get_read_data_offset(handle);
 }
 
 std::size_t VirtualDeviceTransferOperator::get_write_data_offset(const UsbIpHeaderBasic& header) {
-    auto it = ep_operators_.find(static_cast<std::uint8_t>(header.ep));
-    return (it != ep_operators_.end()) ? it->second->get_write_data_offset(header) : 0;
+    auto* leaf_op = get_operator_for_ep(static_cast<std::uint8_t>(header.ep));
+    return leaf_op->get_write_data_offset(header);
 }
 
 UsbIpIsoPacketDescriptor VirtualDeviceTransferOperator::get_iso_descriptor(void* handle, int index) {
-    auto* op = find_op(handle);
-    if (op) return op->get_iso_descriptor(handle, index);
-    return {};
+    return generic_op_.get_iso_descriptor(handle, index);
 }
 
 void VirtualDeviceTransferOperator::set_iso_descriptor(void* handle, int index,
                                                         const UsbIpIsoPacketDescriptor& desc) {
-    auto* op = find_op(handle);
-    if (op) op->set_iso_descriptor(handle, index, desc);
+    generic_op_.set_iso_descriptor(handle, index, desc);
 }
 
 void VirtualDeviceTransferOperator::send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
                                                         std::size_t length, std::error_code& ec) {
-    auto* op = find_op(handle);
-    if (op)
-        op->send_transfer_data(handle, sock, length, ec);
-    else
-        ec = std::make_error_code(std::errc::invalid_argument);
+    generic_op_.send_transfer_data(handle, sock, length, ec);
 }
 
 void VirtualDeviceTransferOperator::recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
                                                         std::size_t length, std::error_code& ec) {
-    auto* op = find_op(handle);
-    if (op)
-        op->recv_transfer_data(handle, sock, length, ec);
-    else
-        ec = std::make_error_code(std::errc::invalid_argument);
+    generic_op_.recv_transfer_data(handle, sock, length, ec);
 }
 
 bool VirtualDeviceTransferOperator::is_custom_io(void* handle) const {
-    auto it = handle_operators_.find(handle);
-    return (it != handle_operators_.end()) ? it->second->is_custom_io(handle) : false;
+    return false;
 }

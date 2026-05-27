@@ -142,6 +142,16 @@ public:
         string_pool.change_string(string_serial_value, new_str);
     }
 
+    std::wstring get_string_manufacturer() const {
+        return string_pool.get_string(string_manufacturer_value).value_or(L"");
+    }
+    std::wstring get_string_product() const {
+        return string_pool.get_string(string_product_value).value_or(L"");
+    }
+    std::wstring get_string_serial() const {
+        return string_pool.get_string(string_serial_value).value_or(L"");
+    }
+
 protected:
     std::uint8_t string_configuration_value;
     std::uint8_t string_manufacturer_value;

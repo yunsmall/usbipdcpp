@@ -53,7 +53,7 @@ TEST(TestUsbIpRetSubmit, CreateOkWithNoIso) {
     trx->data = {0x01, 0x02, 0x03, 0x04};
     trx->actual_length = trx->data.size();
 
-    TransferHandle handle(trx, &mock_handler);
+    TransferHandle handle(trx, mock_handler.get_transfer_operator());
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
             0x1234, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
@@ -81,7 +81,7 @@ TEST(TestUsbIpRetSubmit, CreateEpipeNoIso) {
     trx->data = {0xAA, 0xBB};
     trx->actual_length = trx->data.size();
 
-    TransferHandle handle(trx, &mock_handler);
+    TransferHandle handle(trx, mock_handler.get_transfer_operator());
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_no_iso(
             0xABCD, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
@@ -216,7 +216,7 @@ TEST(TestUsbIpRetSubmit, LargeData) {
     trx->data.resize(65536, 0xAB);
     trx->actual_length = trx->data.size();
 
-    TransferHandle handle(trx, &mock_handler);
+    TransferHandle handle(trx, mock_handler.get_transfer_operator());
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
             0x1234, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 
@@ -244,7 +244,7 @@ TEST(TestUsbIpRetSubmit, WithIsoPacketDescriptors) {
             {.offset = 1024, .length = 1024, .actual_length = 512, .status = 0},
     };
 
-    TransferHandle handle(trx, &mock_handler);
+    TransferHandle handle(trx, mock_handler.get_transfer_operator());
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
             0x1234, 0, 1536, 0, 2, std::move(handle));
 

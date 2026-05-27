@@ -102,6 +102,7 @@ struct USBIPDCPP_API UsbIpHeaderBasic {
     std::uint32_t seqnum;
     std::uint32_t devid;
     std::uint32_t direction;
+    /// USB/IP 线格式端点号（不带方向位，IN 端点的 ep 不含 0x80）
     std::uint32_t ep;
 
     [[nodiscard]] array_data_type<calculate_total_size_with_array<
@@ -165,35 +166,36 @@ struct GenericTransfer {
 /**
  * @brief RAII 包装类，管理 transfer_handle 的生命周期
  *
- * 该类接管 transfer_handle 的所有权，析构时自动调用 handler_->free_transfer_handle() 释放资源。
+ * 持有 handle 指针及其所属 TransferOperator，析构时自动调用
+ * op_->free_transfer_handle(handle_) 释放资源。可移动不可拷贝。
  *
  * 使用规则：
- * - 构造时接管所有权：TransferHandle handle(ptr, handler);
+ * - 构造时接管所有权：TransferHandle handle(ptr, op);
  * - 析构时自动释放，无需手动管理
  * - 可以通过 std::move() 转移所有权给另一个 TransferHandle
  * - 调用 release() 会放弃所有权，调用者必须手动释放
  *
  * 典型用法：
  * @code
- *   void* ptr = handler->alloc_transfer_handle(1024, 0);
- *   TransferHandle handle(ptr, handler);  // 接管所有权
- *   // ... 使用 handle ...
- *   // 函数结束时 handle 析构，自动调用 handler->free_transfer_handle(ptr)
+ *   void* ptr = op->alloc_transfer_handle(1024, 0, header, setup);
+ *   TransferHandle handle(ptr, op);  // 接管所有权
+ *   void* buf = handle.get_operator()->get_transfer_buffer(handle.get());
+ *   // 函数结束时 handle 析构，自动调用 op->free_transfer_handle(ptr)
  * @endcode
  */
 class USBIPDCPP_API TransferHandle {
     void* handle_ = nullptr;
-    AbstDeviceHandler* handler_ = nullptr;
+    TransferOperator* op_ = nullptr;
 
 public:
     TransferHandle() = default;
 
     /**
      * @brief 构造并接管所有权
-     * @param handle 由 handler->alloc_transfer_handle() 返回的指针
-     * @param handler 设备处理器，用于释放 handle
+     * @param handle 由 op->alloc_transfer_handle() 返回的指针
+     * @param op     创建此 handle 的 TransferOperator，用于释放及后续 I/O
      */
-    TransferHandle(void* handle, AbstDeviceHandler* handler);
+    TransferHandle(void* handle, TransferOperator* op);
 
     // 禁止拷贝（所有权唯一）
     TransferHandle(const TransferHandle&) = delete;
@@ -209,14 +211,14 @@ public:
     /**
      * @brief 析构时自动释放 handle
      *
-     * 如果 handle_ 和 handler_ 都非空，调用 handler_->free_transfer_handle(handle_)
+     * 如果 handle_ 和 op_ 都非空，调用 op_->free_transfer_handle(handle_)
      */
     ~TransferHandle();
 
     /**
      * @brief 释放当前持有的 handle 并置空
      *
-     * 调用 handler_->free_transfer_handle(handle_)，然后将 handle_ 和 handler_ 置空。
+     * 调用 op_->free_transfer_handle(handle_)，然后将 handle_ 和 op_ 置空。
      * 对空对象调用此函数是安全的（无操作）。
      */
     void reset();
@@ -230,10 +232,13 @@ public:
     [[nodiscard]] void* get() const { return handle_; }
 
     /**
-     * @brief 获取关联的 handler
-     * @return 设备处理器指针，可能为 nullptr
+     * @brief 获取创建此 handle 的 TransferOperator
+     * @return TransferOperator 指针，用于 get_transfer_buffer / send / recv 等操作
+     *
+     * for_socket 中完成 alloc 后 op 指向最终的 leaf operator（如 StorageTransferOperator），
+     * 后续 I/O 操作通过此 op 直接调用，不再经过 VirtualDeviceTransferOperator 的 map 查找。
      */
-    [[nodiscard]] AbstDeviceHandler* handler() const { return handler_; }
+    [[nodiscard]] TransferOperator* get_operator() const { return op_; }
 
     /**
      * @brief 检查是否持有有效 handle
@@ -242,33 +247,32 @@ public:
     explicit operator bool() const { return handle_ != nullptr; }
 
     /**
-     * @brief 设置 handler（用于 from_socket 前设置）
-     * @param handler 设备处理器
+     * @brief 设置路由用的 TransferOperator（from_socket 前调用）
      *
-     * 通常与 set_handle() 配合使用，在反序列化时填充。
+     * 在协议反序列化前设置路由层 op（如 VirtualDeviceTransferOperator），
+     * from_socket 内部通过 get_operator_for_ep 拿到 leaf op 后会用 set_handle 覆盖。
      */
-    void set_handler(AbstDeviceHandler* handler) { handler_ = handler; }
+    void set_operator(TransferOperator* op) { op_ = op; }
 
     /**
-     * @brief 设置 handle（用于 from_socket 中填充）
-     * @param handle 原始指针
+     * @brief 同时设置 handle 及其所属 TransferOperator
      *
-     * 警告：调用此函数前确保当前没有持有其他 handle，否则会泄漏。
+     * from_socket 中 alloc 完成后调用，将 op 从路由层替换为最终的 leaf operator。
      */
-    void set_handle(void* handle) { handle_ = handle; }
+    void set_handle(void* handle, TransferOperator* op) { handle_ = handle; op_ = op; }
 
     /**
      * @brief 释放所有权，返回原始指针
      * @return 原始指针，调用者必须手动释放
      *
      * 警告：调用此函数后，TransferHandle 不再管理该 handle，
-     * 调用者必须确保调用 handler->free_transfer_handle() 释放资源，
+     * 调用者必须确保调用 op->free_transfer_handle() 释放资源，
      * 否则会导致内存泄漏！
      *
      * @code
      *   void* ptr = handle.release();
      *   // ... 使用 ptr ...
-     *   handler->free_transfer_handle(ptr);  // 必须手动释放！
+     *   handle.get_operator()->free_transfer_handle(ptr);  // 必须手动释放！
      * @endcode
      */
     void* release();

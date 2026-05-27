@@ -5,7 +5,9 @@
 #include <filesystem>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
+#include <mswsock.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -86,9 +88,13 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
         return;
     }
 
-    // 判断文件是否为新创建
+    // 获取文件系统块大小（用于 fallocate punch_hole 对齐）
     struct stat st{};
-    if (fstat(fd, &st) == 0 && st.st_size > 0) {
+    if (fstat(fd, &st) == 0) {
+        fs_block_size_ = st.st_blksize;
+    }
+    // 判断文件是否为新创建
+    if (st.st_size > 0) {
         auto exist_blocks = static_cast<std::uint64_t>(st.st_size) / block_size_;
         if (exist_blocks > 0) {
             block_count_ = exist_blocks;
@@ -118,6 +124,12 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
     mapped_size_ = file_size;
 #endif
 
+#ifndef _WIN32
+    if (pipe(splice_pipe_) < 0) {
+        SPDLOG_WARN("pipe 创建失败，splice 零拷贝接收不可用");
+    }
+#endif
+
     SPDLOG_INFO("{}镜像: {} ({} 块, {} MiB)",
                 is_new_file ? "创建" : "打开",
                 path_, block_count_, block_count_ * block_size_ / 1024 / 1024);
@@ -132,6 +144,8 @@ RawImageBackend::~RawImageBackend() {
 #else
         munmap(mapped_data_, mapped_size_);
         close(fd_);
+        close(splice_pipe_[0]);
+        close(splice_pipe_[1]);
 #endif
     }
 }
@@ -164,10 +178,93 @@ void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
     zero.BeyondFinalZero.QuadPart = static_cast<LONGLONG>(offset + length);
     DeviceIoControl(file_handle_, FSCTL_SET_ZERO_DATA, &zero, sizeof(zero), nullptr, 0, nullptr, nullptr);
 #else
+    // fallocate punch_hole 要求 offset 对齐到 fs 块边界，向下对齐并扩容覆盖整段
+    auto aligned_off = (offset / fs_block_size_) * fs_block_size_;
+    auto end = offset + length;
+    auto aligned_end = ((end + fs_block_size_ - 1) / fs_block_size_) * fs_block_size_;
     if (fallocate(fd_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                  static_cast<off_t>(offset), static_cast<off_t>(length)) != 0) {
+                  static_cast<off_t>(aligned_off), static_cast<off_t>(aligned_end - aligned_off)) != 0) {
         SPDLOG_WARN("punch_hole 失败: LBA={} count={}", lba, count);
     }
+#endif
+}
+
+bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
+                                 intptr_t sock_fd, std::error_code& ec) {
+#ifdef _WIN32
+    return false; // Windows 无 splice，回退 asio::read
+#else
+    if (splice_pipe_[0] < 0) return false;
+    auto file_offset = static_cast<off64_t>(lba) * block_size_ + offset;
+    size_t remaining = length;
+    while (remaining > 0) {
+        // sock → pipe
+        ssize_t n = splice(static_cast<int>(sock_fd), nullptr,
+                           splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
+        if (n <= 0) {
+            if (n == 0) break;
+            ec.assign(errno, std::generic_category());
+            return false;
+        }
+        // pipe → file（DMA 到页缓存，零用户态拷贝）
+        off64_t off = static_cast<off64_t>(file_offset + (length - remaining));
+        ssize_t m = splice(splice_pipe_[0], nullptr, fd_, &off, n, SPLICE_F_MOVE);
+        if (m < 0) {
+            ec.assign(errno, std::generic_category());
+            return false;
+        }
+        remaining -= m;
+    }
+    return true;
+#endif
+}
+
+void* RawImageBackend::get_direct_buffer(std::uint64_t lba) {
+    if (!mapped_data_) return nullptr;
+    return static_cast<char*>(mapped_data_) + static_cast<std::size_t>(lba) * block_size_;
+}
+
+bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
+                                  intptr_t sock_fd, std::error_code& ec) {
+    auto file_offset = static_cast<std::size_t>(lba) * block_size_ + offset;
+#ifdef _WIN32
+    auto hFile = static_cast<HANDLE>(file_handle_);
+    auto hSocket = static_cast<SOCKET>(sock_fd);
+
+    LARGE_INTEGER pos{};
+    pos.QuadPart = static_cast<LONGLONG>(file_offset);
+    if (!SetFilePointerEx(hFile, pos, nullptr, FILE_BEGIN)) {
+        ec.assign(GetLastError(), std::system_category());
+        return false;
+    }
+    if (!TransmitFile(hSocket, hFile, static_cast<DWORD>(length), 0, nullptr, nullptr, 0)) {
+        DWORD err = GetLastError();
+        if (err != WSA_IO_PENDING) {
+            ec.assign(err, std::system_category());
+            return false;
+        }
+    }
+    return true;
+#else
+    // splice: file → pipe → sock（与 recv 共用 splice_pipe_）
+    if (splice_pipe_[0] < 0) return false;
+    off64_t off = static_cast<off64_t>(file_offset);
+    size_t remaining = length;
+    while (remaining > 0) {
+        ssize_t n = splice(fd_, &off, splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
+        if (n <= 0) {
+            if (n == 0) break;
+            ec.assign(errno, std::generic_category());
+            return false;
+        }
+        ssize_t m = splice(splice_pipe_[0], nullptr, static_cast<int>(sock_fd), nullptr, n, SPLICE_F_MOVE);
+        if (m < 0) {
+            ec.assign(errno, std::generic_category());
+            return false;
+        }
+        remaining -= m;
+    }
+    return true;
 #endif
 }
 

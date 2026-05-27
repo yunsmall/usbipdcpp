@@ -368,7 +368,7 @@ TEST_F(UsbipdLibusbCompatibilityTest, RetSubmitWithData) {
     };
     MockDeviceHandlerForTest mock_handler(test_device);
 
-    TransferHandle handle(trx, &mock_handler);
+    TransferHandle handle(trx, mock_handler.get_transfer_operator());
     auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
             0x1111, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
 

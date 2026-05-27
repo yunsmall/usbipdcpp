@@ -13,22 +13,22 @@ using namespace usbipdcpp;
 
 // ========== TransferHandle 实现 ==========
 
-TransferHandle::TransferHandle(void* handle, AbstDeviceHandler* handler)
-    : handle_(handle), handler_(handler) {}
+TransferHandle::TransferHandle(void* handle, TransferOperator* op)
+    : handle_(handle), op_(op) {}
 
 TransferHandle::TransferHandle(TransferHandle&& other) noexcept
-    : handle_(other.handle_), handler_(other.handler_) {
+    : handle_(other.handle_), op_(other.op_) {
     other.handle_ = nullptr;
-    other.handler_ = nullptr;
+    other.op_ = nullptr;
 }
 
 TransferHandle& TransferHandle::operator=(TransferHandle&& other) noexcept {
     if (this != &other) {
         reset();
         handle_ = other.handle_;
-        handler_ = other.handler_;
+        op_ = other.op_;
         other.handle_ = nullptr;
-        other.handler_ = nullptr;
+        other.op_ = nullptr;
     }
     return *this;
 }
@@ -38,17 +38,17 @@ TransferHandle::~TransferHandle() {
 }
 
 void TransferHandle::reset() {
-    if (handle_ && handler_) {
-        handler_->get_transfer_operator()->free_transfer_handle(handle_);
+    if (handle_ && op_) {
+        op_->free_transfer_handle(handle_);
     }
     handle_ = nullptr;
-    handler_ = nullptr;
+    op_ = nullptr;
 }
 
 void* TransferHandle::release() {
     void* tmp = handle_;
     handle_ = nullptr;
-    handler_ = nullptr;
+    op_ = nullptr;
     return tmp;
 }
 
@@ -234,8 +234,7 @@ data_type usbipdcpp::UsbIpResponse::UsbIpRetSubmit::to_bytes() const {
 
     // 从 transfer 获取数据
     if (transfer && actual_length > 0) {
-        auto* handler = transfer.handler();
-        auto* op = handler->get_transfer_operator();
+        auto* op = transfer.get_operator();
         void* raw_handle = transfer.get();
         void* buffer = op->get_transfer_buffer(raw_handle);
         auto offset = op->get_read_data_offset(raw_handle);
@@ -262,8 +261,7 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
     // 从 transfer 获取数据
     if (transfer && actual_length > 0)[[likely]] {
-        auto* handler = transfer.handler();
-        auto* op = handler->get_transfer_operator();
+        auto* op = transfer.get_operator();
         void* raw_handle = transfer.get();
         void* buffer = op->get_transfer_buffer(raw_handle);
 
@@ -271,7 +269,7 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
         if (num_iso == 0)[[likely]] {
             // 非等时传输：header + data
-            if (handler->is_custom_transfer_io(raw_handle)) {
+            if (op->is_custom_io(raw_handle)) {
                 // 自定义分块发送：先发 header，再逐块发数据
                 asio::write(sock, asio::buffer(data1), ec);
                 if (!ec) op->send_transfer_data(raw_handle, sock, actual_length, ec);
@@ -502,8 +500,7 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpCommand::UsbIpCmdSubmit::to_bytes() co
                     );
     // 从 transfer 获取数据
     if (transfer) {
-        auto* handler = transfer.handler();
-        auto* op = handler->get_transfer_operator();
+        auto* op = transfer.get_operator();
         void* raw_handle = transfer.get();
         void* buffer = op->get_transfer_buffer(raw_handle);
         auto write_offset = op->get_write_data_offset(header);
@@ -536,9 +533,9 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
             );
     // 从 transfer 获取数据
     if (transfer) {
-        auto* handler = transfer.handler();
-        auto* op = handler->get_transfer_operator();
-        void* buffer = op->get_transfer_buffer(transfer.get());
+        auto* op = transfer.get_operator();
+        void* raw_handle = transfer.get();
+        void* buffer = op->get_transfer_buffer(raw_handle);
         auto write_offset = op->get_write_data_offset(header);
         buffers[1] = asio::buffer(static_cast<const char*>(buffer) + write_offset, transfer_buffer_length);
         asio::write(sock, buffers, ec);
@@ -548,8 +545,7 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
     }
     // iso传输
     if (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF && transfer) {
-        auto* handler = transfer.handler();
-        auto* op = handler->get_transfer_operator();
+        auto* op = transfer.get_operator();
         void* raw_handle = transfer.get();
         int num_iso = static_cast<int>(number_of_packets);
         for (int i = 0; i < num_iso; i++) {
@@ -581,28 +577,32 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
     }
 
-    // 使用 handler 创建 transfer_handle
+    // 从路由 op 拿到对应端点的 leaf op，用它创建 transfer_handle
+    // header.ep 是 USB/IP 线格式（不带方向位），需还原真实端点地址再查表
     int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
-    auto* handler = transfer.handler();
-    auto* op = handler->get_transfer_operator();
-    auto* raw_handle = op->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
-    transfer.set_handle(raw_handle);
+    auto* routing_op = transfer.get_operator();
+    std::uint8_t real_ep = static_cast<std::uint8_t>(header.ep);
+    if (header.direction == UsbIpDirection::In) real_ep |= 0x80;
+    auto* leaf_op = routing_op->get_operator_for_ep(real_ep);
+    auto* raw_handle = leaf_op->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
+    // 将 handle 绑定到 leaf op，后续 I/O 操作直接走 leaf op，无需 map 查找
+    transfer.set_handle(raw_handle, leaf_op);
 
     // 获取 buffer 头指针
-    void* buffer = op->get_transfer_buffer(raw_handle);
+    void* buffer = leaf_op->get_transfer_buffer(raw_handle);
 
     if (header.direction == UsbIpDirection::In)[[likely]] {
         // IN 传输不需要从 socket 读取数据
     }
     else {
         // OUT 传输：将数据从 socket 读到 transfer buffer
-        if (handler->is_custom_transfer_io(raw_handle)) {
+        if (leaf_op->is_custom_io(raw_handle)) {
             std::error_code ec;
-            op->recv_transfer_data(raw_handle, sock, transfer_buffer_length, ec);
+            leaf_op->recv_transfer_data(raw_handle, sock, transfer_buffer_length, ec);
             if (ec) throw std::system_error(ec);
         }
         else {
-            auto write_offset = op->get_write_data_offset(header);
+            auto write_offset = leaf_op->get_write_data_offset(header);
             asio::read(sock, asio::buffer(
                 static_cast<std::uint8_t*>(buffer) + write_offset,
                 transfer_buffer_length
@@ -615,7 +615,7 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         for (int i = 0; i < num_iso; i++) {
             UsbIpIsoPacketDescriptor iso_desc{};
             iso_desc.from_socket(sock);
-            op->set_iso_descriptor(raw_handle, i, iso_desc);
+            leaf_op->set_iso_descriptor(raw_handle, i, iso_desc);
         }
     }
 }
@@ -700,7 +700,7 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
         switch (command) {
             case USBIP_CMD_SUBMIT: {
                 auto cmd = UsbIpCmdSubmit{};
-                cmd.transfer.set_handler(handler);
+                cmd.transfer.set_operator(handler->get_transfer_operator());
                 cmd.from_socket(sock);
                 return cmd;
                 break;

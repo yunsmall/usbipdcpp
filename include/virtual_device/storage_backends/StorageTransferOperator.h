@@ -1,0 +1,43 @@
+#pragma once
+
+#include "DeviceHandler/TransferOperator.h"
+
+namespace usbipdcpp {
+
+class MscBulkOnlyHandler;
+
+/**
+ * @brief MSC 零拷贝传输操作器
+ *
+ * IN：send_transfer_data 从 external_buf（mmap）直接发送
+ * OUT：recv_transfer_data 直读入 CBW/staging 并解析
+ */
+class StorageTransferOperator : public TransferOperator {
+public:
+    explicit StorageTransferOperator(MscBulkOnlyHandler* handler);
+
+    void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
+                                 const UsbIpHeaderBasic& header,
+                                 const SetupPacket& setup_packet) override;
+    void free_transfer_handle(void* handle) override;
+
+    void* get_transfer_buffer(void* handle) override;
+    std::size_t get_actual_length(void* handle) override;
+    std::size_t get_read_data_offset(void* handle) override;
+    std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) override;
+
+    UsbIpIsoPacketDescriptor get_iso_descriptor(void* handle, int index) override;
+    void set_iso_descriptor(void* handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
+
+    void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
+                            std::size_t length, std::error_code& ec) override;
+    void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
+                            std::size_t length, std::error_code& ec) override;
+
+    bool is_custom_io(void* handle) const override { return true; }
+
+private:
+    MscBulkOnlyHandler* handler_;
+};
+
+} // namespace usbipdcpp

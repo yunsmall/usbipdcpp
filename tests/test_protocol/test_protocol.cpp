@@ -141,7 +141,7 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
         [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
         [[maybe_unused]] auto op_command = usbipdcpp::read_u16(server_socket);
 
-        received.transfer.set_handler(&mock_handler);
+        received.transfer.set_operator(mock_handler.get_transfer_operator());
         received.from_socket(server_socket);
         received.header.command = op_command;
 

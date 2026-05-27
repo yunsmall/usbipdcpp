@@ -64,7 +64,7 @@ void VirtualDeviceHandler::setup_interface_handlers() {
 
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
-            auto* virtual_handler = dynamic_cast<VirtualInterfaceHandler*>(intf.handler.get());
+            auto* virtual_handler = intf.handler.get();
             if (virtual_handler) {
                 virtual_handler->set_device_handler(this);
                 // 把接口级 TransferOperator 注册到该接口所有端点
@@ -72,6 +72,7 @@ void VirtualDeviceHandler::setup_interface_handlers() {
                 for (auto &ep: intf.endpoints) {
                     device_op->register_endpoint_operator(ep.address, if_op);
                 }
+                virtual_handler->on_setup_interface_handlers();
             }
         }
     }

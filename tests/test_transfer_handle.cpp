@@ -88,67 +88,75 @@ protected:
 };
 
 TEST_F(TransferHandleTest, ConstructorAndDestructor) {
-    void* raw_handle = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
+    auto* op = handler->mock_op();
+    void* raw_handle = op->alloc_transfer_handle(1024, 0, test_header, test_setup);
     EXPECT_NE(raw_handle, nullptr);
-    EXPECT_EQ(handler->mock_op()->alloc_count, 1);
+    EXPECT_EQ(op->alloc_count, 1);
 
     {
-        TransferHandle handle(raw_handle, handler.get());
+        TransferHandle handle(raw_handle, op);
         EXPECT_EQ(handle.get(), raw_handle);
-        EXPECT_EQ(handle.handler(), handler.get());
+        EXPECT_EQ(handle.get_operator(), op);
     }
 
-    EXPECT_EQ(handler->mock_op()->free_count, 1);
-    EXPECT_EQ(handler->mock_op()->last_freed_handle, raw_handle);
+    EXPECT_EQ(op->free_count, 1);
+    EXPECT_EQ(op->last_freed_handle, raw_handle);
 }
 
 TEST_F(TransferHandleTest, MoveConstructor) {
-    void* raw_handle = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
+    auto* op = handler->mock_op();
+    void* raw_handle = op->alloc_transfer_handle(1024, 0, test_header, test_setup);
 
-    TransferHandle handle1(raw_handle, handler.get());
+    TransferHandle handle1(raw_handle, op);
     TransferHandle handle2(std::move(handle1));
 
     EXPECT_EQ(handle1.get(), nullptr);
+    EXPECT_EQ(handle1.get_operator(), nullptr);
     EXPECT_EQ(handle2.get(), raw_handle);
-    EXPECT_EQ(handle2.handler(), handler.get());
+    EXPECT_EQ(handle2.get_operator(), op);
 }
 
 TEST_F(TransferHandleTest, MoveAssignment) {
-    void* raw_handle1 = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
-    void* raw_handle2 = handler->mock_op()->alloc_transfer_handle(2048, 0, test_header, test_setup);
+    auto* op = handler->mock_op();
+    void* raw_handle1 = op->alloc_transfer_handle(1024, 0, test_header, test_setup);
+    void* raw_handle2 = op->alloc_transfer_handle(2048, 0, test_header, test_setup);
 
-    TransferHandle handle1(raw_handle1, handler.get());
-    TransferHandle handle2(raw_handle2, handler.get());
+    TransferHandle handle1(raw_handle1, op);
+    TransferHandle handle2(raw_handle2, op);
 
     handle1 = std::move(handle2);
 
     EXPECT_EQ(handle1.get(), raw_handle2);
-    EXPECT_EQ(handler->mock_op()->free_count, 1);
-    EXPECT_EQ(handler->mock_op()->last_freed_handle, raw_handle1);
+    EXPECT_EQ(op->free_count, 1);
+    EXPECT_EQ(op->last_freed_handle, raw_handle1);
 }
 
 TEST_F(TransferHandleTest, Release) {
-    void* raw_handle = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
+    auto* op = handler->mock_op();
+    void* raw_handle = op->alloc_transfer_handle(1024, 0, test_header, test_setup);
 
-    TransferHandle handle(raw_handle, handler.get());
+    TransferHandle handle(raw_handle, op);
     void* released = handle.release();
 
     EXPECT_EQ(released, raw_handle);
     EXPECT_EQ(handle.get(), nullptr);
-    EXPECT_EQ(handler->mock_op()->free_count, 0);
+    EXPECT_EQ(handle.get_operator(), nullptr);
+    EXPECT_EQ(op->free_count, 0);
 
-    handler->get_transfer_operator()->free_transfer_handle(released);
-    EXPECT_EQ(handler->mock_op()->free_count, 1);
+    op->free_transfer_handle(released);
+    EXPECT_EQ(op->free_count, 1);
 }
 
 TEST_F(TransferHandleTest, Reset) {
-    void* raw_handle = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
+    auto* op = handler->mock_op();
+    void* raw_handle = op->alloc_transfer_handle(1024, 0, test_header, test_setup);
 
-    TransferHandle handle(raw_handle, handler.get());
+    TransferHandle handle(raw_handle, op);
     handle.reset();
 
     EXPECT_EQ(handle.get(), nullptr);
-    EXPECT_EQ(handler->mock_op()->free_count, 1);
+    EXPECT_EQ(handle.get_operator(), nullptr);
+    EXPECT_EQ(op->free_count, 1);
 }
 
 // ============== 并发安全测试 ==============
@@ -162,7 +170,7 @@ TEST_F(TransferHandleTest, ConcurrentTransferHandles) {
         threads.emplace_back([this]() {
             for (int i = 0; i < handles_per_thread; i++) {
                 void* raw = handler->mock_op()->alloc_transfer_handle(1024, 0, test_header, test_setup);
-                TransferHandle handle(raw, handler.get());
+                TransferHandle handle(raw, handler->mock_op());
             }
         });
     }

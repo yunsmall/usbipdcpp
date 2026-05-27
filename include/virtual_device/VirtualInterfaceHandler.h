@@ -11,6 +11,8 @@
 
 namespace usbipdcpp {
 
+class VirtualDeviceHandler;
+
 /**
  * @brief 端点请求队列，按端点地址管理传输请求（纯数据容器，不加锁）
  *
@@ -129,9 +131,12 @@ public:
      * @brief 设置所属的 DeviceHandler
      * @param handler DeviceHandler 指针
      */
-    void set_device_handler(AbstDeviceHandler* handler) {
+    void set_device_handler(VirtualDeviceHandler* handler) {
         device_handler = handler;
     }
+
+    /** setup_interface_handlers 末尾回调，此时 device_handler 已设置，子类可在此做初始化 */
+    virtual void on_setup_interface_handlers() {}
 
     /**
      * @brief 新的客户端连接时会调这个函数
@@ -245,7 +250,7 @@ public:
 
 protected:
     Session *session = nullptr;
-    AbstDeviceHandler* device_handler = nullptr;
+    VirtualDeviceHandler* device_handler = nullptr;
     std::unique_ptr<TransferOperator> transfer_op_;
 
     std::uint8_t string_interface;

@@ -43,6 +43,7 @@ namespace ScsiCmd {
     inline constexpr std::uint8_t StartStopUnit = 0x1B;
     inline constexpr std::uint8_t PreventAllowMediumRemoval = 0x1E;
     inline constexpr std::uint8_t ReadCapacity10 = 0x25;
+    inline constexpr std::uint8_t ReadCapacity16 = 0x9E;
     inline constexpr std::uint8_t Read10 = 0x28;
     inline constexpr std::uint8_t Write10 = 0x2A;
     inline constexpr std::uint8_t Verify10 = 0x2F;

@@ -7,7 +7,7 @@
 using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::trace);
 
     std::string image_path = "disk.img";
     if (argc > 1)
