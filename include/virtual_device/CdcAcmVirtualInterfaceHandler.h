@@ -1,39 +1,32 @@
 #pragma once
 
-#include "virtual_device/VirtualInterfaceHandler.h"
-#include "SetupPacket.h"
-#include "constant.h"
-#include "CdcAcmConstants.h"
-#include "protocol.h"
-#include "utils/RingBuffer.h"
 #include <array>
+#include <condition_variable>
 #include <deque>
 #include <mutex>
-#include <condition_variable>
-#include <vector>
 #include <string_view>
+#include <vector>
+#include "CdcAcmConstants.h"
+#include "SetupPacket.h"
+#include "constant.h"
+#include "protocol.h"
+#include "utils/RingBuffer.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 
 namespace usbipdcpp {
-
 /**
  * @brief CDC ACM 线路编码结构
  */
 struct LineCoding {
-    std::uint32_t dwDTERate = 115200;  // 波特率
-    std::uint8_t bCharFormat = 0;      // 停止位: 0=1位, 1=1.5位, 2=2位
-    std::uint8_t bParityType = 0;      // 校验: 0=无, 1=奇, 2=偶, 3=标记, 4=空格
-    std::uint8_t bDataBits = 8;        // 数据位: 5, 6, 7, 8, 16
+    std::uint32_t dwDTERate = 115200; // 波特率
+    std::uint8_t bCharFormat = 0; // 停止位: 0=1位, 1=1.5位, 2=2位
+    std::uint8_t bParityType = 0; // 校验: 0=无, 1=奇, 2=偶, 3=标记, 4=空格
+    std::uint8_t bDataBits = 8; // 数据位: 5, 6, 7, 8, 16
 
     [[nodiscard]] std::array<std::uint8_t, 7> to_bytes() const {
-        return {{
-            static_cast<std::uint8_t>(dwDTERate & 0xFF),
-            static_cast<std::uint8_t>((dwDTERate >> 8) & 0xFF),
-            static_cast<std::uint8_t>((dwDTERate >> 16) & 0xFF),
-            static_cast<std::uint8_t>((dwDTERate >> 24) & 0xFF),
-            bCharFormat,
-            bParityType,
-            bDataBits
-        }};
+        return {{static_cast<std::uint8_t>(dwDTERate & 0xFF), static_cast<std::uint8_t>((dwDTERate >> 8) & 0xFF),
+                 static_cast<std::uint8_t>((dwDTERate >> 16) & 0xFF),
+                 static_cast<std::uint8_t>((dwDTERate >> 24) & 0xFF), bCharFormat, bParityType, bDataBits}};
     }
 
     static LineCoding from_bytes(const std::vector<std::uint8_t> &data) {
@@ -52,13 +45,15 @@ struct LineCoding {
  * @brief CDC ACM 控制信号状态
  */
 struct ControlSignalState {
-    bool dtr = false;  // Data Terminal Ready
-    bool rts = false;  // Request To Send
+    bool dtr = false; // Data Terminal Ready
+    bool rts = false; // Request To Send
 
     [[nodiscard]] std::uint16_t to_uint16() const {
         std::uint16_t value = 0;
-        if (dtr) value |= static_cast<std::uint16_t>(CdcAcmControlSignal::DTR);
-        if (rts) value |= static_cast<std::uint16_t>(CdcAcmControlSignal::RTS);
+        if (dtr)
+            value |= static_cast<std::uint16_t>(CdcAcmControlSignal::DTR);
+        if (rts)
+            value |= static_cast<std::uint16_t>(CdcAcmControlSignal::RTS);
         return value;
     }
 
@@ -74,12 +69,12 @@ struct ControlSignalState {
  * @brief CDC ACM 串口状态通知
  */
 struct SerialStateNotification {
-    std::uint8_t bmRequestType = 0xA1;  // 类特定、接口、IN
-    std::uint8_t bNotification = 0x20;  // SERIAL_STATE
+    std::uint8_t bmRequestType = 0xA1; // 类特定、接口、IN
+    std::uint8_t bNotification = 0x20; // SERIAL_STATE
     std::uint16_t wValue = 0;
-    std::uint16_t wIndex = 0;            // 接口号
+    std::uint16_t wIndex = 0; // 接口号
     std::uint16_t wLength = 2;
-    std::uint16_t data = 0;              // 状态位
+    std::uint16_t data = 0; // 状态位
 
     [[nodiscard]] std::vector<std::uint8_t> to_bytes() const {
         std::vector<std::uint8_t> result;
@@ -112,14 +107,14 @@ public:
     // ========== 内部实现（子类无需关心） ==========
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                       std::uint32_t transfer_flags,
-                                                       std::uint32_t transfer_buffer_length,
-                                                       const SetupPacket &setup_packet,
-                                                       TransferHandle transfer, std::error_code &ec) override;
+                                                      std::uint32_t transfer_flags,
+                                                      std::uint32_t transfer_buffer_length,
+                                                      const SetupPacket &setup_packet, TransferHandle transfer,
+                                                      std::error_code &ec) override;
 
-    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   TransferHandle transfer, std::error_code &ec) override;
+    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                   std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -160,22 +155,26 @@ public:
      * @brief 处理非 CDC ACM 类请求的控制传输，子类可重写以扩展功能
      */
     virtual void handle_non_cdc_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                          std::uint32_t transfer_flags,
-                                                          std::uint32_t transfer_buffer_length,
-                                                          const SetupPacket &setup_packet,
-                                                          TransferHandle transfer, std::error_code &ec);
+                                                         std::uint32_t transfer_flags,
+                                                         std::uint32_t transfer_buffer_length,
+                                                         const SetupPacket &setup_packet, TransferHandle transfer,
+                                                         std::error_code &ec);
 
     // ========== 状态查询 API ==========
 
     /**
      * @brief 获取当前线路编码
      */
-    [[nodiscard]] const LineCoding& get_line_coding() const { return line_coding_; }
+    [[nodiscard]] const LineCoding &get_line_coding() const {
+        return line_coding_;
+    }
 
     /**
      * @brief 获取当前控制信号状态
      */
-    [[nodiscard]] const ControlSignalState& get_control_signal_state() const { return control_signal_state_; }
+    [[nodiscard]] const ControlSignalState &get_control_signal_state() const {
+        return control_signal_state_;
+    }
 
     // ========== 发送通知 API ==========
 
@@ -190,12 +189,16 @@ public:
     /**
      * @brief 关联数据接口处理器
      */
-    void set_data_handler(CdcAcmDataInterfaceHandler *handler) { data_handler_ = handler; }
+    void set_data_handler(CdcAcmDataInterfaceHandler *handler) {
+        data_handler_ = handler;
+    }
 
     /**
      * @brief 获取关联的数据接口处理器
      */
-    CdcAcmDataInterfaceHandler* get_data_handler() const { return data_handler_; }
+    CdcAcmDataInterfaceHandler *get_data_handler() const {
+        return data_handler_;
+    }
 
     // ========== 内部实现（子类无需关心） ==========
 
@@ -234,15 +237,15 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
-    void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                              std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              TransferHandle transfer, std::error_code &ec) override;
+    void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                              std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                              std::error_code &ec) override;
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                                       std::uint32_t transfer_flags,
-                                                       std::uint32_t transfer_buffer_length,
-                                                       const SetupPacket &setup_packet,
-                                                       TransferHandle transfer, std::error_code &ec) override;
+                                                      std::uint32_t transfer_flags,
+                                                      std::uint32_t transfer_buffer_length,
+                                                      const SetupPacket &setup_packet, TransferHandle transfer,
+                                                      std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -300,8 +303,7 @@ public:
      * @param timeout_ms 超时时间（毫秒），0 表示无限等待
      * @return 实际写入缓冲区的字节数，超时时可能小于请求值
      */
-    std::size_t send_data_blocking(const std::uint8_t *data, std::size_t size,
-                                   std::uint32_t timeout_ms = 0);
+    std::size_t send_data_blocking(const std::uint8_t *data, std::size_t size, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(const data_type &data, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(data_type &&data, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(std::string_view data, std::uint32_t timeout_ms = 0);
@@ -403,5 +405,4 @@ protected:
      */
     void try_send_pending_locked();
 };
-
-}
+} // namespace usbipdcpp

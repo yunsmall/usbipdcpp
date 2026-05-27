@@ -5,7 +5,8 @@ AccessModifierOffset: -4
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignOperands: true
-AlignTrailingComments: true
+AlignTrailingComments: false
+AllowShortFunctionsOnASingleLine: None
 AlwaysBreakTemplateDeclarations: Yes
 BraceWrapping: 
   AfterCaseLabel: false

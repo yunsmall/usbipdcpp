@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <mutex>
+#include <string>
 
 #include "Export.h"
 #include "virtual_device/storage_backends/StorageBackend.h"
@@ -26,18 +26,17 @@ public:
      * @param initial_blocks 新建文件时的块数，打开已有文件时忽略
      * @param block_size     每块字节数（默认 512）
      */
-    explicit RawImageBackend(std::string path, std::uint64_t initial_blocks = 2048,
-                             std::uint32_t block_size = 512);
+    explicit RawImageBackend(std::string path, std::uint64_t initial_blocks = 2048, std::uint32_t block_size = 512);
     ~RawImageBackend() override;
 
     void read(std::uint64_t lba, std::uint16_t count, void *buffer) override;
     bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) override;
     void punch_hole(std::uint64_t lba, std::uint64_t count) override;
-    void* get_direct_buffer(std::uint64_t lba) override;
-    bool send_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                     intptr_t sock_fd, std::error_code& ec) override;
-    bool recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                     intptr_t sock_fd, std::error_code& ec) override;
+    void *get_direct_buffer(std::uint64_t lba) override;
+    bool send_direct(std::uint64_t lba, std::size_t offset, std::size_t length, intptr_t sock_fd,
+                     std::error_code &ec) override;
+    bool recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length, intptr_t sock_fd,
+                     std::error_code &ec) override;
 
     std::uint64_t block_count() const override {
         return block_count_;
@@ -56,20 +55,20 @@ public:
     }
 
 private:
-    std::string path_;               // 文件路径
-    std::uint64_t block_count_;      // 总块数
+    std::string path_; // 文件路径
+    std::uint64_t block_count_; // 总块数
     std::uint32_t block_size_ = 512; // 每块字节数
-    void *mapped_data_ = nullptr;    // 映射后的内存首地址
-    std::size_t mapped_size_ = 0;    // 映射的总字节数
-    mutable std::mutex mutex_;       // 保护并发读写
+    void *mapped_data_ = nullptr; // 映射后的内存首地址
+    std::size_t mapped_size_ = 0; // 映射的总字节数
+    mutable std::mutex mutex_; // 保护并发读写
 
 #ifdef _WIN32
-    void *file_handle_ = nullptr;    // CreateFile 返回的 HANDLE
+    void *file_handle_ = nullptr; // CreateFile 返回的 HANDLE
     void *mapping_handle_ = nullptr; // CreateFileMapping 返回的 HANDLE
 #else
-    int fd_ = -1;                    // open 返回的文件描述符
-    int splice_pipe_[2] = {-1, -1};  // splice 用管道
-    int fs_block_size_ = 4096;       // 文件系统块大小，punch_hole 对齐用
+    int fd_ = -1; // open 返回的文件描述符
+    int splice_pipe_[2] = {-1, -1}; // splice 用管道
+    int fs_block_size_ = 4096; // 文件系统块大小，punch_hole 对齐用
 #endif
 };
 

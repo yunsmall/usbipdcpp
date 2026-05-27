@@ -5,8 +5,8 @@
 #include <optional>
 #include <unordered_map>
 
-#include "InterfaceHandler/InterfaceHandler.h"
 #include "DeviceHandler/TransferOperator.h"
+#include "InterfaceHandler/InterfaceHandler.h"
 #include "protocol.h"
 
 namespace usbipdcpp {
@@ -55,7 +55,7 @@ public:
      * @note 调用者需已持有互斥锁
      */
     std::optional<std::pair<std::uint8_t, Request>> dequeue_any() {
-        for (auto& [ep, queue] : queues_) {
+        for (auto &[ep, queue]: queues_) {
             if (!queue.empty()) {
                 auto req = std::move(queue.front());
                 queue.pop_front();
@@ -69,7 +69,7 @@ public:
      * @brief 获取指定端点队列的首个请求（不出队）
      * @note 调用者需已持有互斥锁
      */
-    Request* peek(std::uint8_t ep_address) {
+    Request *peek(std::uint8_t ep_address) {
         auto it = queues_.find(ep_address);
         if (it == queues_.end() || it->second.empty()) {
             return nullptr;
@@ -92,9 +92,9 @@ public:
      * @note 调用者需已持有互斥锁
      */
     bool cancel_by_seqnum(std::uint32_t unlink_seqnum) {
-        for (auto& [ep, queue] : queues_) {
+        for (auto &[ep, queue]: queues_) {
             auto it = std::find_if(queue.begin(), queue.end(),
-                [unlink_seqnum](const Request& r) { return r.seqnum == unlink_seqnum; });
+                                   [unlink_seqnum](const Request &r) { return r.seqnum == unlink_seqnum; });
             if (it != queue.end()) {
                 queue.erase(it);
                 return true;
@@ -118,7 +118,7 @@ private:
 class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
     explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
-                                      std::unique_ptr<TransferOperator> op = nullptr) :
+                                     std::unique_ptr<TransferOperator> op = nullptr) :
         AbstInterfaceHandler(handle_interface), string_pool(string_pool),
         transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
 
@@ -131,12 +131,13 @@ public:
      * @brief 设置所属的 DeviceHandler
      * @param handler DeviceHandler 指针
      */
-    void set_device_handler(VirtualDeviceHandler* handler) {
+    void set_device_handler(VirtualDeviceHandler *handler) {
         device_handler = handler;
     }
 
     /** setup_interface_handlers 末尾回调，此时 device_handler 已设置，子类可在此做初始化 */
-    virtual void on_setup_interface_handlers() {}
+    virtual void on_setup_interface_handlers() {
+    }
 
     /**
      * @brief 新的客户端连接时会调这个函数
@@ -158,44 +159,37 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
-    virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                              std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                              TransferHandle transfer,
-                              error_code &ec);
-    virtual void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                   TransferHandle transfer,
-                                   error_code &ec);
-    virtual void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                     std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                     TransferHandle transfer,
-                                     int num_iso_packets, error_code &ec);
+    virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                      std::uint32_t transfer_buffer_length, TransferHandle transfer, error_code &ec);
+    virtual void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                           std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                           error_code &ec);
+    virtual void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                             std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                             int num_iso_packets, error_code &ec);
 
-    virtual void handle_non_standard_request_type_control_urb(std::uint32_t seqnum,
-                                                              const UsbEndpoint &ep,
+    virtual void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                               std::uint32_t transfer_flags,
                                                               std::uint32_t transfer_buffer_length,
-                                                              const SetupPacket &setup,
-                                                              TransferHandle transfer, std::error_code &ec);
-    virtual void handle_non_standard_request_type_control_urb_to_endpoint(std::uint32_t seqnum,
-                                                                          const UsbEndpoint &ep,
+                                                              const SetupPacket &setup, TransferHandle transfer,
+                                                              std::error_code &ec);
+    virtual void handle_non_standard_request_type_control_urb_to_endpoint(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                                           std::uint32_t transfer_flags,
                                                                           std::uint32_t transfer_buffer_length,
                                                                           const SetupPacket &setup,
-                                                                          TransferHandle transfer,
-                                                                          std::error_code &ec);
+                                                                          TransferHandle transfer, std::error_code &ec);
 
     // ========== 子类必须实现的虚函数 ==========
 
-    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
     virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                std::uint32_t *p_status) =0;
+                                                std::uint32_t *p_status) = 0;
 
-    virtual std::uint8_t request_get_interface(std::uint32_t *p_status) =0;
-    virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) =0;
+    virtual std::uint8_t request_get_interface(std::uint32_t *p_status) = 0;
+    virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) = 0;
 
-    virtual std::uint16_t request_get_status(std::uint32_t *p_status) =0;
-    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) =0;
+    virtual std::uint16_t request_get_status(std::uint32_t *p_status) = 0;
+    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) = 0;
 
     /**
      * @brief this function is not necessary for all device,
@@ -209,9 +203,9 @@ public:
     virtual data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                              std::uint16_t descriptor_length, std::uint32_t *p_status);
 
-    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
     virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                              std::uint32_t *p_status) =0;
+                                              std::uint32_t *p_status) = 0;
 
     /**
      * @brief Only use for isochronous transfer, so give a default empty implement.
@@ -224,11 +218,13 @@ public:
     }
 
 
-    [[nodiscard]] virtual data_type get_class_specific_descriptor() =0;
+    [[nodiscard]] virtual data_type get_class_specific_descriptor() = 0;
 
     // ========== TransferOperator ==========
 
-    TransferOperator* get_transfer_operator() { return transfer_op_.get(); }
+    TransferOperator *get_transfer_operator() {
+        return transfer_op_.get();
+    }
 
     void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
         transfer_op_ = std::move(op);
@@ -250,7 +246,7 @@ public:
 
 protected:
     Session *session = nullptr;
-    VirtualDeviceHandler* device_handler = nullptr;
+    VirtualDeviceHandler *device_handler = nullptr;
     std::unique_ptr<TransferOperator> transfer_op_;
 
     std::uint8_t string_interface;
@@ -271,4 +267,4 @@ protected:
     EndpointRequestQueue endpoint_requests_;
 };
 
-}
+} // namespace usbipdcpp

@@ -92,6 +92,16 @@ struct StorageIoTransfer {
      */
     std::vector<std::uint8_t> fallback_data;
 
+    /** 重置所有字段以供对象池复用 */
+    void reset() {
+        external_buf = nullptr;
+        actual_length = 0;
+        file_lba = 0;
+        file_offset = 0;
+        direct_io = false;
+        fallback_data.clear();
+    }
+
     static StorageIoTransfer *from_handle(void *handle) {
         return static_cast<StorageIoTransfer *>(handle);
     }

@@ -1,18 +1,17 @@
 #pragma once
 
-#include <thread>
-#include <mutex>
-#include <condition_variable>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <functional>
-#include <utility>
+#include <mutex>
 #include <random>
+#include <thread>
+#include <utility>
 
 #include "virtual_device/HidVirtualInterfaceHandler.h"
 
 namespace usbipdcpp {
-
 /**
  * @brief 绝对坐标鼠标虚拟设备处理器
  *
@@ -33,8 +32,8 @@ public:
      * @param screen_width 屏幕宽度（像素，默认1920）
      * @param screen_height 屏幕高度（像素，默认1080）
      */
-    AbsoluteMouseHandler(UsbInterface &handle_interface, StringPool &string_pool,
-                         int screen_width = 1920, int screen_height = 1080);
+    AbsoluteMouseHandler(UsbInterface &handle_interface, StringPool &string_pool, int screen_width = 1920,
+                         int screen_height = 1080);
 
     ~AbsoluteMouseHandler() override = default;
 
@@ -124,8 +123,8 @@ public:
      * @param duration_ms 移动总时间（毫秒）
      * @param callback 可选的每帧回调（当前HID坐标）
      */
-    void move_raw(std::int16_t from_x, std::int16_t from_y, std::int16_t to_x, std::int16_t to_y,
-                  int duration_ms, std::function<void(std::int16_t, std::int16_t)> callback = nullptr);
+    void move_raw(std::int16_t from_x, std::int16_t from_y, std::int16_t to_x, std::int16_t to_y, int duration_ms,
+                  std::function<void(std::int16_t, std::int16_t)> callback = nullptr);
 
     // ========== 按钮 API ==========
 
@@ -245,12 +244,12 @@ public:
     bool wait_for_client(int timeout_ms = -1);
 
 private:
-    int screen_x1_ = 0;      ///< 屏幕左上角X坐标
-    int screen_y1_ = 0;      ///< 屏幕左上角Y坐标
-    int screen_x2_ = 1920;   ///< 屏幕右下角X坐标
-    int screen_y2_ = 1080;   ///< 屏幕右下角Y坐标
-    int screen_width_;       ///< 屏幕宽度 (x2 - x1)
-    int screen_height_;      ///< 屏幕高度 (y2 - y1)
+    int screen_x1_ = 0; ///< 屏幕左上角X坐标
+    int screen_y1_ = 0; ///< 屏幕左上角Y坐标
+    int screen_x2_ = 1920; ///< 屏幕右下角X坐标
+    int screen_y2_ = 1080; ///< 屏幕右下角Y坐标
+    int screen_width_; ///< 屏幕宽度 (x2 - x1)
+    int screen_height_; ///< 屏幕高度 (y2 - y1)
 
     std::int16_t hid_x_ = 0; ///< 当前 HID X坐标
     std::int16_t hid_y_ = 0; ///< 当前 HID Y坐标
@@ -273,5 +272,4 @@ private:
     void send_current_state();
     void notify_state_change();
 };
-
 } // namespace usbipdcpp

@@ -3,7 +3,6 @@
 #include <cstdint>
 
 namespace usbipdcpp {
-
 // CDC ACM 类特定描述符子类型
 enum class CdcAcmDescriptorSubtype {
     Header = 0x00,
@@ -40,20 +39,19 @@ enum class CdcAcmRequest {
 
 // CDC ACM 控制信号位
 enum class CdcAcmControlSignal : std::uint16_t {
-    DTR = 0x01,  // Data Terminal Ready
-    RTS = 0x02,  // Request To Send
+    DTR = 0x01, // Data Terminal Ready
+    RTS = 0x02, // Request To Send
 };
 
 // CDC ACM 串口状态位
 enum class CdcAcmSerialState : std::uint16_t {
-    DCD = 0x01,          // Data Carrier Detect
-    DSR = 0x02,          // Data Set Ready
-    Break = 0x04,        // Break signal
-    Ring = 0x08,         // Ring signal
+    DCD = 0x01, // Data Carrier Detect
+    DSR = 0x02, // Data Set Ready
+    Break = 0x04, // Break signal
+    Ring = 0x08, // Ring signal
     FramingError = 0x10, // Framing error
-    ParityError = 0x20,  // Parity error
+    ParityError = 0x20, // Parity error
     OverrunError = 0x40, // Overrun error
-    CTS = 0x80,          // Clear To Send
+    CTS = 0x80, // Clear To Send
 };
-
 }

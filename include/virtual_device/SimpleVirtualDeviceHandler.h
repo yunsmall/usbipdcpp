@@ -13,8 +13,8 @@ protected:
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
-                                                      const SetupPacket &setup_packet,
-                                                      TransferHandle transfer, std::error_code &ec) override;
+                                                      const SetupPacket &setup_packet, TransferHandle transfer,
+                                                      std::error_code &ec) override;
 
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
 
@@ -35,4 +35,4 @@ protected:
 
     void set_descriptor(std::uint16_t configuration_value) override;
 };
-}
+} // namespace usbipdcpp

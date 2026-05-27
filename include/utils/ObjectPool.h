@@ -53,7 +53,13 @@ public:
 
     /**
      * @brief 分配对象
-     * @return 对象指针，池空时返回 nullptr
+     * @return 对象指针，池空时返回 nullptr，调用者应回退 new
+     *
+     * 典型用法：
+     * @code
+     * auto* p = pool.alloc();
+     * if (!p) p = new T{};
+     * @endcode
      */
     T *alloc() {
         if constexpr (ThreadSafe) {
@@ -68,7 +74,13 @@ public:
     /**
      * @brief 归还对象
      * @param obj 对象指针
-     * @return true 成功归还，false 指针不属于本池或重复 free
+     * @return true 成功归还，false 指针不属于本池（如 alloc 回退的 new），调用者应回退 delete
+     *
+     * 典型用法：
+     * @code
+     * p->reset();
+     * if (!pool.free(p)) delete p;
+     * @endcode
      */
     bool free(T *obj) {
         if (!obj) {

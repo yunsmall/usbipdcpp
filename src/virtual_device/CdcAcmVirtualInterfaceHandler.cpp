@@ -6,7 +6,6 @@
 #include <algorithm>
 
 namespace usbipdcpp {
-
 // ==================== CdcAcmCommunicationInterfaceHandler ====================
 
 CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(
@@ -20,7 +19,6 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
         std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet,
         TransferHandle transfer, std::error_code &ec) {
-
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     std::uint32_t status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
 
@@ -29,7 +27,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
 
         if (!setup_packet.is_out()) {
             // IN 请求
-            auto* trx = GenericTransfer::from_handle(transfer.get());
+            auto *trx = GenericTransfer::from_handle(transfer.get());
             switch (request) {
                 case CdcAcmRequest::GetLineCoding: {
                     auto bytes = line_coding_.to_bytes();
@@ -52,8 +50,8 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
         }
         else {
             // OUT 请求
-            auto* trx = GenericTransfer::from_handle(transfer.get());
-            auto& out_data = trx->data;
+            auto *trx = GenericTransfer::from_handle(transfer.get());
+            auto &out_data = trx->data;
             switch (request) {
                 case CdcAcmRequest::SetLineCoding: {
                     auto new_coding = LineCoding::from_bytes(out_data);
@@ -104,7 +102,6 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
         std::uint32_t seqnum, const UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         TransferHandle transfer, std::error_code &ec) {
-
     if (ep.is_in()) {
         // 同时锁两个 mutex，避免竞态条件
         std::lock(notification_mutex_, endpoint_requests_mutex_);
@@ -113,7 +110,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(
 
         if (!pending_notification_.empty() && endpoint_requests_.empty(ep.address)) {
             // 有待发送的通知且没有队列中的请求，立即响应
-            auto* trx = GenericTransfer::from_handle(transfer.get());
+            auto *trx = GenericTransfer::from_handle(transfer.get());
             trx->data = std::move(pending_notification_);
             trx->actual_length = trx->data.size();
             pending_notification_.clear();
@@ -256,9 +253,9 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     // 如果队列中有中断请求，响应第一个
     auto req_opt = endpoint_requests_.dequeue_any();
     if (req_opt.has_value()) {
-        auto& [ep_addr, req] = req_opt.value();
+        auto &[ep_addr, req] = req_opt.value();
 
-        auto* trx = GenericTransfer::from_handle(req.transfer.get());
+        auto *trx = GenericTransfer::from_handle(req.transfer.get());
         trx->data = std::move(pending_notification_);
         trx->actual_length = trx->data.size();
         pending_notification_.clear();
@@ -281,7 +278,8 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
-void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum,
+                                                               std::uint32_t cmd_seqnum) {
     std::lock_guard lock(endpoint_requests_mutex_);
     endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
     // 不管找没找到都返回成功
@@ -329,7 +327,6 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
         std::uint32_t seqnum, const UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         TransferHandle transfer, std::error_code &ec) {
-
     if (ep.is_in()) {
         // Bulk IN：主机请求数据
         // 同时锁 tx_mutex_ 和 endpoint_requests_mutex_，避免竞态条件
@@ -342,7 +339,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
             auto data = on_data_requested(transfer_buffer_length);
             if (!data.empty()) {
                 if (data.size() <= transfer_buffer_length) {
-                    auto* trx = GenericTransfer::from_handle(transfer.get());
+                    auto *trx = GenericTransfer::from_handle(transfer.get());
                     trx->data = std::move(data);
                     trx->actual_length = trx->data.size();
                     session->submit_ret_submit(
@@ -351,7 +348,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
                 }
                 else {
                     // 数据大于请求长度，移动整个data，发送部分，剩余写入缓冲区
-                    auto* trx = GenericTransfer::from_handle(transfer.get());
+                    auto *trx = GenericTransfer::from_handle(transfer.get());
                     trx->data = std::move(data);
                     trx->actual_length = transfer_buffer_length;
 
@@ -381,7 +378,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(
     }
     else {
         // Bulk OUT：接收主机发来的数据，直接回调子类处理
-        auto* trx = GenericTransfer::from_handle(transfer.get());
+        auto *trx = GenericTransfer::from_handle(transfer.get());
         auto received_size = static_cast<std::uint32_t>(trx->data.size());
         on_data_received(std::move(trx->data));
 
@@ -397,7 +394,6 @@ void CdcAcmDataInterfaceHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet,
         TransferHandle transfer, std::error_code &ec) {
-
     // 数据接口通常不处理类特定控制请求
     SPDLOG_WARN("CDC ACM data interface received unexpected control request");
     // transfer 析构时自动释放
@@ -425,11 +421,12 @@ void CdcAcmDataInterfaceHandler::on_rts_changed(bool rts) {
 
 // ===== 内部函数 =====
 
-void CdcAcmDataInterfaceHandler::send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length, TransferHandle transfer) {
+void CdcAcmDataInterfaceHandler::send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length,
+                                                            TransferHandle transfer) {
     // 调用者必须已持有 tx_mutex_ 且确保 tx_buffer_ 不为空
     // 从 TX 缓冲区读取数据发送
     std::size_t send_len = std::min(tx_buffer_.size(), static_cast<std::size_t>(max_length));
-    auto* trx = GenericTransfer::from_handle(transfer.get());
+    auto *trx = GenericTransfer::from_handle(transfer.get());
     trx->data.resize(send_len);
     tx_buffer_.read(trx->data.data(), send_len);
     trx->actual_length = send_len;
@@ -610,7 +607,7 @@ void CdcAcmDataInterfaceHandler::try_send_pending_locked() {
             break;
         }
 
-        auto& [ep_addr, req] = req_opt.value();
+        auto &[ep_addr, req] = req_opt.value();
         // 从缓冲区读取并发送
         send_from_tx_buffer_locked(req.seqnum, req.length, std::move(req.transfer));
     }
@@ -657,5 +654,4 @@ void CdcAcmDataInterfaceHandler::request_endpoint_set_feature(
         std::uint16_t feature_selector, std::uint8_t ep_address, std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
-
 }

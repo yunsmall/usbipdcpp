@@ -1,7 +1,7 @@
 #pragma once
 
-#include "utils/StringPool.h"
 #include "DeviceHandler/DeviceHandler.h"
+#include "utils/StringPool.h"
 #include "virtual_device/VirtualDeviceTransferOperator.h"
 
 namespace usbipdcpp {
@@ -10,8 +10,8 @@ class USBIPDCPP_API VirtualDeviceHandler : public AbstDeviceHandler {
 public:
     explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                   const Version &usb_version = {2, 0, 0}) :
-        AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()),
-        string_pool(string_pool), usb_version(usb_version) {
+        AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()), string_pool(string_pool),
+        usb_version(usb_version) {
         change_device_ep0_max_size_by_speed();
 
         string_configuration_value = string_pool.new_string(L"Default Configuration");
@@ -20,9 +20,7 @@ public:
         string_serial_value = string_pool.new_string(L"Usbipdcpp Serial");
     }
 
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
-                     UsbEndpoint ep,
-                     std::optional<UsbInterface> interface,
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
                      usbipdcpp::error_code &ec) override;
     /**
      * @brief 新的客户端连接时会调这个函数
@@ -47,51 +45,42 @@ protected:
     void change_device_ep0_max_size_by_speed();
 
     // 由 receive_urb 调用，分发给具体的 handle_xxx_transfer
-    void dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
-                      const UsbEndpoint &ep, std::optional<UsbInterface> &interface, std::uint32_t transfer_flags,
-                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                      usbipdcpp::error_code &ec);
+    void dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum, const UsbEndpoint &ep,
+                      std::optional<UsbInterface> &interface, std::uint32_t transfer_flags,
+                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet, usbipdcpp::error_code &ec);
 
-    void handle_control_urb(
-            std::uint32_t seqnum, const UsbEndpoint &ep,
-            std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-            const SetupPacket &setup_packet, TransferHandle transfer,
-            std::error_code &ec);
-    void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                              UsbInterface &interface, std::uint32_t transfer_flags,
-                              std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                              std::error_code &ec);
-    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   UsbInterface &interface, std::uint32_t transfer_flags,
-                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                   std::error_code &ec);
+    void handle_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                            std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+                            TransferHandle transfer, std::error_code &ec);
+    void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, UsbInterface &interface,
+                              std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                              TransferHandle transfer, std::error_code &ec);
+    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, UsbInterface &interface,
+                                   std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                                   TransferHandle transfer, std::error_code &ec);
 
-    void handle_isochronous_transfer(std::uint32_t seqnum,
-                                     const UsbEndpoint &ep, UsbInterface &interface,
-                                     std::uint32_t transfer_flags,
-                                     std::uint32_t transfer_buffer_length, TransferHandle transfer,
-                                     int num_iso_packets, std::error_code &ec);
+    void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, UsbInterface &interface,
+                                     std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                                     TransferHandle transfer, int num_iso_packets, std::error_code &ec);
 
-    virtual void handle_non_standard_request_type_control_urb(
-            std::uint32_t seqnum, const UsbEndpoint &ep,
-            std::uint32_t transfer_flags,
-            std::uint32_t transfer_buffer_length,
-            const SetupPacket &setup_packet,
-            TransferHandle transfer,
-            std::error_code &ec) =0;
+    virtual void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                              std::uint32_t transfer_flags,
+                                                              std::uint32_t transfer_buffer_length,
+                                                              const SetupPacket &setup_packet, TransferHandle transfer,
+                                                              std::error_code &ec) = 0;
 
-    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
 
     virtual std::uint8_t request_get_configuration(std::uint32_t *p_status);
 
-    virtual std::uint16_t request_get_status(std::uint32_t *p_status) =0;
-    virtual void request_set_address(std::uint16_t address, std::uint32_t *status) =0;
-    virtual void request_set_configuration(std::uint16_t configuration_value, std::uint32_t *p_status) =0;
-    virtual void request_set_descriptor(std::uint8_t desc_type, std::uint8_t desc_index,
-                                        std::uint16_t language_id, std::uint16_t descriptor_length,
-                                        const data_type &descriptor, std::uint32_t *p_status) =0;
+    virtual std::uint16_t request_get_status(std::uint32_t *p_status) = 0;
+    virtual void request_set_address(std::uint16_t address, std::uint32_t *status) = 0;
+    virtual void request_set_configuration(std::uint16_t configuration_value, std::uint32_t *p_status) = 0;
+    virtual void request_set_descriptor(std::uint8_t desc_type, std::uint8_t desc_index, std::uint16_t language_id,
+                                        std::uint16_t descriptor_length, const data_type &descriptor,
+                                        std::uint32_t *p_status) = 0;
 
-    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) =0;
+    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
 
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
                                      std::uint32_t *p_status);
@@ -110,7 +99,7 @@ protected:
     virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
                                                       std::uint32_t *p_status);
     virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
-                                                 std::uint32_t *p_status) =0;
+                                                 std::uint32_t *p_status) = 0;
 
     /**
      * @brief If host wants a descriptor which is not in enum DescriptorType, then this function will be called
@@ -123,7 +112,7 @@ protected:
     virtual data_type get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
                                             std::uint16_t descriptor_length, std::uint32_t *p_status);
 
-    virtual void set_descriptor(std::uint16_t configuration_value) =0;
+    virtual void set_descriptor(std::uint16_t configuration_value) = 0;
 
 public:
     void change_string_configuration(const std::wstring &new_str) {
@@ -145,9 +134,11 @@ public:
     std::wstring get_string_manufacturer() const {
         return string_pool.get_string(string_manufacturer_value).value_or(L"");
     }
+
     std::wstring get_string_product() const {
         return string_pool.get_string(string_product_value).value_or(L"");
     }
+
     std::wstring get_string_serial() const {
         return string_pool.get_string(string_serial_value).value_or(L"");
     }
@@ -163,4 +154,4 @@ protected:
     Version usb_version;
     std::shared_mutex data_mutex;
 };
-}
+} // namespace usbipdcpp

@@ -21,7 +21,7 @@ public:
      * @param ep 端点地址（如 0x02 表示 OUT, 0x81 表示 IN）
      * @param op 接口级 TransferOperator（如 StorageTransferOperator）
      */
-    void register_endpoint_operator(std::uint8_t ep, TransferOperator* op) {
+    void register_endpoint_operator(std::uint8_t ep, TransferOperator *op) {
         ep_operators_[ep] = op;
     }
 
@@ -31,33 +31,32 @@ public:
      * from_socket 通过此方法获取 leaf op 后直接在其上操作，
      * 不再需要 handle→operator 映射。
      */
-    TransferOperator* get_operator_for_ep(std::uint8_t ep) override;
+    TransferOperator *get_operator_for_ep(std::uint8_t ep) override;
 
     // ========== TransferOperator 接口 ==========
 
-    void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
-                                 const UsbIpHeaderBasic& header,
-                                 const SetupPacket& setup_packet) override;
-    void free_transfer_handle(void* handle) override;
+    void *alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic &header,
+                                const SetupPacket &setup_packet) override;
+    void free_transfer_handle(void *handle) override;
 
-    void* get_transfer_buffer(void* handle) override;
-    std::size_t get_actual_length(void* handle) override;
-    std::size_t get_read_data_offset(void* handle) override;
-    std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) override;
+    void *get_transfer_buffer(void *handle) override;
+    std::size_t get_actual_length(void *handle) override;
+    std::size_t get_read_data_offset(void *handle) override;
+    std::size_t get_write_data_offset(const UsbIpHeaderBasic &header) override;
 
-    UsbIpIsoPacketDescriptor get_iso_descriptor(void* handle, int index) override;
-    void set_iso_descriptor(void* handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
+    UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) override;
+    void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override;
 
-    void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                            std::size_t length, std::error_code& ec) override;
-    void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                            std::size_t length, std::error_code& ec) override;
+    void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                            std::error_code &ec) override;
+    void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                            std::error_code &ec) override;
 
-    bool is_custom_io(void* handle) const override;
+    bool is_custom_io(void *handle) const override;
 
 private:
     GenericTransferOperator generic_op_;
-    std::unordered_map<std::uint8_t, TransferOperator*> ep_operators_;
+    std::unordered_map<std::uint8_t, TransferOperator *> ep_operators_;
 };
 
 } // namespace usbipdcpp

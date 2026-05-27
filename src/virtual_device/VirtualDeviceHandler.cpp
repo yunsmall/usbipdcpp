@@ -27,7 +27,8 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
     // 控制传输较少，Bulk/Interrupt 更常见
     if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control))[[unlikely]] {
         SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()), setup_packet.to_string());
-        handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer), ec);
+        handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer),
+                           ec);
     }
     else if (interface.has_value())[[likely]] {
         auto &intf = interface.value();
@@ -38,12 +39,14 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
         }
         else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
             SPDLOG_DEBUG("处理中断传输");
-            handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
+            handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer),
+                                      ec);
         }
         else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
             SPDLOG_DEBUG("处理等时传输");
             int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
-                          ? static_cast<int>(cmd.number_of_packets) : 0;
+                              ? static_cast<int>(cmd.number_of_packets)
+                              : 0;
             handle_isochronous_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length,
                                         std::move(cmd.transfer), num_iso, ec);
         }
@@ -60,15 +63,15 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
 
 void VirtualDeviceHandler::setup_interface_handlers() {
     // 将各接口的 TransferOperator 注册到设备级路由表，按端点分发
-    auto* device_op = static_cast<VirtualDeviceTransferOperator*>(get_transfer_operator());
+    auto *device_op = static_cast<VirtualDeviceTransferOperator *>(get_transfer_operator());
 
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
-            auto* virtual_handler = intf.handler.get();
+            auto *virtual_handler = intf.handler.get();
             if (virtual_handler) {
                 virtual_handler->set_device_handler(this);
                 // 把接口级 TransferOperator 注册到该接口所有端点
-                auto* if_op = virtual_handler->get_transfer_operator();
+                auto *if_op = virtual_handler->get_transfer_operator();
                 for (auto &ep: intf.endpoints) {
                     device_op->register_endpoint_operator(ep.address, if_op);
                 }
@@ -142,7 +145,7 @@ void VirtualDeviceHandler::handle_control_urb(
         TransferHandle transfer,
         std::error_code &ec) {
     // 获取 GenericTransfer 指针
-    auto* trx = GenericTransfer::from_handle(transfer.get());
+    auto *trx = GenericTransfer::from_handle(transfer.get());
 
     auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
     //标准的请求全在这里处理了

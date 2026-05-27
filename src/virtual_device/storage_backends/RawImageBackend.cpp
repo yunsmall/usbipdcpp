@@ -190,11 +190,12 @@ void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
 }
 
 bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                                 intptr_t sock_fd, std::error_code& ec) {
+                                  intptr_t sock_fd, std::error_code &ec) {
 #ifdef _WIN32
     return false; // Windows 无 splice，回退 asio::read
 #else
-    if (splice_pipe_[0] < 0) return false;
+    if (splice_pipe_[0] < 0)
+        return false;
     auto file_offset = static_cast<off64_t>(lba) * block_size_ + offset;
     size_t remaining = length;
     while (remaining > 0) {
@@ -202,7 +203,8 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
         ssize_t n = splice(static_cast<int>(sock_fd), nullptr,
                            splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
         if (n <= 0) {
-            if (n == 0) break;
+            if (n == 0)
+                break;
             ec.assign(errno, std::generic_category());
             return false;
         }
@@ -219,13 +221,14 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
 #endif
 }
 
-void* RawImageBackend::get_direct_buffer(std::uint64_t lba) {
-    if (!mapped_data_) return nullptr;
-    return static_cast<char*>(mapped_data_) + static_cast<std::size_t>(lba) * block_size_;
+void *RawImageBackend::get_direct_buffer(std::uint64_t lba) {
+    if (!mapped_data_)
+        return nullptr;
+    return static_cast<char *>(mapped_data_) + static_cast<std::size_t>(lba) * block_size_;
 }
 
 bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                                  intptr_t sock_fd, std::error_code& ec) {
+                                  intptr_t sock_fd, std::error_code &ec) {
     auto file_offset = static_cast<std::size_t>(lba) * block_size_ + offset;
 #ifdef _WIN32
     auto hFile = static_cast<HANDLE>(file_handle_);
@@ -247,13 +250,15 @@ bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::si
     return true;
 #else
     // splice: file → pipe → sock（与 recv 共用 splice_pipe_）
-    if (splice_pipe_[0] < 0) return false;
+    if (splice_pipe_[0] < 0)
+        return false;
     off64_t off = static_cast<off64_t>(file_offset);
     size_t remaining = length;
     while (remaining > 0) {
         ssize_t n = splice(fd_, &off, splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
         if (n <= 0) {
-            if (n == 0) break;
+            if (n == 0)
+                break;
             ec.assign(errno, std::generic_category());
             return false;
         }

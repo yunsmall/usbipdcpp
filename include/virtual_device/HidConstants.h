@@ -3,7 +3,6 @@
 #include <cstdint>
 
 namespace usbipdcpp {
-
 enum class HIDRequest {
     GetReport = 0x01,
     GetIdle = 0x02,
@@ -29,5 +28,4 @@ enum HidDescriptorType {
     Report = 0x22,
     Physical = 0x23,
 };
-
 }

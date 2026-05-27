@@ -6,11 +6,11 @@
 
 #include <asio.hpp>
 
-#include "protocol.h"
-#include "virtual_device/VirtualInterfaceHandler.h"
+#include "HidConstants.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "HidConstants.h"
+#include "protocol.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 
 
 namespace usbipdcpp {
@@ -30,8 +30,8 @@ public:
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
-                                                      const SetupPacket &setup_packet,
-                                                      TransferHandle transfer, std::error_code &ec) override;
+                                                      const SetupPacket &setup_packet, TransferHandle transfer,
+                                                      std::error_code &ec) override;
 
     /**
      * @brief 处理中断传输（默认实现）
@@ -39,20 +39,18 @@ public:
      * 中断 IN：主机请求输入报告，调用 on_input_report_requested() 获取数据
      * 中断 OUT：主机发送输出报告，调用 on_output_report_received()
      */
-    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                   std::uint32_t transfer_flags,
-                                   std::uint32_t transfer_buffer_length,
-                                   TransferHandle transfer, std::error_code &ec) override;
+    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                   std::error_code &ec) override;
 
-    virtual void handle_non_hid_request_type_control_urb(std::uint32_t seqnum,
-                                                         const UsbEndpoint &ep,
+    virtual void handle_non_hid_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                          std::uint32_t transfer_flags,
                                                          std::uint32_t transfer_buffer_length,
-                                                         const SetupPacket &setup_packet,
-                                                         TransferHandle transfer, std::error_code &ec);
+                                                         const SetupPacket &setup_packet, TransferHandle transfer,
+                                                         std::error_code &ec);
 
-    data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                     std::uint16_t descriptor_length, std::uint32_t *p_status) override;
+    data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
+                                     std::uint32_t *p_status) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
@@ -62,13 +60,13 @@ public:
      * @brief 获取 HID 报告描述符
      * @return 报告描述符数据
      */
-    virtual data_type get_report_descriptor() =0;
+    virtual data_type get_report_descriptor() = 0;
 
     /**
      * @brief 获取 HID 报告描述符大小
      * @return 描述符长度（字节）
      */
-    virtual std::uint16_t get_report_descriptor_size() =0;
+    virtual std::uint16_t get_report_descriptor_size() = 0;
 
     // ========== 发送数据 API ==========
 
@@ -129,8 +127,7 @@ public:
     virtual data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                          std::uint32_t *p_status);
     virtual void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                    const data_type &data,
-                                    std::uint32_t *p_status);
+                                    const data_type &data, std::uint32_t *p_status);
 
     virtual data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                        std::uint32_t *p_status);
@@ -192,4 +189,4 @@ protected:
      */
     std::deque<data_type> pending_input_reports_;
 };
-}
+} // namespace usbipdcpp

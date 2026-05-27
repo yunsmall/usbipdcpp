@@ -47,6 +47,6 @@ namespace ScsiCmd {
     inline constexpr std::uint8_t Read10 = 0x28;
     inline constexpr std::uint8_t Write10 = 0x2A;
     inline constexpr std::uint8_t Verify10 = 0x2F;
-}
+} // namespace ScsiCmd
 
 } // namespace usbipdcpp
