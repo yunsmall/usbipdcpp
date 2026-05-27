@@ -1,19 +1,21 @@
-#include "virtual_device/storage_backends/RawImageBackend.h"
-
-#include <cstring>
-#include <filesystem>
-#include <spdlog/spdlog.h>
-
+// clang-format off
 #ifdef _WIN32
-#include <mswsock.h>
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
+#include <mswsock.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+// clang-format on
+
+#include "virtual_device/storage_backends/RawImageBackend.h"
+
+#include <cstring>
+#include <filesystem>
+#include <spdlog/spdlog.h>
 
 namespace usbipdcpp {
 

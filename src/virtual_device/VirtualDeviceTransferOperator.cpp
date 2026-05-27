@@ -25,22 +25,8 @@ void VirtualDeviceTransferOperator::free_transfer_handle(void *handle) {
     SPDLOG_ERROR("VDTO::free_transfer_handle handle={:p} 不应被调用", static_cast<const void *>(handle));
 }
 
-void *VirtualDeviceTransferOperator::get_transfer_buffer(void *handle) {
-    SPDLOG_WARN("VDTO::get_transfer_buffer 不应被调用，请通过 TransferHandle::get_operator() 直调 leaf op");
-    return generic_op_.get_transfer_buffer(handle);
-}
-
 std::size_t VirtualDeviceTransferOperator::get_actual_length(void *handle) {
     return generic_op_.get_actual_length(handle);
-}
-
-std::size_t VirtualDeviceTransferOperator::get_read_data_offset(void *handle) {
-    return generic_op_.get_read_data_offset(handle);
-}
-
-std::size_t VirtualDeviceTransferOperator::get_write_data_offset(const UsbIpHeaderBasic &header) {
-    auto *leaf_op = get_operator_for_ep(static_cast<std::uint8_t>(header.ep));
-    return leaf_op->get_write_data_offset(header);
 }
 
 UsbIpIsoPacketDescriptor VirtualDeviceTransferOperator::get_iso_descriptor(void *handle, int index) {
@@ -59,8 +45,4 @@ void VirtualDeviceTransferOperator::send_transfer_data(void *handle, asio::ip::t
 void VirtualDeviceTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                                                        std::error_code &ec) {
     generic_op_.recv_transfer_data(handle, sock, length, ec);
-}
-
-bool VirtualDeviceTransferOperator::is_custom_io(void *handle) const {
-    return false;
 }

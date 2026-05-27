@@ -21,25 +21,61 @@ class USBIPDCPP_API TransferOperator {
 public:
     virtual ~TransferOperator() = default;
 
-    virtual void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
-                                         const UsbIpHeaderBasic& header,
-                                         const SetupPacket& setup_packet) = 0;
-    virtual void free_transfer_handle(void* handle) = 0;
+    virtual void *alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic &header,
+                                        const SetupPacket &setup_packet) = 0;
+    virtual void free_transfer_handle(void *handle) = 0;
 
-    virtual void* get_transfer_buffer(void* handle) = 0;
-    virtual std::size_t get_actual_length(void* handle) = 0;
-    virtual std::size_t get_read_data_offset(void* handle) = 0;
-    virtual std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) = 0;
+    virtual std::size_t get_actual_length(void *handle) = 0;
 
-    virtual UsbIpIsoPacketDescriptor get_iso_descriptor(void* handle, int index) = 0;
-    virtual void set_iso_descriptor(void* handle, int index, const UsbIpIsoPacketDescriptor& desc) = 0;
+    virtual UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) = 0;
+    virtual void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) = 0;
 
-    virtual void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t length, std::error_code& ec) = 0;
-    virtual void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                                     std::size_t length, std::error_code& ec) = 0;
+    /**
+     * @brief 发送传输数据（IN 方向：server → client）
+     *
+     * 由 RET_SUBMIT::to_socket() 在写完 USBIP header 后调用。
+     * 调用者保证 handle 是本 operator 的 alloc_transfer_handle 创建的。
+     *
+     * 实现必须严格按以下步骤操作，不得额外读写 sock，防止协议错位：
+     *
+     * 1. 若 length > 0，从私有 transfer 中发送 length 字节数据到 sock。
+     *    IN 传输 length 为 actual_length，OUT 传输恒为 0，跳过此步。
+     *
+     * 2. 发送 N = alloc_transfer_handle 时传入的 num_iso_packets 个
+     *    UsbIpIsoPacketDescriptor。在 for 循环中对每个描述符调用 to_bytes()
+     *    得到网络字节序后写入 sock。
+     *    非等时传输 N 为 0 或 0xFFFFFFFF，跳过此步。
+     *
+     * 所有 iso 数据包在线上紧凑排列，不得在描述符描述的字节区间之间插入空隙。
+     *
+     * 具体实现参考 GenericTransferOperator 和 LibusbTransferOperator。
+     */
+    virtual void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                                    std::error_code &ec) = 0;
 
-    virtual bool is_custom_io(void* handle) const = 0;
+    /**
+     * @brief 接收传输数据（OUT 方向：client → server，含 IN 等时描述符）
+     *
+     * 由 CMD_SUBMIT::from_socket() 在读完 USBIP header 后调用。
+     * 调用者保证 handle 是本 operator 的 alloc_transfer_handle 创建的。
+     *
+     * 实现必须严格按以下步骤操作，不得额外读写 sock，防止协议错位：
+     *
+     * 1. 若 length > 0，从 sock 读出 length 字节数据写入私有 transfer。
+     *    OUT 传输 length 为 transfer_buffer_length，IN 传输恒为 0，跳过此步。
+     *
+     * 2. 继续从 sock 读出 N = alloc_transfer_handle 时传入的 num_iso_packets 个
+     *    UsbIpIsoPacketDescriptor。在 for 循环中使用
+     *    UsbIpIsoPacketDescriptor::from_socket(sock) 读取，
+     *    并通过 set_iso_descriptor 写入私有 transfer 对应的 iso 包描述部分。
+     *    非等时传输 N 为 0 或 0xFFFFFFFF，跳过此步。
+     *
+     * 所有 iso 数据包在线上紧凑排列，不得在描述符描述的字节区间之间插入空隙。
+     *
+     * 具体实现参考 GenericTransferOperator 和 LibusbTransferOperator。
+     */
+    virtual void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                                    std::error_code &ec) = 0;
 
     /**
      * @brief 返回指定端点的 leaf TransferOperator
@@ -48,7 +84,9 @@ public:
      * 按 ep 返回最终的 leaf op，然后 caller 直接在 leaf op 上 alloc / I/O，不再需要 map 查找。
      * 非路由层的 op 直接返回 this。
      */
-    virtual TransferOperator* get_operator_for_ep(std::uint8_t ep) { return this; }
+    virtual TransferOperator *get_operator_for_ep(std::uint8_t ep) {
+        return this;
+    }
 };
 
 /**
@@ -59,25 +97,19 @@ public:
  */
 class USBIPDCPP_API GenericTransferOperator : public TransferOperator {
 public:
-    void* alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
-                                 const UsbIpHeaderBasic& header,
-                                 const SetupPacket& setup_packet) override;
-    void free_transfer_handle(void* handle) override;
+    void *alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic &header,
+                                const SetupPacket &setup_packet) override;
+    void free_transfer_handle(void *handle) override;
 
-    void* get_transfer_buffer(void* handle) override;
-    std::size_t get_actual_length(void* handle) override;
-    std::size_t get_read_data_offset(void* handle) override;
-    std::size_t get_write_data_offset(const UsbIpHeaderBasic& header) override;
+    std::size_t get_actual_length(void *handle) override;
 
-    UsbIpIsoPacketDescriptor get_iso_descriptor(void* handle, int index) override;
-    void set_iso_descriptor(void* handle, int index, const UsbIpIsoPacketDescriptor& desc) override;
+    UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) override;
+    void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override;
 
-    void send_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                            std::size_t length, std::error_code& ec) override;
-    void recv_transfer_data(void* handle, asio::ip::tcp::socket& sock,
-                            std::size_t length, std::error_code& ec) override;
-
-    bool is_custom_io(void* handle) const override { return false; }
+    void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                            std::error_code &ec) override;
+    void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                            std::error_code &ec) override;
 };
 
 } // namespace usbipdcpp

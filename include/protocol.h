@@ -1,17 +1,17 @@
-//具体定义可查看 https://www.kernel.org/doc/html/latest/usb/usbip_protocol.html
+// 具体定义可查看 https://www.kernel.org/doc/html/latest/usb/usbip_protocol.html
 
 #pragma once
 
-#include <cstdint>
-#include <variant>
 #include <array>
-#include <vector>
+#include <cstdint>
 #include <system_error>
+#include <variant>
+#include <vector>
 
 #include <asio.hpp>
 
-#include "network.h"
 #include "Device.h"
+#include "network.h"
 
 // 最大传输缓冲区大小（用于防止恶意大内存分配）
 #ifndef USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE
@@ -22,8 +22,8 @@ namespace usbipdcpp {
 constexpr std::uint16_t USBIP_VERSION = 0x0111;
 
 
-class AbstDeviceHandler;  // 前向声明
-class TransferOperator;    // 前向声明
+class AbstDeviceHandler; // 前向声明
+class TransferOperator; // 前向声明
 
 
 constexpr std::uint16_t OP_REQ_DEVLIST = 0x8005;
@@ -56,19 +56,19 @@ enum class ErrorType {
     TRANSFER_ERROR,
 };
 
-//tools/usbip_common.h
+// tools/usbip_common.h
 enum class OperationStatuType {
-    //Request Completed Successfully
+    // Request Completed Successfully
     OK = 0,
-    //Request Failed
+    // Request Failed
     NA,
-    //Device busy (exported)
+    // Device busy (exported)
     DevBusy,
-    //Device in error state
+    // Device in error state
     DevError,
-    //Device not found
+    // Device not found
     NoDev,
-    //Unexpected response
+    // Unexpected response
     Error
 };
 
@@ -97,7 +97,7 @@ struct USBIPDCPP_API UsbIpHeaderBasic {
     /**
      * 这个字段并不需要从socket里面读，由子命令设置。
      * 根据先读的字段判断应该创建哪个包
-    */
+     */
     std::uint32_t command;
     std::uint32_t seqnum;
     std::uint32_t devid;
@@ -105,9 +105,8 @@ struct USBIPDCPP_API UsbIpHeaderBasic {
     /// USB/IP 线格式端点号（不带方向位，IN 端点的 ep 不含 0x80）
     std::uint32_t ep;
 
-    [[nodiscard]] array_data_type<calculate_total_size_with_array<
-        decltype(command), decltype(seqnum), decltype(devid), decltype(direction), decltype(ep)
-    >()>
+    [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(command), decltype(seqnum), decltype(devid),
+                                                                  decltype(direction), decltype(ep)>()>
     to_bytes() const;
     void from_socket(asio::ip::tcp::socket &sock);
 
@@ -118,35 +117,23 @@ struct USBIPDCPP_API UsbIpHeaderBasic {
     }
 
     static UsbIpHeaderBasic get_server_header(std::uint32_t command, std::uint32_t seqnum) {
-        return UsbIpHeaderBasic{
-                .command = command,
-                .seqnum = seqnum,
-                .devid = 0,
-                .direction = 0,
-                .ep = 0
-        };
+        return UsbIpHeaderBasic{.command = command, .seqnum = seqnum, .devid = 0, .direction = 0, .ep = 0};
     }
-
 };
 
 static_assert(Serializable<UsbIpHeaderBasic>);
 
 
 struct USBIPDCPP_API UsbIpIsoPacketDescriptor {
-    std::uint32_t offset;
-    std::uint32_t length;
-    std::uint32_t actual_length;
-    std::uint32_t status;
+    std::uint32_t offset; ///< 本包数据在整个 transfer buffer 中的起始偏移
+    std::uint32_t length; ///< 本包的字节长度
+    std::uint32_t actual_length; ///< 包内有效数据的字节数（≤ length）
+    std::uint32_t status; ///< 本包的传输状态（URB 状态码）
 
-    [[nodiscard]] array_data_type<calculate_total_size_with_array<
-        decltype(offset), decltype(length), decltype(actual_length), decltype(status)
-    >()> to_bytes() const;
+    [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(offset), decltype(length),
+                                                                  decltype(actual_length), decltype(status)>()>
+    to_bytes() const;
     void from_socket(asio::ip::tcp::socket &sock);
-
-    //发送出去的数据是紧凑的，但需要有个信息来确定发送时当前数据在内存中的长度以确定在内存中遍历的步长。
-    //这个变量只是为了发送时在内存中处理更加方便，与usbip协议无关
-    //对于libusb来说，这个值需要为libusb_iso_packet_descriptor::length
-    std::uint32_t length_in_transfer_buffer_only_for_send;
 };
 
 static_assert(Serializable<UsbIpIsoPacketDescriptor>);
@@ -158,8 +145,8 @@ struct GenericTransfer {
     std::size_t actual_length = 0;
     std::size_t data_offset = 0;
 
-    static GenericTransfer* from_handle(void* ptr) {
-        return static_cast<GenericTransfer*>(ptr);
+    static GenericTransfer *from_handle(void *ptr) {
+        return static_cast<GenericTransfer *>(ptr);
     }
 };
 
@@ -179,13 +166,13 @@ struct GenericTransfer {
  * @code
  *   void* ptr = op->alloc_transfer_handle(1024, 0, header, setup);
  *   TransferHandle handle(ptr, op);  // 接管所有权
- *   void* buf = handle.get_operator()->get_transfer_buffer(handle.get());
+ *   // 数据读写通过 op->send_transfer_data / op->recv_transfer_data
  *   // 函数结束时 handle 析构，自动调用 op->free_transfer_handle(ptr)
  * @endcode
  */
 class USBIPDCPP_API TransferHandle {
-    void* handle_ = nullptr;
-    TransferOperator* op_ = nullptr;
+    void *handle_ = nullptr;
+    TransferOperator *op_ = nullptr;
 
 public:
     TransferHandle() = default;
@@ -195,18 +182,18 @@ public:
      * @param handle 由 op->alloc_transfer_handle() 返回的指针
      * @param op     创建此 handle 的 TransferOperator，用于释放及后续 I/O
      */
-    TransferHandle(void* handle, TransferOperator* op);
+    TransferHandle(void *handle, TransferOperator *op);
 
     // 禁止拷贝（所有权唯一）
-    TransferHandle(const TransferHandle&) = delete;
-    TransferHandle& operator=(const TransferHandle&) = delete;
+    TransferHandle(const TransferHandle &) = delete;
+    TransferHandle &operator=(const TransferHandle &) = delete;
 
     /**
      * @brief 移动构造，转移所有权
      * @param other 源对象，移动后变为空状态
      */
-    TransferHandle(TransferHandle&& other) noexcept;
-    TransferHandle& operator=(TransferHandle&& other) noexcept;
+    TransferHandle(TransferHandle &&other) noexcept;
+    TransferHandle &operator=(TransferHandle &&other) noexcept;
 
     /**
      * @brief 析构时自动释放 handle
@@ -229,22 +216,28 @@ public:
      *
      * 注意：返回的指针生命周期由 TransferHandle 管理，不要在外部释放。
      */
-    [[nodiscard]] void* get() const { return handle_; }
+    [[nodiscard]] void *get() const {
+        return handle_;
+    }
 
     /**
      * @brief 获取创建此 handle 的 TransferOperator
-     * @return TransferOperator 指针，用于 get_transfer_buffer / send / recv 等操作
+     * @return TransferOperator 指针，用于 send / recv 等 I/O 操作
      *
      * for_socket 中完成 alloc 后 op 指向最终的 leaf operator（如 StorageTransferOperator），
      * 后续 I/O 操作通过此 op 直接调用，不再经过 VirtualDeviceTransferOperator 的 map 查找。
      */
-    [[nodiscard]] TransferOperator* get_operator() const { return op_; }
+    [[nodiscard]] TransferOperator *get_operator() const {
+        return op_;
+    }
 
     /**
      * @brief 检查是否持有有效 handle
      * @return true 表示持有有效 handle
      */
-    explicit operator bool() const { return handle_ != nullptr; }
+    explicit operator bool() const {
+        return handle_ != nullptr;
+    }
 
     /**
      * @brief 设置路由用的 TransferOperator（from_socket 前调用）
@@ -252,14 +245,19 @@ public:
      * 在协议反序列化前设置路由层 op（如 VirtualDeviceTransferOperator），
      * from_socket 内部通过 get_operator_for_ep 拿到 leaf op 后会用 set_handle 覆盖。
      */
-    void set_operator(TransferOperator* op) { op_ = op; }
+    void set_operator(TransferOperator *op) {
+        op_ = op;
+    }
 
     /**
      * @brief 同时设置 handle 及其所属 TransferOperator
      *
      * from_socket 中 alloc 完成后调用，将 op 从路由层替换为最终的 leaf operator。
      */
-    void set_handle(void* handle, TransferOperator* op) { handle_ = handle; op_ = op; }
+    void set_handle(void *handle, TransferOperator *op) {
+        handle_ = handle;
+        op_ = op;
+    }
 
     /**
      * @brief 释放所有权，返回原始指针
@@ -275,16 +273,16 @@ public:
      *   handle.get_operator()->free_transfer_handle(ptr);  // 必须手动释放！
      * @endcode
      */
-    void* release();
+    void *release();
 };
 
 namespace UsbIpCommand {
     struct USBIPDCPP_API OpReqDevlist {
         std::uint32_t status;
 
-        [[nodiscard]] array_data_type<calculate_total_size_with_array<
-            decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status)
-        >()> to_bytes() const;
+        [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status)>()>
+        to_bytes() const;
         void from_socket(asio::ip::tcp::socket &sock);
     };
 
@@ -294,9 +292,9 @@ namespace UsbIpCommand {
         std::uint32_t status;
         array_data_type<32> busid;
 
-        [[nodiscard]] array_data_type<calculate_total_size_with_array<
-            decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status), decltype(busid)
-        >()> to_bytes() const;
+        [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST),
+                                                                      decltype(status), decltype(busid)>()>
+        to_bytes() const;
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
         void from_socket(asio::ip::tcp::socket &sock);
     };
@@ -306,22 +304,21 @@ namespace UsbIpCommand {
     struct USBIPDCPP_API UsbIpCmdSubmit {
         UsbIpHeaderBasic header;
         std::uint32_t transfer_flags;
-        //表明了传输数据的最大值
+        // 表明了传输数据的最大值
         std::uint32_t transfer_buffer_length;
         std::uint32_t start_frame;
-        //等时传输包数量
+        // 等时传输包数量
         std::uint32_t number_of_packets;
         std::uint32_t interval;
         SetupPacket setup;
-        //IN方向transfer_buffer_length==data.size()，OUT方向IN方向transfer_buffer_length=0
+        // IN方向transfer_buffer_length==data.size()，OUT方向IN方向transfer_buffer_length=0
 
         // RAII 包装的 transfer_handle
         mutable TransferHandle transfer;
 
-        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-        //这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次
+        // 这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次。
+        // 调用这个函数之前保证transfer已经设置了TransferOperator，不然会空指针
         void from_socket(asio::ip::tcp::socket &sock);
     };
 
@@ -332,12 +329,11 @@ namespace UsbIpCommand {
         std::uint32_t unlink_seqnum;
 
         [[nodiscard]] array_data_type<
-            calculate_total_size_with_array<
-                decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(unlink_seqnum)
-            >() + 24
-        > to_bytes() const;
+                calculate_total_size_with_array<decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(unlink_seqnum)>() +
+                24>
+        to_bytes() const;
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-        //一个对象只能调用一次
+        // 一个对象只能调用一次
         void from_socket(asio::ip::tcp::socket &sock);
     };
 
@@ -353,8 +349,8 @@ namespace UsbIpCommand {
      * @param ec
      * @return 获取到的命令
      */
-    USBIPDCPP_API usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(
-            asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(asio::ip::tcp::socket &sock,
+                                                                           usbipdcpp::error_code &ec);
 
 
     /**
@@ -364,11 +360,9 @@ namespace UsbIpCommand {
      * @param ec
      * @return 获取到的命令
      */
-    USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant get_cmd_from_socket(
-            asio::ip::tcp::socket &sock, AbstDeviceHandler* handler, usbipdcpp::error_code &ec);
-
-    USBIPDCPP_API std::vector<std::uint8_t> to_bytes(const AllCmdVariant &cmd);
-}
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant
+    get_cmd_from_socket(asio::ip::tcp::socket &sock, AbstDeviceHandler *handler, usbipdcpp::error_code &ec);
+} // namespace UsbIpCommand
 
 namespace UsbIpResponse {
     struct USBIPDCPP_API OpRepDevlist {
@@ -417,26 +411,15 @@ namespace UsbIpResponse {
         // 如果没有数据阶段（actual_length == 0），请勿赋值
         mutable TransferHandle transfer;
 
-        // 发送配置，用于控制发送时的行为
-        struct SendConfig {
-            std::uint32_t data_offset = 0; // 数据偏移量 (控制传输为8，其他为0)
-        } send_config{};
-
-        [[nodiscard]] data_type to_bytes() const;
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
         void from_socket(asio::ip::tcp::socket &sock);
 
         /**
          * @brief 创建 RET_SUBMIT 响应（接管 transfer 所有权）
          */
-        static UsbIpRetSubmit create_ret_submit(
-                std::uint32_t seqnum,
-                std::uint32_t status,
-                std::uint32_t actual_length,
-                std::uint32_t start_frame,
-                std::uint32_t number_of_packets,
-                TransferHandle transfer
-                );
+        static UsbIpRetSubmit create_ret_submit(std::uint32_t seqnum, std::uint32_t status, std::uint32_t actual_length,
+                                                std::uint32_t start_frame, std::uint32_t number_of_packets,
+                                                TransferHandle transfer);
         /**
          * @brief 创建成功的 RET_SUBMIT 响应（无数据，不接管 transfer）
          */
@@ -456,8 +439,7 @@ namespace UsbIpResponse {
         /**
          * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应（接管 transfer 所有权）
          */
-        static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum,
-                                                             std::uint32_t actual_length,
+        static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum, std::uint32_t actual_length,
                                                              TransferHandle transfer);
         /**
          * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应（无数据，不接管 transfer）
@@ -466,8 +448,7 @@ namespace UsbIpResponse {
         /**
          * @brief 创建成功的 RET_SUBMIT 响应（无等时包，接管 transfer 所有权）
          */
-        static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum,
-                                                               std::uint32_t actual_length,
+        static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum, std::uint32_t actual_length,
                                                                TransferHandle transfer);
     };
 
@@ -478,10 +459,8 @@ namespace UsbIpResponse {
         std::uint32_t status;
 
         [[nodiscard]] array_data_type<
-            calculate_total_size_with_array<
-                decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(status)
-            >() + 24
-        > to_bytes() const;
+                calculate_total_size_with_array<decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(status)>() + 24>
+        to_bytes() const;
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
         void from_socket(asio::ip::tcp::socket &sock);
 
@@ -494,7 +473,7 @@ namespace UsbIpResponse {
     using OpRepVariant = std::variant<OpRepDevlist, OpRepImport>;
     using RetVariant = std::variant<UsbIpRetSubmit, UsbIpRetUnlink>;
     using AllRepVariant = std::variant<OpRepDevlist, OpRepImport, UsbIpRetSubmit, UsbIpRetUnlink>;
-}
+} // namespace UsbIpResponse
 
 
-}
+} // namespace usbipdcpp

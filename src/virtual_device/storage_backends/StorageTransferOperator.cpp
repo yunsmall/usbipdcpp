@@ -33,23 +33,8 @@ void StorageTransferOperator::free_transfer_handle(void *handle) {
         delete trx;
 }
 
-void *StorageTransferOperator::get_transfer_buffer(void *handle) {
-    auto *trx = StorageIoTransfer::from_handle(handle);
-    // IN 时 external_buf 指向 staging 或 fallback_data；OUT 阶段 external_buf 可能为空（CBW 用 fallback）
-    return trx->external_buf ? trx->external_buf : trx->fallback_data.data();
-}
-
 std::size_t StorageTransferOperator::get_actual_length(void *handle) {
     return StorageIoTransfer::from_handle(handle)->actual_length;
-}
-
-std::size_t StorageTransferOperator::get_read_data_offset(void *) {
-    // MSC 没有控制传输，偏移始终为 0
-    return 0;
-}
-
-std::size_t StorageTransferOperator::get_write_data_offset(const UsbIpHeaderBasic &) {
-    return 0;
 }
 
 UsbIpIsoPacketDescriptor StorageTransferOperator::get_iso_descriptor(void *, int) {

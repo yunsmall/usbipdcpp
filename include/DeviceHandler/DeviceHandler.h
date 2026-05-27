@@ -1,18 +1,18 @@
 #pragma once
 
-#include <vector>
 #include <cstdint>
-#include <optional>
-#include <system_error>
 #include <mutex>
+#include <optional>
 #include <spdlog/spdlog.h>
+#include <system_error>
+#include <vector>
 
 #include <asio.hpp>
 
 #include "Device.h"
-#include "type.h"
-#include "protocol.h"
 #include "DeviceHandler/TransferOperator.h"
+#include "protocol.h"
+#include "type.h"
 
 
 namespace usbipdcpp {
@@ -32,8 +32,7 @@ class Session;
 class USBIPDCPP_API AbstDeviceHandler {
 public:
     explicit AbstDeviceHandler(UsbDevice &handle_device, std::unique_ptr<TransferOperator> op = nullptr) :
-        handle_device(handle_device),
-        transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
+        handle_device(handle_device), transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
     }
 
     AbstDeviceHandler(AbstDeviceHandler &&other) noexcept;
@@ -45,12 +44,8 @@ public:
      * @param interface 可选的接口信息（非控制传输必须有）
      * @param ec 错误码
      */
-    virtual void receive_urb(
-            UsbIpCommand::UsbIpCmdSubmit cmd,
-            UsbEndpoint ep,
-            std::optional<UsbInterface> interface,
-            usbipdcpp::error_code &ec
-            ) = 0;
+    virtual void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
+                             usbipdcpp::error_code &ec) = 0;
 
     /**
      * @brief 新的客户端连接时会调这个函数，可以阻塞。子类实现时请在函数开头调用这个函数
@@ -76,13 +71,14 @@ public:
      * @return true 表示设备已物理拔出
      */
     virtual bool is_device_removed() const {
-        return false;  // 默认实现
+        return false; // 默认实现
     }
 
     /**
      * @brief 设备被物理移除时调用
      */
-    virtual void on_device_removed() {}
+    virtual void on_device_removed() {
+    }
 
     /**
      * @brief 线程安全地停止 Session
@@ -125,7 +121,7 @@ public:
     /**
      * @brief 获取传输操作器（子类可重写以替换默认实现）
      */
-    TransferOperator* get_transfer_operator() const {
+    TransferOperator *get_transfer_operator() const {
         return transfer_op_.get();
     }
 
@@ -136,13 +132,6 @@ public:
         transfer_op_ = std::move(op);
     }
 
-    /**
-     * @brief 查询 handle 是否使用自定义 I/O 路径（send/recv_transfer_data）
-     */
-    bool is_custom_transfer_io(void* handle) const {
-        return get_transfer_operator()->is_custom_io(handle);
-    }
-
     virtual ~AbstDeviceHandler() = default;
 
 protected:
@@ -151,4 +140,4 @@ protected:
     mutable std::mutex session_mutex_;
     std::unique_ptr<TransferOperator> transfer_op_ = std::make_unique<GenericTransferOperator>();
 };
-}
+} // namespace usbipdcpp

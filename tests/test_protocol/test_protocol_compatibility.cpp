@@ -1,26 +1,31 @@
 #include <gtest/gtest.h>
 
-#include "protocol.h"
+#include <asio.hpp>
+
+#include "DeviceHandler/DeviceHandler.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "DeviceHandler/DeviceHandler.h"
+#include "protocol.h"
 
 using namespace usbipdcpp;
 
 // 用于测试的 mock DeviceHandler
 class MockDeviceHandlerForTest : public AbstDeviceHandler {
 public:
-    explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {}
+    explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {
+    }
 
-    void on_new_connection(Session &current_session, error_code &ec) override {}
-    void on_disconnection(error_code &ec) override {}
+    void on_new_connection(Session &current_session, error_code &ec) override {
+    }
+    void on_disconnection(error_code &ec) override {
+    }
 
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {
+    }
 
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
-                     UsbEndpoint ep,
-                     std::optional<UsbInterface> interface,
-                     usbipdcpp::error_code &ec) override {}
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
+                     usbipdcpp::error_code &ec) override {
+    }
 };
 
 // 测试协议头部大小是否与 USBIP 规范一致
@@ -36,15 +41,6 @@ protected:
     // USBIP 头部总大小（使用 union 的最大大小）
     static constexpr std::size_t USBIP_HEADER_TOTAL_SIZE = 48; // 20 + 28
 };
-
-TEST_F(ProtocolSizeTest, RetSubmitHeaderSize) {
-    // RET_SUBMIT 头部应该是 48 字节
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0);
-
-    auto bytes = ret.to_bytes();
-    // 头部固定部分大小
-    EXPECT_EQ(bytes.size(), USBIP_HEADER_TOTAL_SIZE);
-}
 
 TEST_F(ProtocolSizeTest, RetUnlinkHeaderSize) {
     // RET_UNLINK 头部应该是 48 字节
@@ -81,43 +77,9 @@ TEST_F(ProtocolSizeTest, CmdSubmitHeaderReadSize) {
 // 测试字节序是否正确（USBIP 使用大端序）
 class ProtocolEndianTest : public ::testing::Test {};
 
-TEST_F(ProtocolEndianTest, RetSubmitStatusEndian) {
-    // status 应该是大端序
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-            0x1234, 0x12345678, 0);
-
-    auto bytes = ret.to_bytes();
-
-    // header 占 20 字节，status 从偏移 20 开始
-    // 大端序：0x12, 0x34, 0x56, 0x78
-    EXPECT_EQ(bytes[20], 0x12);
-    EXPECT_EQ(bytes[21], 0x34);
-    EXPECT_EQ(bytes[22], 0x56);
-    EXPECT_EQ(bytes[23], 0x78);
-}
-
-TEST_F(ProtocolEndianTest, RetSubmitActualLengthEndian) {
-    // actual_length 应该是大端序
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0xDEADBEEF);
-
-    auto bytes = ret.to_bytes();
-
-    // header(20) + status(4) = 24, actual_length 从偏移 24 开始
-    // 大端序：0xDE, 0xAD, 0xBE, 0xEF
-    EXPECT_EQ(bytes[24], 0xDE);
-    EXPECT_EQ(bytes[25], 0xAD);
-    EXPECT_EQ(bytes[26], 0xBE);
-    EXPECT_EQ(bytes[27], 0xEF);
-}
-
 TEST_F(ProtocolEndianTest, HeaderBasicSeqnumEndian) {
     UsbIpHeaderBasic header{
-        .command = USBIP_RET_SUBMIT,
-        .seqnum = 0x11223344,
-        .devid = 0,
-        .direction = UsbIpDirection::In,
-        .ep = 0
-    };
+            .command = USBIP_RET_SUBMIT, .seqnum = 0x11223344, .devid = 0, .direction = UsbIpDirection::In, .ep = 0};
 
     auto bytes = header.to_bytes();
 
@@ -139,13 +101,11 @@ class SetupPacketEndianTest : public ::testing::Test {};
 
 TEST_F(SetupPacketEndianTest, ValueFieldEndian) {
     // SetupPacket 的 value 字段使用小端序
-    SetupPacket packet{
-        .request_type = 0x80,
-        .request = 0x06,
-        .value = 0x0100, // value = 0x0100
-        .index = 0x0000,
-        .length = 0x0012
-    };
+    SetupPacket packet{.request_type = 0x80,
+                       .request = 0x06,
+                       .value = 0x0100, // value = 0x0100
+                       .index = 0x0000,
+                       .length = 0x0012};
 
     auto bytes = packet.to_bytes();
 
@@ -155,13 +115,11 @@ TEST_F(SetupPacketEndianTest, ValueFieldEndian) {
 }
 
 TEST_F(SetupPacketEndianTest, IndexFieldEndian) {
-    SetupPacket packet{
-        .request_type = 0x80,
-        .request = 0x06,
-        .value = 0x0000,
-        .index = 0x1234, // index = 0x1234
-        .length = 0x0000
-    };
+    SetupPacket packet{.request_type = 0x80,
+                       .request = 0x06,
+                       .value = 0x0000,
+                       .index = 0x1234, // index = 0x1234
+                       .length = 0x0000};
 
     auto bytes = packet.to_bytes();
 
@@ -172,11 +130,11 @@ TEST_F(SetupPacketEndianTest, IndexFieldEndian) {
 
 TEST_F(SetupPacketEndianTest, LengthFieldEndian) {
     SetupPacket packet{
-        .request_type = 0x80,
-        .request = 0x06,
-        .value = 0x0000,
-        .index = 0x0000,
-        .length = 0xABCD // length = 0xABCD
+            .request_type = 0x80,
+            .request = 0x06,
+            .value = 0x0000,
+            .index = 0x0000,
+            .length = 0xABCD // length = 0xABCD
     };
 
     auto bytes = packet.to_bytes();
@@ -188,13 +146,7 @@ TEST_F(SetupPacketEndianTest, LengthFieldEndian) {
 
 TEST_F(SetupPacketEndianTest, RoundTripEndian) {
     // 验证解析和序列化保持一致
-    SetupPacket original{
-        .request_type = 0x21,
-        .request = 0x09,
-        .value = 0x0200,
-        .index = 0x0001,
-        .length = 0x0040
-    };
+    SetupPacket original{.request_type = 0x21, .request = 0x09, .value = 0x0200, .index = 0x0001, .length = 0x0040};
 
     auto bytes = original.to_bytes();
     auto parsed = SetupPacket::parse(bytes);
@@ -211,11 +163,7 @@ class IsoPacketDescriptorTest : public ::testing::Test {};
 
 TEST_F(IsoPacketDescriptorTest, Endianness) {
     UsbIpIsoPacketDescriptor desc{
-        .offset = 0x12345678,
-        .length = 0xDEADBEEF,
-        .actual_length = 0xFEDCBA98,
-        .status = 0x11223344
-    };
+            .offset = 0x12345678, .length = 0xDEADBEEF, .actual_length = 0xFEDCBA98, .status = 0x11223344};
 
     auto bytes = desc.to_bytes();
 
@@ -238,7 +186,7 @@ class ControlTransferDataOffsetTest : public ::testing::Test {};
 TEST_F(ControlTransferDataOffsetTest, DataOffsetIs8) {
     // 控制传输的数据从偏移 8 开始（跳过 setup 包）
     // 创建 GenericTransfer 模拟控制传输
-    auto* trx = new GenericTransfer{};
+    auto *trx = new GenericTransfer{};
     trx->data.resize(100);
     trx->data_offset = 8;
     trx->actual_length = 92; // 100 - 8 = 92 字节数据
@@ -280,40 +228,6 @@ TEST_F(StatusCodeConversionTest, TrxStatToError) {
 // 测试与 usbipd-libusb 字节格式兼容性
 class UsbipdLibusbCompatibilityTest : public ::testing::Test {};
 
-TEST_F(UsbipdLibusbCompatibilityTest, RetSubmitWithoutData) {
-    // 创建一个没有数据的 RET_SUBMIT
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x12345678, 0);
-
-    auto bytes = ret.to_bytes();
-
-    // 验证总大小是 48 字节
-    EXPECT_EQ(bytes.size(), 48);
-
-    // 验证 command
-    EXPECT_EQ(bytes[0], 0x00);
-    EXPECT_EQ(bytes[1], 0x00);
-    EXPECT_EQ(bytes[2], 0x00);
-    EXPECT_EQ(bytes[3], 0x03); // USBIP_RET_SUBMIT
-
-    // 验证 seqnum
-    EXPECT_EQ(bytes[4], 0x12);
-    EXPECT_EQ(bytes[5], 0x34);
-    EXPECT_EQ(bytes[6], 0x56);
-    EXPECT_EQ(bytes[7], 0x78);
-
-    // 验证 status = 0
-    EXPECT_EQ(bytes[20], 0x00);
-    EXPECT_EQ(bytes[21], 0x00);
-    EXPECT_EQ(bytes[22], 0x00);
-    EXPECT_EQ(bytes[23], 0x00);
-
-    // 验证 actual_length = 0
-    EXPECT_EQ(bytes[24], 0x00);
-    EXPECT_EQ(bytes[25], 0x00);
-    EXPECT_EQ(bytes[26], 0x00);
-    EXPECT_EQ(bytes[27], 0x00);
-}
-
 TEST_F(UsbipdLibusbCompatibilityTest, RetUnlinkFormat) {
     auto ret = UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(0xABCDEF01);
 
@@ -341,49 +255,121 @@ TEST_F(UsbipdLibusbCompatibilityTest, RetUnlinkFormat) {
     EXPECT_EQ(bytes[23], 0x00);
 }
 
-TEST_F(UsbipdLibusbCompatibilityTest, RetSubmitWithData) {
-    // 创建一个带数据的 RET_SUBMIT
-    auto* trx = new GenericTransfer{};
-    trx->data = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-    trx->actual_length = trx->data.size();
+// 通过 to_socket 测试 RET_SUBMIT 序列化格式（替代已删除的 to_bytes）
+class RetSubmitSocketTest : public ::testing::Test {
+protected:
+    asio::io_context io;
+    std::unique_ptr<asio::ip::tcp::socket> write_sock;
+    std::unique_ptr<asio::ip::tcp::socket> read_sock;
+    std::unique_ptr<asio::ip::tcp::acceptor> acceptor;
 
-    // 创建一个空的 UsbDevice 用于测试
-    UsbDevice test_device{
-        .path = "/test",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = 0,
-        .vendor_id = 0,
-        .product_id = 0,
-        .device_bcd = 0,
-        .device_class = 0,
-        .device_subclass = 0,
-        .device_protocol = 0,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
-    };
-    MockDeviceHandlerForTest mock_handler(test_device);
+    void SetUp() override {
+        asio::ip::tcp::endpoint ep(asio::ip::tcp::v4(), 0);
+        acceptor = std::make_unique<asio::ip::tcp::acceptor>(io, ep);
+        write_sock = std::make_unique<asio::ip::tcp::socket>(io);
+        write_sock->connect(acceptor->local_endpoint());
+        read_sock = std::make_unique<asio::ip::tcp::socket>(acceptor->accept());
+    }
 
-    TransferHandle handle(trx, mock_handler.get_transfer_operator());
-    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-            0x1111, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
+    void TearDown() override {
+        write_sock->close();
+        read_sock->close();
+        acceptor->close();
+    }
 
-    auto bytes = ret.to_bytes();
+    std::vector<std::uint8_t> write_and_read(const UsbIpResponse::UsbIpRetSubmit &ret, std::size_t read_size) {
+        error_code ec;
+        ret.to_socket(*write_sock, ec);
+        if (ec)
+            throw std::system_error(ec);
+        std::vector<std::uint8_t> buf(read_size);
+        asio::read(*read_sock, asio::buffer(buf), ec);
+        if (ec)
+            throw std::system_error(ec);
+        return buf;
+    }
+};
 
-    // 头部 48 字节 + 数据 6 字节 = 54 字节
-    EXPECT_EQ(bytes.size(), 48 + 6);
+TEST_F(RetSubmitSocketTest, HeaderSize) {
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0);
+    auto bytes = write_and_read(ret, 48);
+    EXPECT_EQ(bytes.size(), 48);
+}
 
-    // 验证 actual_length
+TEST_F(RetSubmitSocketTest, StatusEndian) {
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(0x1234, 0x12345678, 0);
+    auto bytes = write_and_read(ret, 48);
+
+    // status 从偏移 20 开始，大端序
+    EXPECT_EQ(bytes[20], 0x12);
+    EXPECT_EQ(bytes[21], 0x34);
+    EXPECT_EQ(bytes[22], 0x56);
+    EXPECT_EQ(bytes[23], 0x78);
+}
+
+TEST_F(RetSubmitSocketTest, ActualLengthEndian) {
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x1234, 0xDEADBEEF);
+    auto bytes = write_and_read(ret, 48);
+
+    // actual_length 从偏移 24 开始，大端序
+    EXPECT_EQ(bytes[24], 0xDE);
+    EXPECT_EQ(bytes[25], 0xAD);
+    EXPECT_EQ(bytes[26], 0xBE);
+    EXPECT_EQ(bytes[27], 0xEF);
+}
+
+TEST_F(RetSubmitSocketTest, FieldFormat) {
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(0x12345678, 0);
+    auto bytes = write_and_read(ret, 48);
+
+    // command = USBIP_RET_SUBMIT (3)
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x00);
+    EXPECT_EQ(bytes[2], 0x00);
+    EXPECT_EQ(bytes[3], 0x03);
+
+    // seqnum
+    EXPECT_EQ(bytes[4], 0x12);
+    EXPECT_EQ(bytes[5], 0x34);
+    EXPECT_EQ(bytes[6], 0x56);
+    EXPECT_EQ(bytes[7], 0x78);
+
+    // status = 0
+    EXPECT_EQ(bytes[20], 0x00);
+    EXPECT_EQ(bytes[21], 0x00);
+    EXPECT_EQ(bytes[22], 0x00);
+    EXPECT_EQ(bytes[23], 0x00);
+
+    // actual_length = 0
     EXPECT_EQ(bytes[24], 0x00);
     EXPECT_EQ(bytes[25], 0x00);
     EXPECT_EQ(bytes[26], 0x00);
-    EXPECT_EQ(bytes[27], 0x06); // actual_length = 6
+    EXPECT_EQ(bytes[27], 0x00);
+}
 
-    // 验证数据紧跟在头部后面
+TEST_F(RetSubmitSocketTest, WithData) {
+    auto *trx = new GenericTransfer{};
+    trx->data = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+    trx->actual_length = trx->data.size();
+
+    GenericTransferOperator op;
+    TransferHandle handle(trx, &op);
+
+    auto ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+            0x1111, static_cast<std::uint32_t>(trx->actual_length), std::move(handle));
+
+    auto bytes = write_and_read(ret, 48 + 6);
+
+    // 头部 48 字节 + 数据 6 字节
+    EXPECT_EQ(bytes.size(), 54);
+
+    // actual_length = 6
+    EXPECT_EQ(bytes[24], 0x00);
+    EXPECT_EQ(bytes[25], 0x00);
+    EXPECT_EQ(bytes[26], 0x00);
+    EXPECT_EQ(bytes[27], 0x06);
+
+    // 数据紧跟在头部后面
     EXPECT_EQ(bytes[48], 0xAA);
     EXPECT_EQ(bytes[49], 0xBB);
     EXPECT_EQ(bytes[50], 0xCC);

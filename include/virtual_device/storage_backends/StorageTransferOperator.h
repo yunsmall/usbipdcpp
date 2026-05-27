@@ -22,10 +22,7 @@ public:
                                 const SetupPacket &setup_packet) override;
     void free_transfer_handle(void *handle) override;
 
-    void *get_transfer_buffer(void *handle) override;
     std::size_t get_actual_length(void *handle) override;
-    std::size_t get_read_data_offset(void *handle) override;
-    std::size_t get_write_data_offset(const UsbIpHeaderBasic &header) override;
 
     UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) override;
     void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override;
@@ -34,10 +31,6 @@ public:
                             std::error_code &ec) override;
     void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                             std::error_code &ec) override;
-
-    bool is_custom_io(void *handle) const override {
-        return true;
-    }
 
 private:
     MscBulkOnlyHandler *handler_;
