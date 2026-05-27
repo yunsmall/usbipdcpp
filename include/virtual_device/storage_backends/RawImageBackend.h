@@ -29,8 +29,8 @@ public:
     explicit RawImageBackend(std::string path, std::uint64_t initial_blocks = 2048, std::uint32_t block_size = 512);
     ~RawImageBackend() override;
 
-    void read(std::uint64_t lba, std::uint16_t count, void *buffer) override;
-    bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) override;
+    std::size_t read(std::uint64_t lba, std::uint16_t count, void *buffer) override;
+    std::size_t write(std::uint64_t lba, std::uint16_t count, const void *data) override;
     void punch_hole(std::uint64_t lba, std::uint64_t count) override;
     void *get_direct_buffer(std::uint64_t lba) override;
     bool send_direct(std::uint64_t lba, std::size_t offset, std::size_t length, intptr_t sock_fd,

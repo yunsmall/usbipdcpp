@@ -1,16 +1,14 @@
 #include "virtual_device/VirtualDeviceHandler.h"
 
-#include "virtual_device/VirtualInterfaceHandler.h"
 #include "Session.h"
-#include "protocol.h"
 #include "constant.h"
+#include "protocol.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
 
-void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
-                                       UsbEndpoint ep,
-                                       std::optional<UsbInterface> interface,
-                                       usbipdcpp::error_code &ec) {
+void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep,
+                                       std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) {
     auto seqnum = cmd.header.seqnum;
     auto transfer_flags = cmd.transfer_flags;
     auto transfer_buffer_length = cmd.transfer_buffer_length;
@@ -21,19 +19,19 @@ void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
 
 void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                                         const UsbEndpoint &ep, std::optional<UsbInterface> &interface,
-                                        std::uint32_t transfer_flags,
-                                        std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
-                                        usbipdcpp::error_code &ec) {
+                                        std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                                        const SetupPacket &setup_packet, usbipdcpp::error_code &ec) {
     // 控制传输较少，Bulk/Interrupt 更常见
-    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control))[[unlikely]] {
-        SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()), setup_packet.to_string());
+    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) [[unlikely]] {
+        SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()),
+                     setup_packet.to_string());
         handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer),
                            ec);
     }
-    else if (interface.has_value())[[likely]] {
+    else if (interface.has_value()) [[likely]] {
         auto &intf = interface.value();
         // Bulk 和 Interrupt 最常见
-        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk))[[likely]] {
+        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
             SPDLOG_DEBUG("处理块传输");
             handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
         }
@@ -45,8 +43,8 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
         else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
             SPDLOG_DEBUG("处理等时传输");
             int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
-                              ? static_cast<int>(cmd.number_of_packets)
-                              : 0;
+                                  ? static_cast<int>(cmd.number_of_packets)
+                                  : 0;
             handle_isochronous_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length,
                                         std::move(cmd.transfer), num_iso, ec);
         }
@@ -55,7 +53,7 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
             ec = make_error_code(ErrorType::INVALID_ARG);
         }
     }
-    else[[unlikely]] {
+    else [[unlikely]] {
         SPDLOG_ERROR("非控制传输却不存在目标接口");
         ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
@@ -120,9 +118,9 @@ void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
         case UsbSpeed::Full:
         case UsbSpeed::High:
         case UsbSpeed::Wireless:
-        //In the following two standards, you start out in high speed mode,
-        //so you fill in 64, and then when you switch to super fast it changes to 512,
-        //so you fill in 9 here
+        // In the following two standards, you start out in high speed mode,
+        // so you fill in 64, and then when you switch to super fast it changes to 512,
+        // so you fill in 9 here
         case UsbSpeed::Super:
         case UsbSpeed::SuperPlus: {
             handle_device.ep0_in.max_packet_size = 64;
@@ -136,27 +134,21 @@ void VirtualDeviceHandler::change_device_ep0_max_size_by_speed() {
     }
 }
 
-void VirtualDeviceHandler::handle_control_urb(
-        std::uint32_t seqnum,
-        const UsbEndpoint &ep,
-        std::uint32_t transfer_flags,
-        std::uint32_t transfer_buffer_length,
-        const SetupPacket &setup_packet,
-        TransferHandle transfer,
-        std::error_code &ec) {
+void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                              std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,
+                                              TransferHandle transfer, std::error_code &ec) {
     // 获取 GenericTransfer 指针
     auto *trx = GenericTransfer::from_handle(transfer.get());
 
     auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
-    //标准的请求全在这里处理了
-    // 大多数控制请求是标准请求
-    if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard))[[likely]] {
+    // 标准的请求全在这里处理了
+    //  大多数控制请求是标准请求
+    if (setup_packet.calc_request_type() == static_cast<std::uint8_t>(RequestType::Standard)) [[likely]] {
         auto status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
         switch (recipient) {
             case RequestRecipient::Device: {
                 SPDLOG_TRACE("发给设备");
-                auto std_request = static_cast<StandardRequest>(setup_packet.
-                    calc_standard_request());
+                auto std_request = static_cast<StandardRequest>(setup_packet.calc_standard_request());
 
                 if (setup_packet.is_out()) {
                     switch (std_request) {
@@ -180,8 +172,7 @@ void VirtualDeviceHandler::handle_control_urb(
                             // 从 transfer_handle 获取 OUT 数据
                             data_type out_data(trx->data.begin(), trx->data.begin() + transfer_buffer_length);
                             request_set_descriptor(setup_packet.value >> 8, setup_packet.value & 0x00FF,
-                                                   setup_packet.index,
-                                                   setup_packet.length, out_data, &status);
+                                                   setup_packet.index, setup_packet.length, out_data, &status);
                             break;
                         }
                         case StandardRequest::SetFeature: {
@@ -190,19 +181,13 @@ void VirtualDeviceHandler::handle_control_urb(
                             break;
                         }
                         default: {
-                            SPDLOG_WARN("Device Unhandled StandardRequest {}",
-                                        static_cast<int>(std_request));
+                            SPDLOG_WARN("Device Unhandled StandardRequest {}", static_cast<int>(std_request));
                             status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                         }
                     }
                     // transfer 析构时自动释放
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                    seqnum,
-                                    status,
-                                    0
-                                    )
-                            );
+                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                            seqnum, status, 0));
                 }
                 else {
                     data_type result{};
@@ -237,12 +222,8 @@ void VirtualDeviceHandler::handle_control_urb(
                     trx->actual_length = trx->data.size();
                     trx->data_offset = 0; // 虚拟设备没有 setup 包偏移
 
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                    seqnum, static_cast<std::uint32_t>(trx->actual_length),
-                                    std::move(transfer))
-                            );
-
+                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                            seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
                 }
                 break;
             }
@@ -251,8 +232,7 @@ void VirtualDeviceHandler::handle_control_urb(
                 auto intf_idx = setup_packet.index;
                 auto handler = handle_device.interfaces[intf_idx].handler;
                 if (handler) {
-                    StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
-                        calc_standard_request());
+                    StandardRequest std_request = static_cast<StandardRequest>(setup_packet.calc_standard_request());
                     if (setup_packet.is_out()) {
                         switch (std_request) {
                             case StandardRequest::ClearFeature: {
@@ -271,18 +251,15 @@ void VirtualDeviceHandler::handle_control_urb(
                                 break;
                             }
                             default: {
-                                SPDLOG_WARN("Interface Unhandled StandardRequest {}",
-                                            static_cast<int>(std_request));
+                                SPDLOG_WARN("Interface Unhandled StandardRequest {}", static_cast<int>(std_request));
                             }
                         }
                         // transfer 析构时自动释放
                         session->submit_ret_submit(
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                        seqnum,
-                                        status,
+                                        seqnum, status,
                                         0 // 控制传输 OUT 命令，无数据阶段
-                                        )
-                                );
+                                        ));
                     }
                     else {
                         data_type result{};
@@ -301,17 +278,16 @@ void VirtualDeviceHandler::handle_control_urb(
                             }
                             case StandardRequest::GetDescriptor: {
                                 SPDLOG_TRACE("接口request_get_descriptor");
-                                result = handler->request_get_descriptor(
-                                        setup_packet.value >> 8, setup_packet.value & 0x00FF,
-                                        setup_packet.length, &status);
+                                result = handler->request_get_descriptor(setup_packet.value >> 8,
+                                                                         setup_packet.value & 0x00FF,
+                                                                         setup_packet.length, &status);
                                 if (setup_packet.length < result.size()) {
                                     result.resize(setup_packet.length);
                                 }
                                 break;
                             }
                             default: {
-                                SPDLOG_WARN("Interface Unhandled StandardRequest {}",
-                                            static_cast<int>(std_request));
+                                SPDLOG_WARN("Interface Unhandled StandardRequest {}", static_cast<int>(std_request));
                             }
                         }
                         // 将数据写入 transfer_handle
@@ -319,13 +295,9 @@ void VirtualDeviceHandler::handle_control_urb(
                         trx->actual_length = trx->data.size();
                         trx->data_offset = 0;
 
-                        session->submit_ret_submit(
-                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                        seqnum, static_cast<std::uint32_t>(trx->actual_length),
-                                        std::move(transfer))
-                                );
+                        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                                seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
                     }
-
                 }
                 else {
                     SPDLOG_ERROR("接口未注册handler，无法处理发去接口的信息");
@@ -340,50 +312,47 @@ void VirtualDeviceHandler::handle_control_urb(
             case RequestRecipient::Endpoint: {
                 SPDLOG_TRACE("发给端点");
                 auto find_ret = handle_device.find_ep(setup_packet.index);
-                if (find_ret)[[likely]] {
+                if (find_ret) [[likely]] {
                     // auto &target_ep = find_ret->first;
                     auto &intf = find_ret->second;
-                    if (intf)[[likely]] {
+                    if (intf) [[likely]] {
                         auto handler = intf->handler;
-                        if (handler)[[likely]] {
-                            StandardRequest std_request = static_cast<StandardRequest>(setup_packet.
-                                calc_standard_request());
+                        if (handler) [[likely]] {
+                            StandardRequest std_request =
+                                    static_cast<StandardRequest>(setup_packet.calc_standard_request());
                             if (setup_packet.is_out()) {
                                 switch (std_request) {
                                     case StandardRequest::ClearFeature: {
                                         SPDLOG_TRACE("端点request_endpoint_clear_feature");
-                                        handler->request_endpoint_clear_feature(
-                                                setup_packet.value, setup_packet.index, &status);
+                                        handler->request_endpoint_clear_feature(setup_packet.value, setup_packet.index,
+                                                                                &status);
                                         break;
                                     }
                                     case StandardRequest::SetFeature: {
                                         SPDLOG_TRACE("端点request_endpoint_set_feature");
-                                        handler->request_endpoint_set_feature(
-                                                setup_packet.value, setup_packet.index, &status);
+                                        handler->request_endpoint_set_feature(setup_packet.value, setup_packet.index,
+                                                                              &status);
                                         break;
                                     }
                                     default: {
-                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
-                                                    setup_packet.index,
+                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}", setup_packet.index,
                                                     static_cast<int>(std_request));
                                     }
                                 }
                                 // transfer 析构时自动释放
                                 session->submit_ret_submit(
                                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                                seqnum,
-                                                status,
+                                                seqnum, status,
                                                 0 // 控制传输 OUT 命令，无数据阶段
-                                                )
-                                        );
+                                                ));
                             }
                             else {
                                 data_type result{};
                                 switch (std_request) {
                                     case StandardRequest::GetStatus: {
                                         SPDLOG_TRACE("端点request_endpoint_get_status");
-                                        auto gotten_status = handler->request_endpoint_get_status(
-                                                setup_packet.index, &status);
+                                        auto gotten_status =
+                                                handler->request_endpoint_get_status(setup_packet.index, &status);
                                         vector_append_to_net(result, gotten_status);
                                         break;
                                     }
@@ -393,8 +362,7 @@ void VirtualDeviceHandler::handle_control_urb(
                                         break;
                                     }
                                     default: {
-                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}",
-                                                    setup_packet.index,
+                                        SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}", setup_packet.index,
                                                     static_cast<int>(std_request));
                                     }
                                 }
@@ -406,8 +374,7 @@ void VirtualDeviceHandler::handle_control_urb(
                                 session->submit_ret_submit(
                                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                                                 seqnum, static_cast<std::uint32_t>(trx->actual_length),
-                                                std::move(transfer))
-                                        );
+                                                std::move(transfer)));
                             }
                         }
                         else {
@@ -450,10 +417,8 @@ void VirtualDeviceHandler::handle_control_urb(
         switch (recipient) {
             case RequestRecipient::Device: {
                 SPDLOG_TRACE("发给设备的非标准控制传输包");
-                handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
-                                                             transfer_buffer_length,
-                                                             setup_packet,
-                                                             std::move(transfer), ec);
+                handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length,
+                                                             setup_packet, std::move(transfer), ec);
                 break;
             }
             case RequestRecipient::Interface: {
@@ -461,10 +426,8 @@ void VirtualDeviceHandler::handle_control_urb(
                 auto intf_idx = setup_packet.index;
                 auto handler = handle_device.interfaces[intf_idx].handler;
                 if (handler) {
-                    handler->handle_non_standard_request_type_control_urb(seqnum, ep, transfer_flags,
-                                                                          transfer_buffer_length,
-                                                                          setup_packet,
-                                                                          std::move(transfer), ec);
+                    handler->handle_non_standard_request_type_control_urb(
+                            seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(transfer), ec);
                 }
                 else {
                     SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
@@ -482,10 +445,7 @@ void VirtualDeviceHandler::handle_control_urb(
                 auto handler = handle_device.interfaces[intf_idx].handler;
                 if (handler) {
                     handler->handle_non_standard_request_type_control_urb_to_endpoint(
-                            seqnum, ep, transfer_flags,
-                            transfer_buffer_length,
-                            setup_packet,
-                            std::move(transfer), ec);
+                            seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(transfer), ec);
                 }
                 else {
                     SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
@@ -511,88 +471,51 @@ void VirtualDeviceHandler::handle_control_urb(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             }
         }
-
     }
 }
 
-void VirtualDeviceHandler::handle_bulk_transfer(
-        std::uint32_t seqnum,
-        const UsbEndpoint &ep,
-        UsbInterface &interface,
-        std::uint32_t transfer_flags,
-        std::uint32_t transfer_buffer_length,
-        TransferHandle transfer,
-        std::error_code &ec) {
-    if (interface.handler)[[likely]] {
-        interface.handler->handle_bulk_transfer(
-                seqnum,
-                ep,
-                transfer_flags,
-                transfer_buffer_length,
-                std::move(transfer),
-                ec
-                );
+void VirtualDeviceHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, UsbInterface &interface,
+                                                std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+                                                TransferHandle transfer, std::error_code &ec) {
+    if (interface.handler) [[likely]] {
+        interface.handler->handle_bulk_transfer(seqnum, ep, transfer_flags, transfer_buffer_length, std::move(transfer),
+                                                ec);
     }
     else {
         SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
         // transfer 析构时自动释放
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
-void VirtualDeviceHandler::handle_interrupt_transfer(
-        std::uint32_t seqnum,
-        const UsbEndpoint &ep,
-        UsbInterface &interface,
-        std::uint32_t transfer_flags,
-        std::uint32_t transfer_buffer_length,
-        TransferHandle transfer,
-        std::error_code &ec) {
+void VirtualDeviceHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                     UsbInterface &interface, std::uint32_t transfer_flags,
+                                                     std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                                     std::error_code &ec) {
 
-    if (interface.handler)[[likely]] {
-        interface.handler->handle_interrupt_transfer(
-                seqnum,
-                ep,
-                transfer_flags,
-                transfer_buffer_length,
-                std::move(transfer),
-                ec
-                );
+    if (interface.handler) [[likely]] {
+        interface.handler->handle_interrupt_transfer(seqnum, ep, transfer_flags, transfer_buffer_length,
+                                                     std::move(transfer), ec);
     }
     else {
         SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
         // transfer 析构时自动释放
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
-void VirtualDeviceHandler::handle_isochronous_transfer(
-        std::uint32_t seqnum,
-        const UsbEndpoint &ep,
-        UsbInterface &interface,
-        std::uint32_t transfer_flags,
-        std::uint32_t transfer_buffer_length,
-        TransferHandle transfer,
-        int num_iso_packets,
-        std::error_code &ec) {
-    if (interface.handler)[[likely]] {
-        interface.handler->handle_isochronous_transfer(
-                seqnum,
-                ep,
-                transfer_flags,
-                transfer_buffer_length,
-                std::move(transfer),
-                num_iso_packets,
-                ec
-                );
+void VirtualDeviceHandler::handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                       UsbInterface &interface, std::uint32_t transfer_flags,
+                                                       std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                                       int num_iso_packets, std::error_code &ec) {
+    if (interface.handler) [[likely]] {
+        interface.handler->handle_isochronous_transfer(seqnum, ep, transfer_flags, transfer_buffer_length,
+                                                       std::move(transfer), num_iso_packets, ec);
     }
     else {
         SPDLOG_ERROR("端点{:04x}所在的接口没注册handler", ep.address);
         // transfer 析构时自动释放
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -659,7 +582,6 @@ std::uint8_t VirtualDeviceHandler::request_get_interface(std::uint16_t intf, std
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return -1;
     }
-
 }
 
 void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf,
@@ -676,46 +598,42 @@ void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting
 }
 
 data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
-                                                      std::uint32_t *p_status
-        ) {
+                                                      std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     std::uint16_t version_bcd = usb_version;
-    data_type desc = {
-            0x12,                                              // bLength
-            static_cast<std::uint8_t>(DescriptorType::Device), // bDescriptorType: Device
-            static_cast<std::uint8_t>(version_bcd),            // bcdUSB: USB 2.0
-            static_cast<std::uint8_t>(version_bcd >> 8),
-            handle_device.device_class,                                      // bDeviceClass
-            handle_device.device_subclass,                                   // bDeviceSubClass
-            handle_device.device_protocol,                                   // bDeviceProtocol
-            static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0
-            static_cast<std::uint8_t>(handle_device.vendor_id),              // idVendor
-            static_cast<std::uint8_t>(handle_device.vendor_id >> 8),
-            static_cast<std::uint8_t>(handle_device.product_id), // idProduct
-            static_cast<std::uint8_t>(handle_device.product_id >> 8),
-            handle_device.device_bcd.minor, // bcdDevice
-            handle_device.device_bcd.major,
-            string_manufacturer_value, // iManufacturer
-            string_product_value,      // iProduct
-            string_serial_value,       // iSerial
-            handle_device.num_configurations
-    };
+    data_type desc = {0x12, // bLength
+                      static_cast<std::uint8_t>(DescriptorType::Device), // bDescriptorType: Device
+                      static_cast<std::uint8_t>(version_bcd), // bcdUSB: USB 2.0
+                      static_cast<std::uint8_t>(version_bcd >> 8),
+                      handle_device.device_class, // bDeviceClass
+                      handle_device.device_subclass, // bDeviceSubClass
+                      handle_device.device_protocol, // bDeviceProtocol
+                      static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0
+                      static_cast<std::uint8_t>(handle_device.vendor_id), // idVendor
+                      static_cast<std::uint8_t>(handle_device.vendor_id >> 8),
+                      static_cast<std::uint8_t>(handle_device.product_id), // idProduct
+                      static_cast<std::uint8_t>(handle_device.product_id >> 8),
+                      handle_device.device_bcd.minor, // bcdDevice
+                      handle_device.device_bcd.major,
+                      string_manufacturer_value, // iManufacturer
+                      string_product_value, // iProduct
+                      string_serial_value, // iSerial
+                      handle_device.num_configurations};
 
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
     }
     return desc;
-
 }
 
 data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                    std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
-            0x05,                                           // bLength
+            0x05, // bLength
             static_cast<std::uint8_t>(DescriptorType::BOS), // bDescriptorType: BOS
-            0x05, 0x00,                                     // wTotalLength
-            0x00                                            // bNumCapabilities
+            0x05, 0x00, // wTotalLength
+            0x00 // bNumCapabilities
     };
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
@@ -723,45 +641,43 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
     return desc;
 }
 
-data_type VirtualDeviceHandler::get_configuration_descriptor(
-        std::uint16_t language_id, std::uint16_t descriptor_length, std::uint32_t *p_status) {
+data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
+                                                             std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     data_type desc = {
-            0x09,                                                     // bLength
+            0x09, // bLength
             static_cast<std::uint8_t>(DescriptorType::Configuration), // bDescriptorType: Configuration
             0x00,
-            0x00,                                                       // wTotalLength: to be filled below
+            0x00, // wTotalLength: to be filled below
             static_cast<std::uint8_t>(handle_device.interfaces.size()), // bNumInterfaces
-            handle_device.configuration_value,                          // bConfigurationValue
-            string_configuration_value,                                 // iConfiguration
-            0x80,                                                       // bmAttributes Bus Powered
-            0x32,                                                       // bMaxPower 100mA
+            handle_device.configuration_value, // bConfigurationValue
+            string_configuration_value, // iConfiguration
+            0x80, // bmAttributes Bus Powered
+            0x32, // bMaxPower 100mA
     };
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
         data_type intf_desc = {
-                0x09,                                                 // bLength
+                0x09, // bLength
                 static_cast<std::uint8_t>(DescriptorType::Interface), // bDescriptorType: Interface
-                static_cast<std::uint8_t>(i),                         // bInterfaceNum
-                0x00,                                                 // bAlternateSettings
-                static_cast<std::uint8_t>(intf.endpoints.size()),     // bNumEndpoints
-                intf.interface_class,                                 // bInterfaceClass
-                intf.interface_subclass,                              // bInterfaceSubClass
-                intf.interface_protocol,                              // bInterfaceProtocol
-                intf.handler->get_string_interface_value(),           //iInterface
+                static_cast<std::uint8_t>(i), // bInterfaceNum
+                0x00, // bAlternateSettings
+                static_cast<std::uint8_t>(intf.endpoints.size()), // bNumEndpoints
+                intf.interface_class, // bInterfaceClass
+                intf.interface_subclass, // bInterfaceSubClass
+                intf.interface_protocol, // bInterfaceProtocol
+                intf.handler->get_string_interface_value(), // iInterface
         };
         auto class_specific_descriptor = intf.handler->get_class_specific_descriptor();
         intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
         for (auto &endpoint: intf.endpoints) {
-            data_type ep_desc = {
-                    0x07, // bLength
-                    static_cast<std::uint8_t>(DescriptorType::Endpoint),
-                    endpoint.address,
-                    endpoint.attributes,
-                    static_cast<std::uint8_t>(endpoint.max_packet_size),
-                    static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
-                    endpoint.interval
-            };
+            data_type ep_desc = {0x07, // bLength
+                                 static_cast<std::uint8_t>(DescriptorType::Endpoint),
+                                 endpoint.address,
+                                 endpoint.attributes,
+                                 static_cast<std::uint8_t>(endpoint.max_packet_size),
+                                 static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
+                                 endpoint.interval};
             intf_desc.insert(intf_desc.end(), ep_desc.begin(), ep_desc.end());
         }
         desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());
@@ -775,23 +691,17 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(
 }
 
 data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
-                                                      std::uint32_t *p_status
-        ) {
+                                                      std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
-    if (language_id == 0)[[unlikely]] {
+    if (language_id == 0) [[unlikely]] {
         // language ids - 特殊情况，用于获取支持的语言ID列表
-        data_type desc = {
-                4,
-                static_cast<std::uint8_t>(DescriptorType::String),
-                0x09,
-                0x04
-        };
+        data_type desc = {4, static_cast<std::uint8_t>(DescriptorType::String), 0x09, 0x04};
         if (descriptor_length < desc.size()) {
             desc.resize(descriptor_length);
         }
         return desc;
     }
-    else if (auto string_ret = string_pool.get_string(language_id))[[likely]] {
+    else if (auto string_ret = string_pool.get_string(language_id)) [[likely]] {
         auto &string = string_ret.value();
         data_type desc = {
                 static_cast<std::uint8_t>((string.size() + 1) * 2),

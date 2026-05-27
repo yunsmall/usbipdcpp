@@ -1,13 +1,13 @@
 #include "virtual_device/storage_backends/RawImageBackend.h"
 
-#include <spdlog/spdlog.h>
 #include <cstring>
 #include <filesystem>
+#include <spdlog/spdlog.h>
 
 #ifdef _WIN32
-#include <winsock2.h>
-#include <windows.h>
 #include <mswsock.h>
+#include <windows.h>
+#include <winsock2.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -27,9 +27,8 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
 
 #ifdef _WIN32
     // 打开已有文件或创建新文件（OPEN_ALWAYS：存在则打开，不存在则创建）
-    HANDLE fh = CreateFileA(path_.c_str(), GENERIC_READ | GENERIC_WRITE,
-                            FILE_SHARE_READ, nullptr,
-                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE fh = CreateFileA(path_.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (fh == INVALID_HANDLE_VALUE) {
         SPDLOG_ERROR("无法打开/创建文件: {}", path_);
         return;
@@ -57,8 +56,7 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
     }
 
     // 创建文件映射对象（dwMaximumSizeHigh:dwMaximumSizeLow 为 64 位大小）
-    HANDLE mh = CreateFileMappingA(fh, nullptr, PAGE_READWRITE,
-                                   static_cast<DWORD>(file_size >> 32),
+    HANDLE mh = CreateFileMappingA(fh, nullptr, PAGE_READWRITE, static_cast<DWORD>(file_size >> 32),
                                    static_cast<DWORD>(file_size), nullptr);
     if (!mh) {
         SPDLOG_ERROR("CreateFileMapping 失败");
@@ -130,9 +128,8 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
     }
 #endif
 
-    SPDLOG_INFO("{}镜像: {} ({} 块, {} MiB)",
-                is_new_file ? "创建" : "打开",
-                path_, block_count_, block_count_ * block_size_ / 1024 / 1024);
+    SPDLOG_INFO("{}镜像: {} ({} 块, {} MiB)", is_new_file ? "创建" : "打开", path_, block_count_,
+                block_count_ * block_size_ / 1024 / 1024);
 }
 
 RawImageBackend::~RawImageBackend() {
@@ -150,20 +147,20 @@ RawImageBackend::~RawImageBackend() {
     }
 }
 
-void RawImageBackend::read(std::uint64_t lba, std::uint16_t count, void *buffer) {
+std::size_t RawImageBackend::read(std::uint64_t lba, std::uint16_t count, void *buffer) {
     std::lock_guard lock(mutex_);
     auto total = static_cast<std::size_t>(count) * block_size_;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
     std::memcpy(buffer, static_cast<const char *>(mapped_data_) + offset, total);
+    return total;
 }
 
-bool RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) {
+std::size_t RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const void *data) {
     std::lock_guard lock(mutex_);
     auto total = static_cast<std::size_t>(count) * block_size_;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
-    // 直接写入映射内存，OS 负责写回磁盘
     std::memcpy(static_cast<char *>(mapped_data_) + offset, data, total);
-    return true;
+    return total;
 }
 
 void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
@@ -182,15 +179,15 @@ void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
     auto aligned_off = (offset / fs_block_size_) * fs_block_size_;
     auto end = offset + length;
     auto aligned_end = ((end + fs_block_size_ - 1) / fs_block_size_) * fs_block_size_;
-    if (fallocate(fd_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                  static_cast<off_t>(aligned_off), static_cast<off_t>(aligned_end - aligned_off)) != 0) {
+    if (fallocate(fd_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(aligned_off),
+                  static_cast<off_t>(aligned_end - aligned_off)) != 0) {
         SPDLOG_WARN("punch_hole 失败: LBA={} count={}", lba, count);
     }
 #endif
 }
 
-bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                                  intptr_t sock_fd, std::error_code &ec) {
+bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::size_t length, intptr_t sock_fd,
+                                  std::error_code &ec) {
 #ifdef _WIN32
     return false; // Windows 无 splice，回退 asio::read
 #else
@@ -200,8 +197,7 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
     size_t remaining = length;
     while (remaining > 0) {
         // sock → pipe
-        ssize_t n = splice(static_cast<int>(sock_fd), nullptr,
-                           splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
+        ssize_t n = splice(static_cast<int>(sock_fd), nullptr, splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
         if (n <= 0) {
             if (n == 0)
                 break;
@@ -227,8 +223,8 @@ void *RawImageBackend::get_direct_buffer(std::uint64_t lba) {
     return static_cast<char *>(mapped_data_) + static_cast<std::size_t>(lba) * block_size_;
 }
 
-bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::size_t length,
-                                  intptr_t sock_fd, std::error_code &ec) {
+bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::size_t length, intptr_t sock_fd,
+                                  std::error_code &ec) {
     auto file_offset = static_cast<std::size_t>(lba) * block_size_ + offset;
 #ifdef _WIN32
     auto hFile = static_cast<HANDLE>(file_handle_);

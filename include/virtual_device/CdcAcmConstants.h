@@ -54,4 +54,4 @@ enum class CdcAcmSerialState : std::uint16_t {
     OverrunError = 0x40, // Overrun error
     CTS = 0x80, // Clear To Send
 };
-}
+} // namespace usbipdcpp

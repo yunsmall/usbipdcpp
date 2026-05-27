@@ -22,7 +22,7 @@ void *VirtualDeviceTransferOperator::alloc_transfer_handle(std::size_t buffer_le
 void VirtualDeviceTransferOperator::free_transfer_handle(void *handle) {
     // leaf op 已存入 TransferHandle，正常路径不会走到这里。
     // 如果走了，说明 caller 没有正确使用 TransferHandle::get_operator()。
-    SPDLOG_ERROR("VDTO::free_transfer_handle handle={:p} 不应被调用", static_cast<const void*>(handle));
+    SPDLOG_ERROR("VDTO::free_transfer_handle handle={:p} 不应被调用", static_cast<const void *>(handle));
 }
 
 void *VirtualDeviceTransferOperator::get_transfer_buffer(void *handle) {
@@ -47,18 +47,17 @@ UsbIpIsoPacketDescriptor VirtualDeviceTransferOperator::get_iso_descriptor(void 
     return generic_op_.get_iso_descriptor(handle, index);
 }
 
-void VirtualDeviceTransferOperator::set_iso_descriptor(void *handle, int index,
-                                                       const UsbIpIsoPacketDescriptor &desc) {
+void VirtualDeviceTransferOperator::set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) {
     generic_op_.set_iso_descriptor(handle, index, desc);
 }
 
-void VirtualDeviceTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::socket &sock,
-                                                       std::size_t length, std::error_code &ec) {
+void VirtualDeviceTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                                                       std::error_code &ec) {
     generic_op_.send_transfer_data(handle, sock, length, ec);
 }
 
-void VirtualDeviceTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock,
-                                                       std::size_t length, std::error_code &ec) {
+void VirtualDeviceTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+                                                       std::error_code &ec) {
     generic_op_.recv_transfer_data(handle, sock, length, ec);
 }
 

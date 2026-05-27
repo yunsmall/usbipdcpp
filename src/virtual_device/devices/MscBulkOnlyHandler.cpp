@@ -2,15 +2,15 @@
 
 #include "virtual_device/devices/MscBulkOnlyHandler.h"
 
-#include <spdlog/spdlog.h>
-#include <cstring>
 #include <algorithm>
+#include <cstring>
+#include <spdlog/spdlog.h>
 
 #include "Session.h"
 #include "SetupPacket.h"
 #include "constant.h"
-#include "virtual_device/storage_backends/StorageTransferOperator.h"
 #include "virtual_device/VirtualDeviceHandler.h"
+#include "virtual_device/storage_backends/StorageTransferOperator.h"
 
 using namespace usbipdcpp;
 
@@ -24,10 +24,8 @@ static std::string wstr_to_ascii(const std::wstring &ws, const std::string &fall
 }
 
 MscBulkOnlyHandler::MscBulkOnlyHandler(UsbInterface &handle_interface, StringPool &string_pool,
-                                       std::unique_ptr<StorageBackend> backend, MscConfig config,
-                                       bool read_only) :
-    VirtualInterfaceHandler(handle_interface, string_pool,
-                            std::make_unique<StorageTransferOperator>(this)),
+                                       std::unique_ptr<StorageBackend> backend, MscConfig config, bool read_only) :
+    VirtualInterfaceHandler(handle_interface, string_pool, std::make_unique<StorageTransferOperator>(this)),
     backend_(std::move(backend)), read_only_(read_only), config_(std::move(config)) {
 }
 
@@ -72,13 +70,12 @@ void MscBulkOnlyHandler::on_disconnection(error_code &ec) {
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
-void MscBulkOnlyHandler::handle_non_standard_request_type_control_urb(
-        std::uint32_t seqnum, const UsbEndpoint &ep,
-        std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-        const SetupPacket &setup_packet,
-        TransferHandle transfer, std::error_code &ec) {
-    session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+void MscBulkOnlyHandler::handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                                      std::uint32_t transfer_flags,
+                                                                      std::uint32_t transfer_buffer_length,
+                                                                      const SetupPacket &setup_packet,
+                                                                      TransferHandle transfer, std::error_code &ec) {
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 /** 为 OUT 传输提供目标缓冲区，由 StorageTransferOperator::alloc_transfer_handle 调用。
@@ -98,8 +95,7 @@ void *MscBulkOnlyHandler::prepare_out_buffer(std::size_t length, StorageIoTransf
                 trx->direct_io = true;
                 trx->file_lba = write_lba_;
                 trx->file_offset = write_accumulated_;
-                SPDLOG_DEBUG("MSC::prepare_out WRITE mmap lba={} offset={}",
-                             write_lba_, write_accumulated_);
+                SPDLOG_DEBUG("MSC::prepare_out WRITE mmap lba={} offset={}", write_lba_, write_accumulated_);
                 return static_cast<char *>(write_mmap_base_) + write_accumulated_;
             }
             // 非 mmap WRITE / UNMAP：socket 直读到 staging 尾部
@@ -331,10 +327,8 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     // WRITE (10)
                     auto lba = (std::uint64_t(current_cbw_.CBWCB[2]) << 24) |
                                (std::uint64_t(current_cbw_.CBWCB[3]) << 16) |
-                               (std::uint64_t(current_cbw_.CBWCB[4]) << 8) |
-                               (std::uint64_t(current_cbw_.CBWCB[5]));
-                    auto count = (std::uint16_t(current_cbw_.CBWCB[7]) << 8) |
-                                 (std::uint16_t(current_cbw_.CBWCB[8]));
+                               (std::uint64_t(current_cbw_.CBWCB[4]) << 8) | (std::uint64_t(current_cbw_.CBWCB[5]));
+                    auto count = (std::uint16_t(current_cbw_.CBWCB[7]) << 8) | (std::uint16_t(current_cbw_.CBWCB[8]));
                     if (count == 0)
                         count = 256;
 
@@ -355,8 +349,8 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                             staging_data_.clear();
                         }
                         else {
-                            staging_data_.resize(
-                                    read_total_size_ = static_cast<std::size_t>(count) * backend_->block_size());
+                            staging_data_.resize(read_total_size_ =
+                                                         static_cast<std::size_t>(count) * backend_->block_size());
                             backend_->read(lba, count, staging_data_.data());
                         }
                         state_ = BotState::DataIn;
@@ -465,10 +459,9 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
     }
 }
 
-void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
-                                              std::uint32_t transfer_flags,
-                                              std::uint32_t transfer_buffer_length,
-                                              TransferHandle transfer, std::error_code &ec) {
+void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                              std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                              std::error_code &ec) {
     SPDLOG_DEBUG("BULK {} ep={:02x} len={} state={}", ep.is_in() ? "IN" : "OUT", ep.address, transfer_buffer_length,
                  static_cast<int>(state_));
 
@@ -487,24 +480,22 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
                         trx->file_lba = read_lba_;
                         trx->file_offset = staging_offset_;
                         SPDLOG_DEBUG("MSC::hb IN mmap handle={:p} lba={} offset={} len={}",
-                                     static_cast<const void*>(transfer.get()), read_lba_, staging_offset_, len);
+                                     static_cast<const void *>(transfer.get()), read_lba_, staging_offset_, len);
                     }
                     else {
                         trx->external_buf = staging_data_.data() + staging_offset_;
                         SPDLOG_DEBUG("MSC::hb IN staging handle={:p} offset={} len={}",
-                                     static_cast<const void*>(transfer.get()), staging_offset_, len);
+                                     static_cast<const void *>(transfer.get()), staging_offset_, len);
                     }
                     trx->actual_length = len;
                     staging_offset_ += len;
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                                    static_cast<std::uint32_t>(len), std::move(transfer)));
+                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
+                            static_cast<std::uint32_t>(len), std::move(transfer)));
                 }
                 else {
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0));
+                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0));
                 }
                 // 全部发完 → Status，不清 staging/mmap（sender 还在排队发送）
                 if (staging_offset_ >= total) {
@@ -527,15 +518,13 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
 
                 auto *trx = StorageIoTransfer::from_handle(transfer.get());
                 SPDLOG_DEBUG("MSC::hb Status handle={:p} CSW_tag=0x{:08X} status={}",
-                             static_cast<const void*>(transfer.get()), csw.dCSWTag, csw.bCSWStatus);
+                             static_cast<const void *>(transfer.get()), csw.dCSWTag, csw.bCSWStatus);
                 trx->fallback_data.resize(sizeof(CSW));
                 std::memcpy(trx->fallback_data.data(), &csw, sizeof(CSW));
                 trx->external_buf = trx->fallback_data.data();
                 trx->actual_length = sizeof(CSW);
-                session->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
-                                seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                                sizeof(CSW), std::move(transfer)));
+                session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                        seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), sizeof(CSW), std::move(transfer)));
                 // CSW 入队后切回 Idle，旧 staging 延迟到下一个 CBW 的 Idle 分支清空，
                 // 保证 sender 线程有足够时间消费完外部指针（avoid use-after-free）
                 state_ = BotState::Idle;
@@ -548,15 +537,12 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
         }
     }
     else {
-        SPDLOG_DEBUG("MSC::hb OUT drop handle={:p}", static_cast<const void*>(transfer.get()));
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-                        seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
-                        transfer_buffer_length));
+        SPDLOG_DEBUG("MSC::hb OUT drop handle={:p}", static_cast<const void *>(transfer.get()));
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
     }
 }
 
 void MscBulkOnlyHandler::send_stall(std::uint32_t seqnum) {
-    session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }

@@ -28,4 +28,4 @@ enum HidDescriptorType {
     Report = 0x22,
     Physical = 0x23,
 };
-}
+} // namespace usbipdcpp

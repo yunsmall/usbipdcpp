@@ -1,7 +1,7 @@
 #include "virtual_device/SimpleVirtualDeviceHandler.h"
 #include "Session.h"
-#include "virtual_device/VirtualInterfaceHandler.h"
 #include "protocol.h"
+#include "virtual_device/VirtualInterfaceHandler.h"
 
 
 using namespace usbipdcpp;
@@ -11,9 +11,7 @@ void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_con
         const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
     SPDLOG_ERROR("Unimplement non standard control transfer request to simple device");
     // TransferHandle 析构时会自动释放
-    session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0)
-            );
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 
@@ -44,13 +42,14 @@ void usbipdcpp::SimpleVirtualDeviceHandler::request_set_descriptor(std::uint8_t 
     SPDLOG_WARN("Unimplement request_set_descriptor to simple device");
 }
 
-void usbipdcpp::SimpleVirtualDeviceHandler::
-request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+void usbipdcpp::SimpleVirtualDeviceHandler::request_set_feature(std::uint16_t feature_selector,
+                                                                std::uint32_t *p_status) {
     SPDLOG_WARN("Unimplement request_set_feature to simple device");
 }
 
 usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_descriptor(std::uint8_t language_id,
-    std::uint16_t descriptor_length, std::uint32_t *p_status) {
+                                                                                       std::uint16_t descriptor_length,
+                                                                                       std::uint32_t *p_status) {
     SPDLOG_WARN("Unimplement get_other_speed_descriptor to simple device");
     return {};
 }
@@ -58,4 +57,3 @@ usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_desc
 void usbipdcpp::SimpleVirtualDeviceHandler::set_descriptor(std::uint16_t configuration_value) {
     SPDLOG_WARN("Unimplement set_descriptor to simple device");
 }
-

@@ -16,8 +16,10 @@ class StorageBackend {
 public:
     virtual ~StorageBackend() = default;
 
-    virtual void read(std::uint64_t lba, std::uint16_t count, void *buffer) = 0;
-    virtual bool write(std::uint64_t lba, std::uint16_t count, const std::uint8_t *data) = 0;
+    /** @return 实际读取的字节数 */
+    virtual std::size_t read(std::uint64_t lba, std::uint16_t count, void *buffer) = 0;
+    /** @return 实际写入的字节数 */
+    virtual std::size_t write(std::uint64_t lba, std::uint16_t count, const void *data) = 0;
 
     // 释放 LBA 范围的物理存储（可选，默认空实现）
     virtual void punch_hole(std::uint64_t lba, std::uint64_t count) {
