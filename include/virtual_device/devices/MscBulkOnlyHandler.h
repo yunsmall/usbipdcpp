@@ -49,6 +49,10 @@ public:
 private:
     /** device_handler 已设置后回调，从 USB 字符串补全 MscConfig 空字段 */
     void on_setup_interface_handlers() override;
+    /** 客户端连接时重置 BOT 状态机 */
+    void on_new_connection(Session &current_session, error_code &ec) override;
+    /** 客户端断开时重置 BOT 状态机 */
+    void on_disconnection(error_code &ec) override;
 
     std::unique_ptr<StorageBackend> backend_;
     bool read_only_ = false;

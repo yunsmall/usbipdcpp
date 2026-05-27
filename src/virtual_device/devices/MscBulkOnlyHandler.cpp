@@ -40,6 +40,36 @@ void MscBulkOnlyHandler::on_setup_interface_handlers() {
     if (config_.revision.empty()) config_.revision = "1.00";
 }
 
+void MscBulkOnlyHandler::on_new_connection(Session &current_session, error_code &ec) {
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    state_ = BotState::Idle;
+    current_cbw_ = {};
+    staging_data_.clear();
+    staging_offset_ = 0;
+    data_residue_ = 0;
+    command_failed_ = false;
+    data_out_unmap_ = false;
+    read_mmap_base_ = nullptr;
+    read_total_size_ = 0;
+    write_mmap_base_ = nullptr;
+    write_accumulated_ = 0;
+}
+
+void MscBulkOnlyHandler::on_disconnection(error_code &ec) {
+    state_ = BotState::Idle;
+    current_cbw_ = {};
+    staging_data_.clear();
+    staging_offset_ = 0;
+    data_residue_ = 0;
+    command_failed_ = false;
+    data_out_unmap_ = false;
+    read_mmap_base_ = nullptr;
+    read_total_size_ = 0;
+    write_mmap_base_ = nullptr;
+    write_accumulated_ = 0;
+    VirtualInterfaceHandler::on_disconnection(ec);
+}
+
 void MscBulkOnlyHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t seqnum, const UsbEndpoint &ep,
         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,

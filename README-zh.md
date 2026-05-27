@@ -239,6 +239,26 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    使用：`mock_msc [disk.img]`（默认 `disk.img`，4096 块 × 512 字节 = 2 MiB）
 
+   **启用 discard/TRIM（打洞）**：
+
+   Linux 内核默认对 USB 存储设备跳过 VPD 查询，导致 UNMAP 命令无法下发。需在客户端启用：
+
+   ```bash
+   # 查看设备 SCSI 路径
+   ls /sys/class/scsi_disk/
+   # 对找到的路径写入 unmap（替换 X:0:0:0 为实际值）
+   echo unmap > /sys/class/scsi_disk/X:0:0:0/provisioning_mode
+   ```
+
+   或创建 udev 规则持久生效：
+   ```bash
+   # /etc/udev/rules.d/50-usb-ssd-trim.rules
+   ACTION=="add|change", SUBSYSTEM=="scsi_disk", ATTR{provisioning_mode}="unmap"
+   ```
+
+   启用后通过 `sudo fstrim -v /mountpoint` 手动触发 discard，
+   或 `sudo systemctl enable fstrim.timer` 开启定时 trim。
+
 8. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
