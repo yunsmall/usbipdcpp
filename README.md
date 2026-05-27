@@ -325,6 +325,30 @@ If you encounter an error:
 
 ### Full compile commands:
 
+#### Linux (Ubuntu/Debian) — without vcpkg
+
+Install dependencies directly via apt:
+
+```bash
+# Required
+sudo apt install libasio-dev libspdlog-dev
+
+# If building tests (USBIPDCPP_BUILD_TESTS=ON by default)
+sudo apt install libgtest-dev
+
+# If building libusb components (USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON by default)
+sudo apt install libusb-1.0-0-dev
+
+# Build
+cmake -B build -DUSBIPDCPP_USE_PKGCONF_ASIO=ON
+cmake --build build
+cmake --install build
+```
+
+Skip the corresponding apt packages when disabling features:
+- `-DUSBIPDCPP_BUILD_TESTS=OFF` → skip `libgtest-dev`
+- `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → skip `libusb-1.0-0-dev`
+
 #### Use vcpkg as the package manager:
 
 Please install asio libusb libevdev spdlog in advance

@@ -319,6 +319,30 @@ Python 绑定正在**积极开发中**，可能存在 bug 或崩溃问题。
 
 ### 完整编译命令：
 
+#### Linux (Ubuntu/Debian) — 不使用 vcpkg
+
+直接通过 apt 安装依赖，无需 vcpkg：
+
+```bash
+# 必需
+sudo apt install libasio-dev libspdlog-dev
+
+# 如果需要编译测试（默认 USBIPDCPP_BUILD_TESTS=ON）
+sudo apt install libgtest-dev
+
+# 如果需要 libusb 转发物理设备（默认 USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON）
+sudo apt install libusb-1.0-0-dev
+
+# 编译
+cmake -B build -DUSBIPDCPP_USE_PKGCONF_ASIO=ON
+cmake --build build
+cmake --install build
+```
+
+禁用对应功能时可跳过相应的 apt 包和 cmake 选项：
+- `-DUSBIPDCPP_BUILD_TESTS=OFF` → 可不装 `libgtest-dev`
+- `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → 可不装 `libusb-1.0-0-dev`
+
 #### 使用vcpkg包管理器
 请提前装好asio libusb libevdev spdlog等库
 ```bash
