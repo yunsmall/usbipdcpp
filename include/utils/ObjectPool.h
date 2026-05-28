@@ -1,8 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <mutex>
 #include <type_traits>
-#include <algorithm>
 #include <utility>
 
 namespace usbipdcpp {
@@ -15,6 +15,10 @@ namespace usbipdcpp {
  * - 可验证指针归属，防止重复 free
  * - alloc O(1)，free O(log n)
  * - 可选线程安全
+ *
+ * @warning **归还前必须重置**：free() 不会自动清理对象状态，调用者必须在归还前
+ * 确保对象的所有字段已重置到初始值（可提供 T::reset() 方法统一处理）。
+ * 否则下一次 alloc() 拿到的对象可能残留上一轮的脏数据。
  *
  * @tparam T 对象类型
  * @tparam PoolSize 池大小
@@ -31,9 +35,7 @@ public:
             pool_[i] = {new T{}, false};
         }
         // 按指针排序，用于二分查找
-        std::sort(pool_, pool_ + PoolSize, [](const auto &a, const auto &b) {
-            return a.first < b.first;
-        });
+        std::sort(pool_, pool_ + PoolSize, [](const auto &a, const auto &b) { return a.first < b.first; });
         // 初始化空闲索引栈
         for (size_t i = 0; i < PoolSize; ++i) {
             free_stack_[i] = i;
@@ -160,9 +162,7 @@ private:
     bool free_impl(T *obj) {
         // 二分查找指针
         auto it = std::lower_bound(pool_, pool_ + PoolSize, obj,
-                                   [](const auto &elem, T *val) {
-                                       return elem.first < val;
-                                   });
+                                   [](const auto &elem, T *val) { return elem.first < val; });
         if (it == pool_ + PoolSize || it->first != obj) {
             return false; // 不是本池的对象
         }

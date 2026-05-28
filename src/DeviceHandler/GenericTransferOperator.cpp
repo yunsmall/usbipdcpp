@@ -42,18 +42,11 @@ void GenericTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::so
         SmallVector<asio::const_buffer, 130> buffers;
         SmallVector<decltype(UsbIpIsoPacketDescriptor{}.to_bytes()), 130> desc_bytes;
         bool need_to_send_buffer = (length > 0);
-        std::uint32_t wire_offset = 0;
         for (auto &iso: trx->iso_descriptors) {
             if (need_to_send_buffer)
                 buffers.push_back(asio::buffer(trx->data.data() + iso.offset, iso.actual_length));
-            UsbIpIsoPacketDescriptor wire_desc{
-                    .offset = wire_offset,
-                    .length = iso.actual_length,
-                    .actual_length = iso.actual_length,
-                    .status = iso.status,
-            };
-            desc_bytes.push_back(wire_desc.to_bytes());
-            wire_offset += iso.actual_length;
+            // 描述符原样透传，offset/length 保持调用者设置的 buffer 布局值
+            desc_bytes.push_back(iso.to_bytes());
         }
         for (auto &bytes: desc_bytes) {
             buffers.push_back(asio::buffer(bytes));

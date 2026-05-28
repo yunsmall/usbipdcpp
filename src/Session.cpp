@@ -2,20 +2,18 @@
 
 #include <asio.hpp>
 #include <optional>
-#include <variant>
 #include <spdlog/spdlog.h>
+#include <variant>
 
 #include "DeviceHandler/DeviceHandler.h"
 
-#include "Server.h"
-#include "Device.h"
-#include "protocol.h"
-#include "network.h"
 #include "../include/utils/utils.h"
+#include "Device.h"
+#include "Server.h"
+#include "network.h"
+#include "protocol.h"
 
-usbipdcpp::Session::Session(Server &server) :
-    server(server),
-    socket(session_io_context) {
+usbipdcpp::Session::Session(Server &server) : server(server), socket(session_io_context) {
 }
 
 void usbipdcpp::Session::enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
@@ -48,17 +46,17 @@ usbipdcpp::Session::~Session() {
 }
 
 void usbipdcpp::Session::run() {
-    //先获取自身指针，防止被智能指针析构
+    // 先获取自身指针，防止被智能指针析构
     auto self = shared_from_this();
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionMain);
     }
-    run_thread = std::thread([self=std::move(self)]() {
+    run_thread = std::thread([self = std::move(self)]() {
         self->parse_op();
 
-        //处理结束后自动往服务器中删除自身并触发退出回调
+        // 处理结束后自动往服务器中删除自身并触发退出回调
         self->server.remove_session(self.get());
-        //把当前这个线程detach了，防止线程内部析构自己导致报错
+        // 把当前这个线程detach了，防止线程内部析构自己导致报错
         self->run_thread.detach();
     });
     if (server.after_thread_create_callback) {
@@ -81,105 +79,109 @@ void usbipdcpp::Session::parse_op() {
 
         goto close_socket;
     }
-    std::visit([&,this](auto &&cmd) {
-        using T = std::remove_cvref_t<decltype(cmd)>;
-        if constexpr (std::is_same_v<UsbIpCommand::OpReqDevlist, T>) {
-            SPDLOG_TRACE("收到 OpReqDevlist 包");
-            data_type to_be_sent;
-            {
-                std::shared_lock lock(server.devices_mutex);
-                to_be_sent = UsbIpResponse::OpRepDevlist::create_from_devices(server.available_devices).to_bytes();
-            }
-            asio::write(socket, asio::buffer(to_be_sent), ec);
-            if (!ec)[[likely]]
-                    SPDLOG_TRACE("成功发送 OpRepDevlist 包");
-            else
-                SPDLOG_TRACE("发送 OpRepDevlist 包出错{}", ec.message());
-        }
-        else if constexpr (std::is_same_v<UsbIpCommand::OpReqImport, T>) {
-            SPDLOG_TRACE("收到 OpReqImport 包");
-            auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
-            UsbIpResponse::OpRepImport op_rep_import{};
-            SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
+    std::visit(
+            [&, this](auto &&cmd) {
+                using T = std::remove_cvref_t<decltype(cmd)>;
+                if constexpr (std::is_same_v<UsbIpCommand::OpReqDevlist, T>) {
+                    SPDLOG_TRACE("收到 OpReqDevlist 包");
+                    data_type to_be_sent;
+                    {
+                        std::shared_lock lock(server.devices_mutex);
+                        to_be_sent =
+                                UsbIpResponse::OpRepDevlist::create_from_devices(server.available_devices).to_bytes();
+                    }
+                    asio::write(socket, asio::buffer(to_be_sent), ec);
+                    if (!ec) [[likely]]
+                        SPDLOG_TRACE("成功发送 OpRepDevlist 包");
+                    else
+                        SPDLOG_TRACE("发送 OpRepDevlist 包出错{}", ec.message());
+                }
+                else if constexpr (std::is_same_v<UsbIpCommand::OpReqImport, T>) {
+                    SPDLOG_TRACE("收到 OpReqImport 包");
+                    auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
+                    UsbIpResponse::OpRepImport op_rep_import{};
+                    SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
 
-            bool target_device_is_using = false;
-            bool open_device_failed = false;
-            //已经在使用的不支持导出
-            if (server.is_device_using(wanted_busid)) {
-                spdlog::warn("正在使用的设备不支持导出");
-                //查看内核源码中 tools/usbip/src/usbipd.c 函数 recv_request_import 源码可以发现应该返回NA而不是DevBusy
-                op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-                        static_cast<std::uint32_t>(OperationStatuType::NA));
-                target_device_is_using = true;
-            }
-            else {
-                if (auto using_device = server.try_moving_device_to_using(wanted_busid)) {
-                    std::lock_guard lock(current_import_device_data_mutex);
-                    spdlog::info("成功将设备放入正在使用的设备中");
-                    current_import_device_id = wanted_busid;
-                    //将当前使用的设备指向这个设备
-                    current_import_device = using_device;
-                    current_handler = using_device->handler;
-                    spdlog::info("成功缓存正在使用的设备");
+                    bool target_device_is_using = false;
+                    bool open_device_failed = false;
+                    // 已经在使用的不支持导出
+                    if (server.is_device_using(wanted_busid)) {
+                        spdlog::warn("正在使用的设备不支持导出");
+                        // 查看内核源码中 tools/usbip/src/usbipd.c 函数 recv_request_import
+                        // 源码可以发现应该返回NA而不是DevBusy
+                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                static_cast<std::uint32_t>(OperationStatuType::NA));
+                        target_device_is_using = true;
+                    }
+                    else {
+                        if (auto using_device = server.try_moving_device_to_using(wanted_busid)) {
+                            std::lock_guard lock(current_import_device_data_mutex);
+                            spdlog::info("成功将设备放入正在使用的设备中");
+                            current_import_device_id = wanted_busid;
+                            // 将当前使用的设备指向这个设备
+                            current_import_device = using_device;
+                            current_handler = using_device->handler;
+                            spdlog::info("成功缓存正在使用的设备");
 
-                    // 在发送 OpRepImport 之前尝试打开设备
-                    usbipdcpp::error_code open_ec;
-                    current_handler->on_new_connection(*this, open_ec);
-                    if (open_ec) {
-                        SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
-                        open_device_failed = true;
-                        // 将设备移回可用列表
-                        server.try_moving_device_to_available(wanted_busid);
-                        current_import_device.reset();
-                        current_handler.reset();
-                        current_import_device_id.reset();
+                            // 在发送 OpRepImport 之前尝试打开设备
+                            usbipdcpp::error_code open_ec;
+                            current_handler->on_new_connection(*this, open_ec);
+                            if (open_ec) {
+                                SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
+                                open_device_failed = true;
+                                // 将设备移回可用列表
+                                server.try_moving_device_to_available(wanted_busid);
+                                current_import_device.reset();
+                                current_handler.reset();
+                                current_import_device_id.reset();
+                            }
+                        }
+                    }
+
+                    if (!target_device_is_using && !open_device_failed) {
+                        std::shared_lock lock(current_import_device_data_mutex);
+                        if (current_import_device) {
+                            spdlog::info("找到目标设备，可以导入");
+                            op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
+                            cmd_transferring = true;
+                        }
+                        else {
+                            spdlog::info("不存在目标设备，不可导入");
+                            op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                    static_cast<std::uint32_t>(OperationStatuType::NoDev));
+                        }
+                    }
+                    else if (open_device_failed) {
+                        op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                static_cast<std::uint32_t>(OperationStatuType::NA));
+                    }
+
+                    auto to_be_sent = op_rep_import.to_bytes();
+                    SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
+                    [[maybe_unused]] auto size = asio::write(socket, asio::buffer(to_be_sent), ec);
+                    if (!ec) [[likely]]
+                        SPDLOG_TRACE("成功发送 OpRepImport 包", size);
+                    else
+                        SPDLOG_TRACE("发送 OpRepImport 包出错{}", ec.message());
+
+                    if (cmd_transferring) {
+                        usbipdcpp::error_code transferring_ec;
+                        // 进入通信状态
+                        transfer_loop(transferring_ec);
+                        if (transferring_ec) {
+                            SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
+                            ec = transferring_ec;
+                        }
+
+                        // on_disconnection 和设备清理已在 receiver 中处理
                     }
                 }
-            }
-
-            if (!target_device_is_using && !open_device_failed) {
-                std::shared_lock lock(current_import_device_data_mutex);
-                if (current_import_device) {
-                    spdlog::info("找到目标设备，可以导入");
-                    op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
-                    cmd_transferring = true;
-                }
                 else {
-                    spdlog::info("不存在目标设备，不可导入");
-                    op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-                            static_cast<std::uint32_t>(OperationStatuType::NoDev));
+                    // 确保处理了所有可能类型
+                    static_assert(!std::is_same_v<T, T>);
                 }
-            }
-            else if (open_device_failed) {
-                op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-                        static_cast<std::uint32_t>(OperationStatuType::NA));
-            }
-
-            auto to_be_sent = op_rep_import.to_bytes();
-            SPDLOG_TRACE("即将向服务器发送{}，共{}字节", get_every_byte(to_be_sent), to_be_sent.size());
-            [[maybe_unused]] auto size = asio::write(socket, asio::buffer(to_be_sent), ec);
-            if (!ec)[[likely]]
-                    SPDLOG_TRACE("成功发送 OpRepImport 包", size);
-            else
-                SPDLOG_TRACE("发送 OpRepImport 包出错{}", ec.message());
-
-            if (cmd_transferring) {
-                usbipdcpp::error_code transferring_ec;
-                //进入通信状态
-                transfer_loop(transferring_ec);
-                if (transferring_ec) {
-                    SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
-                    ec = transferring_ec;
-                }
-
-                // on_disconnection 和设备清理已在 receiver 中处理
-            }
-        }
-        else {
-            //确保处理了所有可能类型
-            static_assert(!std::is_same_v<T, T>);
-        }
-    }, op);
+            },
+            op);
 
 close_socket:
     std::error_code ignore_ec;
@@ -204,9 +206,7 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionSender);
     }
-    std::thread sender_thread([&,this]() {
-        sender(sender_ec);
-    });
+    std::thread sender_thread([&, this]() { sender(sender_ec); });
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionSender, sender_thread);
     }
@@ -224,7 +224,7 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
         SPDLOG_ERROR("An error occur during sending: {}", sender_ec.message());
         transferring_ec = sender_ec;
     }
-    //一般来说receiver_ec的ec重要一点，因此会覆盖掉
+    // 一般来说receiver_ec的ec重要一点，因此会覆盖掉
     else if (receiver_ec) {
         SPDLOG_ERROR("An error occur during receiving: {}", receiver_ec.message());
         transferring_ec = receiver_ec;
@@ -234,17 +234,16 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
 
 std::optional<usbipdcpp::UsbIpResponse::RetVariant> usbipdcpp::Session::sender_get_data(usbipdcpp::error_code &ec) {
     // 如果 read_buffer 为空，尝试交换
-    if (read_buffer.empty())[[likely]] {
+    if (read_buffer.empty()) [[likely]] {
         std::unique_lock lock(swap_mutex);
-        data_available_cv.wait(lock, [this]() {
-            return has_data.load(std::memory_order_acquire) || should_immediately_stop;
-        });
+        data_available_cv.wait(
+                lock, [this]() { return has_data.load(std::memory_order_acquire) || should_immediately_stop; });
         if (!write_buffer.empty()) {
             read_buffer.swap(write_buffer);
             has_data.store(false, std::memory_order_release);
         }
     }
-    if (!read_buffer.empty())[[likely]] {
+    if (!read_buffer.empty()) [[likely]] {
         usbipdcpp::UsbIpResponse::RetVariant ret_v = std::move(read_buffer.front());
         read_buffer.pop_front();
         return ret_v;
@@ -260,7 +259,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
         usbipdcpp::error_code ec;
 
         auto command = UsbIpCommand::get_cmd_from_socket(socket, current_handler.get(), ec);
-        if (ec)[[unlikely]] {
+        if (ec) [[unlikely]] {
             if (ec.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
                 SPDLOG_DEBUG("连接关闭");
             }
@@ -272,78 +271,74 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
             }
             break;
         }
-        if (should_immediately_stop)[[unlikely]]
+        if (should_immediately_stop) [[unlikely]]
             break;
-        std::visit([&,this](auto &&cmd) {
-            using T = std::remove_cvref_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdSubmit, T>) {
-                UsbIpCommand::UsbIpCmdSubmit &cmd2 = cmd;
-                LATENCY_TRACK_START(latency_tracker, cmd2.header.seqnum);
-                SPDLOG_TRACE("收到 UsbIpCmdSubmit 包，序列号: {}", cmd2.header.seqnum);
-                auto out = cmd2.header.direction == UsbIpDirection::Out;
-                SPDLOG_TRACE("Usbip传输方向为：{}", out ? "out" : "in");
-                std::uint8_t real_ep = out
-                                           ? static_cast<std::uint8_t>(cmd2.header.ep)
-                                           : (static_cast<std::uint8_t>(cmd2.header.ep) | 0x80);
-                SPDLOG_TRACE("传输的真实端口为 {:02x}", real_ep);
-                [[maybe_unused]] auto current_seqnum = cmd2.header.seqnum;
+        std::visit(
+                [&, this](auto &&cmd) {
+                    using T = std::remove_cvref_t<decltype(cmd)>;
+                    if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdSubmit, T>) {
+                        UsbIpCommand::UsbIpCmdSubmit &cmd2 = cmd;
+                        LATENCY_TRACK_START(latency_tracker, cmd2.header.seqnum);
+                        SPDLOG_TRACE("收到 UsbIpCmdSubmit 包，序列号: {}", cmd2.header.seqnum);
+                        auto out = cmd2.header.direction == UsbIpDirection::Out;
+                        SPDLOG_TRACE("Usbip传输方向为：{}", out ? "out" : "in");
+                        std::uint8_t real_ep = out ? static_cast<std::uint8_t>(cmd2.header.ep)
+                                                   : (static_cast<std::uint8_t>(cmd2.header.ep) | 0x80);
+                        SPDLOG_TRACE("传输的真实端口为 {:02x}", real_ep);
+                        [[maybe_unused]] auto current_seqnum = cmd2.header.seqnum;
 
-                auto ep_find_ret = current_import_device->find_ep(real_ep);
-                if (ep_find_ret.has_value())[[likely]] {
-                    auto &ep = ep_find_ret->first;
-                    auto &intf = ep_find_ret->second;
+                        auto ep_find_ret = current_import_device->find_ep(real_ep);
+                        if (ep_find_ret.has_value()) [[likely]] {
+                            auto &ep = ep_find_ret->first;
+                            auto &intf = ep_find_ret->second;
 
-                    SPDLOG_TRACE("->端口{0:02x}", ep.address);
-                    SPDLOG_TRACE("->setup数据{}", get_every_byte(cmd2.setup.to_bytes()));
+                            SPDLOG_TRACE("->端口{0:02x}", ep.address);
+                            SPDLOG_TRACE("->setup数据{}", get_every_byte(cmd2.setup.to_bytes()));
 
 
-                    usbipdcpp::error_code ec_during_handling_urb;
-                    // start_processing_urb();
-                    LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备receive_urb");
-                    current_handler->receive_urb(
-                            std::move(cmd2),
-                            ep,
-                            std::move(intf),
-                            ec_during_handling_urb
-                            );
+                            usbipdcpp::error_code ec_during_handling_urb;
+                            // start_processing_urb();
+                            LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备receive_urb");
+                            current_handler->receive_urb(std::move(cmd2), ep, std::move(intf), ec_during_handling_urb);
 
-                    if (ec_during_handling_urb)[[unlikely]] {
-                        SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
-                        //发生错误代表已经不能继续通信了
-                        receiver_ec = ec_during_handling_urb;
-                        should_immediately_stop = true;
-                        return;
+                            if (ec_during_handling_urb) [[unlikely]] {
+                                SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
+                                // 发生错误代表已经不能继续通信了
+                                receiver_ec = ec_during_handling_urb;
+                                should_immediately_stop = true;
+                                return;
+                            }
+                        }
+                        else {
+                            SPDLOG_WARN("找不到端点{}", real_ep);
+                            UsbIpResponse::UsbIpRetSubmit ret_submit =
+                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
+                                            cmd2.header.seqnum, 0);
+                            ret_submit.to_socket(socket, ec);
+                            SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
+                        }
                     }
-                }
-                else {
-                    SPDLOG_WARN("找不到端点{}", real_ep);
-                    UsbIpResponse::UsbIpRetSubmit ret_submit =
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
-                                    cmd2.header.seqnum, 0);
-                    ret_submit.to_socket(socket, ec);
-                    SPDLOG_TRACE("成功发送 UsbIpRetSubmit 包");
-                }
-            }
-            else if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdUnlink, T>) {
-                UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
-                SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
+                    else if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdUnlink, T>) {
+                        UsbIpCommand::UsbIpCmdUnlink &cmd2 = cmd;
+                        SPDLOG_TRACE("收到 UsbIpCmdUnlink 包，序列号: {}", cmd2.header.seqnum);
 
-                current_handler->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
-            }
-            else if constexpr (std::is_same_v<std::monostate, T>) {
-                SPDLOG_ERROR("收到未知包");
-                receiver_ec = make_error_code(ErrorType::UNKNOWN_CMD);
-            }
-            else {
-                //确保处理了所有可能类型
-                static_assert(!std::is_same_v<T, T>);
-            }
-            return;
-        }, command);
+                        current_handler->handle_unlink_seqnum(cmd2.unlink_seqnum, cmd2.header.seqnum);
+                    }
+                    else if constexpr (std::is_same_v<std::monostate, T>) {
+                        SPDLOG_ERROR("收到未知包");
+                        receiver_ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                    }
+                    else {
+                        // 确保处理了所有可能类型
+                        static_assert(!std::is_same_v<T, T>);
+                    }
+                    return;
+                },
+                command);
     }
-    //通知设备断连，告诉设备禁止再发消息
+    // 通知设备断连，告诉设备禁止再发消息
     current_handler->on_disconnection(receiver_ec);
-    //然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
+    // 然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
     should_immediately_stop = true;
     data_available_cv.notify_one();
 
@@ -351,7 +346,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
      * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
      * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
      * 因此先标记为可用再清除这两个变量的状态
-    */
+     */
     if (current_handler->is_device_removed()) {
         // 设备已物理拔出，直接从 using_devices 移除
         SPDLOG_INFO("设备已物理拔出，不再移回可用列表");
@@ -372,42 +367,45 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
     // 队列无法分辨先后，必须手动先发 SUBMIT 再发 UNLINK。
     //
     // 以 libusb 后端为例：transfer_callback 在 transfers_mutex_ 锁内同时完成
-    //「从 map 移除 → 入队 RET_SUBMIT」，handle_unlink_seqnum 想介入必须等锁释放。
+    // 「从 map 移除 → 入队 RET_SUBMIT」，handle_unlink_seqnum 想介入必须等锁释放。
     // 等它拿到锁时 map 里已无此传输，此时入队的 RET_UNLINK 天然排在 RET_SUBMIT
     // 之后，顺序正确。
     while (!should_immediately_stop) {
         auto send_data_opt = sender_get_data(ec);
-        if (ec || should_immediately_stop)[[unlikely]] {
+        if (ec || should_immediately_stop) [[unlikely]] {
             break;
         }
-        if (!send_data_opt.has_value())[[unlikely]] {
+        if (!send_data_opt.has_value()) [[unlikely]] {
             // 虚假唤醒（入队与唤醒分离后，has_data 为 true 但数据已被前一轮消费）。
             // 仅当 should_immediately_stop 时才退出，否则回去继续等。
-            if (should_immediately_stop) break;
+            if (should_immediately_stop)
+                break;
             continue;
         }
         auto send_data = std::move(send_data_opt.value());
 
         SPDLOG_TRACE("channel收到消息");
         error_code sending_ec;
-        std::visit([&](auto &&cmd) {
-            using T = std::remove_cvref_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
-                cmd.to_socket(socket, sending_ec);
-                LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
-            }
-            else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
-                cmd.to_socket(socket, sending_ec);
-                LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
-            }
-            else if constexpr (std::is_same_v<std::monostate, T>) {
-                SPDLOG_ERROR("收到未知包");
-                sending_ec = make_error_code(ErrorType::UNKNOWN_CMD);
-            }
-            else {
-                static_assert(!std::is_same_v<T, T>);
-            }
-        }, send_data);
+        std::visit(
+                [&](auto &&cmd) {
+                    using T = std::remove_cvref_t<decltype(cmd)>;
+                    if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetSubmit, T>) {
+                        cmd.to_socket(socket, sending_ec);
+                        LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
+                    }
+                    else if constexpr (std::is_same_v<UsbIpResponse::UsbIpRetUnlink, T>) {
+                        cmd.to_socket(socket, sending_ec);
+                        LATENCY_TRACK_END_MSG(latency_tracker, cmd.header.seqnum, "to_socket调用结束");
+                    }
+                    else if constexpr (std::is_same_v<std::monostate, T>) {
+                        SPDLOG_ERROR("收到未知包");
+                        sending_ec = make_error_code(ErrorType::UNKNOWN_CMD);
+                    }
+                    else {
+                        static_assert(!std::is_same_v<T, T>);
+                    }
+                },
+                send_data);
 
         if (sending_ec) {
             // 直接不处理发送过程中的错误

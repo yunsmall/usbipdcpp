@@ -8,11 +8,11 @@
 #include <libusb-1.0/libusb.h>
 
 #include "DeviceHandler/DeviceHandler.h"
+#include "LibusbHandler/tools.h"
 #include "SetupPacket.h"
 #include "constant.h"
 #include "protocol.h"
 #include "utils/ObjectPool.h"
-#include "LibusbHandler/tools.h"
 
 namespace usbipdcpp {
 class USBIPDCPP_API LibusbDeviceHandler : public AbstDeviceHandler {
@@ -55,9 +55,7 @@ public:
     }
 
 public:
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
-                     UsbEndpoint ep,
-                     std::optional<UsbInterface> interface,
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
                      usbipdcpp::error_code &ec) override;
 
     int tweak_clear_halt_cmd(const SetupPacket &setup_packet);
@@ -83,11 +81,20 @@ public:
 
     struct libusb_callback_args {
         LibusbDeviceHandler *handler = nullptr;
-        std::uint32_t seqnum;                          // CMD_SUBMIT 的 seqnum
+        std::uint32_t seqnum; // CMD_SUBMIT 的 seqnum
         bool is_out;
-        TransferHandle transfer;                       // 拥有 libusb_transfer* 的所有权
-        bool unlinking = false;                        // unlink 正在取消中
-        std::uint32_t unlink_cmd_seqnum = 0;           // 对应的 CMD_UNLINK seqnum
+        TransferHandle transfer; // 拥有 libusb_transfer* 的所有权
+        bool unlinking = false; // unlink 正在取消中
+        std::uint32_t unlink_cmd_seqnum = 0; // 对应的 CMD_UNLINK seqnum
+
+        void reset() {
+            handler = nullptr;
+            seqnum = 0;
+            is_out = false;
+            transfer.reset();
+            unlinking = false;
+            unlink_cmd_seqnum = 0;
+        }
     };
 
     static void LIBUSB_CALL transfer_callback(libusb_transfer *trx);
@@ -100,7 +107,7 @@ public:
     std::mutex transfer_complete_mutex_;
     std::condition_variable transfer_complete_cv_;
 
-    //这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
+    // 这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
     std::atomic_bool client_disconnection = false;
     std::atomic_bool device_removed = false;
 
@@ -121,7 +128,7 @@ public:
     // Android 模式：系统设备文件描述符
     intptr_t wrapped_fd_ = -1;
 
-    bool interfaces_claimed_ = false;  // 接口是否已声明
+    bool interfaces_claimed_ = false; // 接口是否已声明
 
     /**
      * @brief Open device and claim interfaces (普通模式).
@@ -143,9 +150,9 @@ public:
      */
     void release_and_close_device();
 
-    //不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
-    //发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交
+    // 不可以有timeout，因为timeout代表设备数据没准备好而不是错误，
+    // 发生timeout了那么依然会提交一个rep_submit，但设备此时没响应因此不能有提交
     static constexpr int timeout_milliseconds = 0;
 };
 
-}
+} // namespace usbipdcpp

@@ -74,24 +74,23 @@ void LibusbTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::soc
     if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS && trx->num_iso_packets > 0) {
         SmallVector<asio::const_buffer, 130> buffers;
         SmallVector<decltype(UsbIpIsoPacketDescriptor{}.to_bytes()), 130> desc_bytes;
-        // data_offset: libusb buffer 中的位置（pkt.length 步长）
-        // wire_offset: 线上紧凑位置（pkt.actual_length 步长），用于描述符
+        // offset: buffer 中的包槽位偏移（pkt.length 步长），同时用于数据读取和描述符 offset 字段。
+        //   槽位大小由客户端 CMD_SUBMIT 的描述符 length 决定，必须按 pkt.length 步进而非 actual_length，
+        //   否则 vhci 会把包 N 的数据错误地写入包 N-1 的槽位中。
         bool need_to_send_buffer = (length > 0);
-        std::uint32_t data_offset = 0;
-        std::uint32_t wire_offset = 0;
+        std::uint32_t offset = 0;
         for (int i = 0; i < trx->num_iso_packets; i++) {
             auto &pkt = trx->iso_packet_desc[i];
             if (need_to_send_buffer)
-                buffers.push_back(asio::buffer(trx->buffer + data_offset, pkt.actual_length));
+                buffers.push_back(asio::buffer(trx->buffer + offset, pkt.actual_length));
             UsbIpIsoPacketDescriptor desc{
-                    .offset = wire_offset,
-                    .length = pkt.actual_length,
+                    .offset = offset,
+                    .length = pkt.length,
                     .actual_length = pkt.actual_length,
                     .status = static_cast<std::uint32_t>(LibusbDeviceHandler::trxstat2error(pkt.status)),
             };
             desc_bytes.push_back(desc.to_bytes());
-            data_offset += pkt.length;
-            wire_offset += pkt.actual_length;
+            offset += pkt.length;
         }
         for (auto &bytes: desc_bytes) {
             buffers.push_back(asio::buffer(bytes));

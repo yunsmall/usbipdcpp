@@ -125,9 +125,9 @@ static_assert(Serializable<UsbIpHeaderBasic>);
 
 
 struct USBIPDCPP_API UsbIpIsoPacketDescriptor {
-    std::uint32_t offset; ///< 本包数据在整个 transfer buffer 中的起始偏移
-    std::uint32_t length; ///< 本包的字节长度
-    std::uint32_t actual_length; ///< 包内有效数据的字节数（≤ length）
+    std::uint32_t offset; ///< 本包数据在 USB 请求 buffer 中的起始位置（按 length 步进，非线上紧凑偏移）
+    std::uint32_t length; ///< 本包在 buffer 中分配的槽位大小（由客户端决定，可大于 actual_length，包间可有间隙）
+    std::uint32_t actual_length; ///< 包内有效数据的字节数（≤ length），线路上只传这部分的紧凑数据
     std::uint32_t status; ///< 本包的传输状态（URB 状态码）
 
     [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(offset), decltype(length),

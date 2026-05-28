@@ -319,6 +319,7 @@ UsbIpResponse::UsbIpRetUnlink::to_bytes() const {
 }
 
 void UsbIpResponse::UsbIpRetUnlink::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
+    SPDLOG_DEBUG("RET_UNLINK to_socket: seqnum={} status={}", header.seqnum, status);
     asio::write(sock, asio::buffer(to_bytes()), ec);
 }
 

@@ -16,20 +16,21 @@ void log_device_state(Server &server) {
 
     std::string avail_busids;
     for (auto &d: available) {
-        if (!avail_busids.empty()) avail_busids += ", ";
+        if (!avail_busids.empty())
+            avail_busids += ", ";
         avail_busids += d->busid;
     }
     std::string using_busids;
     for (auto &[busid, d]: using_devices) {
-        if (!using_busids.empty()) using_busids += ", ";
+        if (!using_busids.empty())
+            using_busids += ", ";
         using_busids += busid;
     }
 
-    SPDLOG_INFO("设备状态: 可用 {} 个 [{}] | 使用中 {} 个 [{}]",
-                available.size(), avail_busids,
-                using_devices.size(), using_busids);
+    SPDLOG_INFO("设备状态: 可用 {} 个 [{}] | 使用中 {} 个 [{}]", available.size(), avail_busids, using_devices.size(),
+                using_busids);
 }
-}
+} // namespace
 
 LibusbServer::LibusbServer() {
     server.register_session_exit_callback([this]() {
@@ -69,17 +70,14 @@ std::pair<std::string, std::string> LibusbServer::get_device_names(libusb_device
         }
 
         if (desc.iProduct) {
-            libusb_get_string_descriptor_ascii(handle, desc.iProduct,
-                                               reinterpret_cast<unsigned char *>(product), sizeof(product));
+            libusb_get_string_descriptor_ascii(handle, desc.iProduct, reinterpret_cast<unsigned char *>(product),
+                                               sizeof(product));
         }
 
         libusb_close(handle);
     }
 
-    return {
-            (manufacturer[0] ? manufacturer : "Unknown Manufacturer"),
-            (product[0] ? product : "Unknown Product")
-    };
+    return {(manufacturer[0] ? manufacturer : "Unknown Manufacturer"), (product[0] ? product : "Unknown Product")};
 }
 
 void LibusbServer::print_device(libusb_device *dev) {
@@ -109,7 +107,8 @@ void LibusbServer::print_device(libusb_device *dev) {
         }
     }
     std::cout << std::format("Device name: {}-{} ({})", device_name.first, device_name.second,
-                             is_used ? "exported" : (is_available ? "available" : "unbinded")) << std::endl;
+                             is_used ? "exported" : (is_available ? "available" : "unbinded"))
+              << std::endl;
     std::cout << std::format("busid: {}", busid) << std::endl;
     std::cout << std::format("  VID: 0x{:2x}", desc.idVendor) << std::endl;
     std::cout << std::format("  PID: 0x{:2x}", desc.idProduct) << std::endl;
@@ -199,29 +198,20 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         std::vector<UsbEndpoint> endpoints;
         endpoints.reserve(intf_desc.bNumEndpoints);
         for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-            endpoints.emplace_back(
-                    intf_desc.endpoint[ep_i].bEndpointAddress,
-                    intf_desc.endpoint[ep_i].bmAttributes,
-                    intf_desc.endpoint[ep_i].wMaxPacketSize,
-                    intf_desc.endpoint[ep_i].bInterval
-                    );
+            endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
+                                   intf_desc.endpoint[ep_i].bmAttributes & 0x03,
+                                   intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
         }
-        interfaces.emplace_back(
-                UsbInterface{
-                        intf_desc.bInterfaceClass,
-                        intf_desc.bInterfaceSubClass,
-                        intf_desc.bInterfaceProtocol,
-                        std::move(endpoints)
-                }
-                );
+        interfaces.emplace_back(UsbInterface{intf_desc.bInterfaceClass, intf_desc.bInterfaceSubClass,
+                                             intf_desc.bInterfaceProtocol, std::move(endpoints)});
     }
 
     // 创建 UsbDevice 和 LibusbDeviceHandler
     {
         std::lock_guard lock(server.get_devices_mutex());
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
-                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev),
-                                    libusb_get_device_address(dev), libusb_get_port_number(dev)),
+                .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev), libusb_get_device_address(dev),
+                                    libusb_get_port_number(dev)),
                 .busid = get_device_busid(dev),
                 .bus_num = libusb_get_bus_number(dev),
                 .dev_num = libusb_get_port_number(dev),
@@ -301,21 +291,12 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
         std::vector<UsbEndpoint> endpoints;
         endpoints.reserve(intf_desc.bNumEndpoints);
         for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-            endpoints.emplace_back(
-                    intf_desc.endpoint[ep_i].bEndpointAddress,
-                    intf_desc.endpoint[ep_i].bmAttributes,
-                    intf_desc.endpoint[ep_i].wMaxPacketSize,
-                    intf_desc.endpoint[ep_i].bInterval
-                    );
+            endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
+                                   intf_desc.endpoint[ep_i].bmAttributes & 0x03,
+                                   intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
         }
-        interfaces.emplace_back(
-                UsbInterface{
-                        intf_desc.bInterfaceClass,
-                        intf_desc.bInterfaceSubClass,
-                        intf_desc.bInterfaceProtocol,
-                        std::move(endpoints)
-                }
-                );
+        interfaces.emplace_back(UsbInterface{intf_desc.bInterfaceClass, intf_desc.bInterfaceSubClass,
+                                             intf_desc.bInterfaceProtocol, std::move(endpoints)});
     }
 
     // 保存设备信息
@@ -397,7 +378,8 @@ DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
                 SPDLOG_WARN("正在使用的设备不支持解绑");
                 libusb_unref_device(device);
                 result = DeviceOperationResult::DeviceInUse;
-            } else {
+            }
+            else {
                 libusb_unref_device(device);
             }
         }
@@ -477,8 +459,7 @@ DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &bu
         }
     }
     if (auto device = server_using_devices.find(busid); device != server_using_devices.end()) {
-        if (auto libusb_device_handler = std::dynamic_pointer_cast<
-            LibusbDeviceHandler>((*device).second->handler)) {
+        if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*device).second->handler)) {
             if (libusb_device_handler->native_handle) {
                 libusb_close(libusb_device_handler->native_handle);
                 libusb_device_handler->native_handle = nullptr;
@@ -549,17 +530,9 @@ void LibusbServer::start_hotplug_monitor() {
 
     int ret = libusb_hotplug_register_callback(
             nullptr,
-            static_cast<libusb_hotplug_event>(
-                LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
-            ),
-            LIBUSB_HOTPLUG_NO_FLAGS,
-            LIBUSB_HOTPLUG_MATCH_ANY,
-            LIBUSB_HOTPLUG_MATCH_ANY,
-            LIBUSB_HOTPLUG_MATCH_ANY,
-            hotplug_callback,
-            this,
-            &hotplug_handle_
-            );
+            static_cast<libusb_hotplug_event>(LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT),
+            LIBUSB_HOTPLUG_NO_FLAGS, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
+            hotplug_callback, this, &hotplug_handle_);
 
     if (ret == 0) {
         hotplug_enabled_ = true;
@@ -578,11 +551,8 @@ void LibusbServer::stop_hotplug_monitor() {
     }
 }
 
-int LIBUSB_CALL LibusbServer::hotplug_callback(
-        libusb_context *ctx,
-        libusb_device *device,
-        libusb_hotplug_event event,
-        void *user_data) {
+int LIBUSB_CALL LibusbServer::hotplug_callback(libusb_context *ctx, libusb_device *device, libusb_hotplug_event event,
+                                               void *user_data) {
     auto *server = static_cast<LibusbServer *>(user_data);
 
     if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
@@ -669,11 +639,11 @@ void LibusbServer::start(asio::ip::tcp::endpoint &ep) {
             while (!should_exit_libusb_event_thread) {
                 auto ret = libusb_handle_events(nullptr);
 
-                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread)[[unlikely]] {
+                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) [[unlikely]] {
                     SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
                     break;
                 }
-                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED)[[unlikely]] {
+                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) [[unlikely]] {
                     SPDLOG_ERROR("Event handling error: {}\n", libusb_strerror(ret));
                     break;
                 }
@@ -709,10 +679,10 @@ void LibusbServer::stop() {
         }
         server_available_devices.clear();
 
-        for (auto using_dev_i = server_using_devices.begin(); using_dev_i != server_using_devices.end(); ++
-             using_dev_i) {
-            if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>(
-                    using_dev_i->second->handler)) {
+        for (auto using_dev_i = server_using_devices.begin(); using_dev_i != server_using_devices.end();
+             ++using_dev_i) {
+            if (auto libusb_device_handler =
+                        std::dynamic_pointer_cast<LibusbDeviceHandler>(using_dev_i->second->handler)) {
                 if (libusb_device_handler->interfaces_claimed_) {
                     libusb_device_handler->release_and_close_device();
                 }
