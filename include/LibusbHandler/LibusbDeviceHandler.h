@@ -97,10 +97,17 @@ public:
         }
     };
 
+    struct CallbackArgsReset {
+        static void reset(libusb_callback_args &args) {
+            args.reset();
+        }
+    };
+
     static void LIBUSB_CALL transfer_callback(libusb_transfer *trx);
 
-    // 对象池：64个
-    using CallbackArgsPool = ObjectPool<libusb_callback_args, 256, true>;
+    // 对象池：256个，alloc 时自动调用 reset() 清理脏数据
+    using CallbackArgsPool =
+            ObjectPool<libusb_callback_args, 256, true, detail::DefaultLM<libusb_callback_args>, CallbackArgsReset>;
     CallbackArgsPool callback_args_pool_;
 
     // 用于等待所有传输完成

@@ -7,6 +7,24 @@
 
 namespace usbipdcpp {
 
+namespace detail {
+    template<typename T>
+    struct DefaultLM {
+        static T *create() {
+            return new T{};
+        }
+        static void destroy(T *p) {
+            delete p;
+        }
+    };
+
+    template<typename T>
+    struct DefaultReset {
+        static void reset(T &) {
+        }
+    };
+} // namespace detail
+
 /**
  * @brief 固定大小的对象池
  *
@@ -15,16 +33,21 @@ namespace usbipdcpp {
  * - 可验证指针归属，防止重复 free
  * - alloc O(1)，free O(log n)
  * - 可选线程安全
+ * - 支持自定义 LifeManager 和 Reset 策略
  *
- * @warning **归还前必须重置**：free() 不会自动清理对象状态，调用者必须在归还前
- * 确保对象的所有字段已重置到初始值（可提供 T::reset() 方法统一处理）。
- * 否则下一次 alloc() 拿到的对象可能残留上一轮的脏数据。
+ * @warning **Reset 在 alloc() 时调用**：对象归还后其状态不会立即清除，直到下次 alloc()
+ * 时 Reset::reset() 才会被调用。如果对象持有外部资源（句柄、锁、引用计数等），
+ * 调用者必须在 free() 前自行释放这些资源，否则资源生命周期会延后到下次 alloc。
+ * Reset 策略仅负责重置对象值字段，不应用于资源释放。
  *
  * @tparam T 对象类型
  * @tparam PoolSize 池大小
  * @tparam ThreadSafe 是否线程安全（默认 false）
+ * @tparam LifeManager 生命周期管理器，提供 create() / destroy(T*)
+ * @tparam Reset 重置策略，alloc 时调 reset(T&, args...)，默认空操作
  */
-template<typename T, size_t PoolSize, bool ThreadSafe = false>
+template<typename T, size_t PoolSize, bool ThreadSafe = false, typename LifeManager = detail::DefaultLM<T>,
+         typename Reset = detail::DefaultReset<T>>
 class ObjectPool {
     static_assert(PoolSize > 0, "PoolSize must be greater than 0");
 
@@ -32,7 +55,7 @@ public:
     ObjectPool() {
         // 创建对象
         for (size_t i = 0; i < PoolSize; ++i) {
-            pool_[i] = {new T{}, false};
+            pool_[i] = {LifeManager::create(), false};
         }
         // 按指针排序，用于二分查找
         std::sort(pool_, pool_ + PoolSize, [](const auto &a, const auto &b) { return a.first < b.first; });
@@ -55,33 +78,34 @@ public:
 
     /**
      * @brief 分配对象
-     * @return 对象指针，池空时返回 nullptr，调用者应回退 new
+     * @param args 传递给 Reset::reset(T&, args...) 的参数
+     * @return 对象指针，池空时返回 nullptr，调用者应回退 LifeManager::create()
      *
      * 典型用法：
      * @code
      * auto* p = pool.alloc();
-     * if (!p) p = new T{};
+     * if (!p) p = LifeManager::create();
      * @endcode
      */
-    T *alloc() {
+    template<typename... Args>
+    T *alloc(Args &&...args) {
         if constexpr (ThreadSafe) {
             std::lock_guard<std::mutex> lock(mutex_);
-            return alloc_impl();
+            return alloc_impl(std::forward<Args>(args)...);
         }
         else {
-            return alloc_impl();
+            return alloc_impl(std::forward<Args>(args)...);
         }
     }
 
     /**
      * @brief 归还对象
      * @param obj 对象指针
-     * @return true 成功归还，false 指针不属于本池（如 alloc 回退的 new），调用者应回退 delete
+     * @return true 成功归还，false 指针不属于本池（如 alloc 回退的 create），调用者应回退 LifeManager::destroy()
      *
      * 典型用法：
      * @code
-     * p->reset();
-     * if (!pool.free(p)) delete p;
+     * if (!pool.free(p)) LifeManager::destroy(p);
      * @endcode
      */
     bool free(T *obj) {
@@ -119,7 +143,7 @@ public:
     }
 
     /**
-     * @brief 清空池（删除所有对象）
+     * @brief 清空池（销毁所有对象）
      */
     void clear() {
         if constexpr (ThreadSafe) {
@@ -150,13 +174,16 @@ private:
     size_t free_top_ = 0;
     mutable std::conditional_t<ThreadSafe, std::mutex, char> mutex_{};
 
-    T *alloc_impl() {
+    template<typename... Args>
+    T *alloc_impl(Args &&...args) {
         if (free_top_ == 0) {
             return nullptr;
         }
         size_t index = free_stack_[--free_top_];
         pool_[index].second = true;
-        return pool_[index].first;
+        T *obj = pool_[index].first;
+        Reset::reset(*obj, std::forward<Args>(args)...);
+        return obj;
     }
 
     bool free_impl(T *obj) {
@@ -178,8 +205,10 @@ private:
 
     void clear_impl() {
         for (size_t i = 0; i < PoolSize; ++i) {
-            delete pool_[i].first;
-            pool_[i] = {nullptr, false};
+            if (pool_[i].first) {
+                LifeManager::destroy(pool_[i].first);
+                pool_[i] = {nullptr, false};
+            }
         }
         free_top_ = 0;
     }

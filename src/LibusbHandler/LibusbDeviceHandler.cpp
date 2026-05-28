@@ -174,8 +174,6 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
         callback_args->handler = this;
         callback_args->seqnum = seqnum;
         callback_args->is_out = is_out;
-        callback_args->unlinking = false;
-        callback_args->unlink_cmd_seqnum = 0;
         callback_args->transfer = std::move(cmd.transfer); // 转移所有权
 
         if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
@@ -485,7 +483,7 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
         handler->transfers_.erase(callback_arg.seqnum);
         handler->pending_count_.fetch_sub(1, std::memory_order_release);
         handler->transfers_mutex_.unlock();
-        callback_arg.reset();
+        callback_arg.transfer.reset(); // 释放 libusb_transfer，避免延后到下次 alloc
         if (!handler->callback_args_pool_.free(&callback_arg)) {
             delete &callback_arg;
         }
@@ -589,9 +587,9 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
     // 入队完成，唤醒 sender 线程统一发送
     callback_arg.handler->session->wakeup_sender();
 
-    // 释放 callback_arg，归还前重置所有字段
+    // 释放 libusb_transfer 后归还 callback_arg（值字段由 Reset 在 alloc 时清零）
     auto *handler = callback_arg.handler;
-    callback_arg.reset();
+    callback_arg.transfer.reset();
     if (!handler->callback_args_pool_.free(&callback_arg)) {
         delete &callback_arg;
     }

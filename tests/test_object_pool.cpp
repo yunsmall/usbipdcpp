@@ -1,7 +1,7 @@
+#include <atomic>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
-#include <atomic>
 
 #include "utils/ObjectPool.h"
 
@@ -14,7 +14,8 @@ struct TestObject {
     std::string name;
 
     TestObject() = default;
-    TestObject(int v, std::string n) : value(v), name(std::move(n)) {}
+    TestObject(int v, std::string n) : value(v), name(std::move(n)) {
+    }
 };
 
 TEST(ObjectPool, BasicAllocFree) {
@@ -25,11 +26,11 @@ TEST(ObjectPool, BasicAllocFree) {
     EXPECT_EQ(pool.capacity(), 4u);
 
     // 分配
-    auto* obj1 = pool.alloc();
+    auto *obj1 = pool.alloc();
     ASSERT_NE(obj1, nullptr);
     EXPECT_EQ(pool.available(), 3u);
 
-    auto* obj2 = pool.alloc();
+    auto *obj2 = pool.alloc();
     ASSERT_NE(obj2, nullptr);
     EXPECT_EQ(pool.available(), 2u);
 
@@ -44,9 +45,9 @@ TEST(ObjectPool, BasicAllocFree) {
 TEST(ObjectPool, PoolExhausted) {
     ObjectPool<int, 2> pool;
 
-    auto* obj1 = pool.alloc();
-    auto* obj2 = pool.alloc();
-    auto* obj3 = pool.alloc(); // 池已空
+    auto *obj1 = pool.alloc();
+    auto *obj2 = pool.alloc();
+    auto *obj3 = pool.alloc(); // 池已空
 
     EXPECT_NE(obj1, nullptr);
     EXPECT_NE(obj2, nullptr);
@@ -66,7 +67,7 @@ TEST(ObjectPool, InvalidFree) {
 TEST(ObjectPool, DoubleFree) {
     ObjectPool<int, 4> pool;
 
-    auto* obj = pool.alloc();
+    auto *obj = pool.alloc();
     ASSERT_NE(obj, nullptr);
 
     EXPECT_TRUE(pool.free(obj));
@@ -77,7 +78,7 @@ TEST(ObjectPool, ObjectReuse) {
     ObjectPool<TestObject, 2> pool;
 
     // 分配并设置值
-    auto* obj1 = pool.alloc();
+    auto *obj1 = pool.alloc();
     obj1->value = 42;
     obj1->name = "test";
 
@@ -85,7 +86,7 @@ TEST(ObjectPool, ObjectReuse) {
     pool.free(obj1);
 
     // 再次分配，应该得到同一个对象（但值可能未重置）
-    auto* obj2 = pool.alloc();
+    auto *obj2 = pool.alloc();
     EXPECT_EQ(obj1, obj2); // 同一个地址
 }
 
@@ -107,8 +108,8 @@ TEST(ObjectPool, Reset) {
     ObjectPool<int, 4> pool;
 
     // 分配部分对象
-    auto* obj1 = pool.alloc();
-    auto* obj2 = pool.alloc();
+    auto *obj1 = pool.alloc();
+    auto *obj2 = pool.alloc();
     EXPECT_EQ(pool.available(), 2u);
 
     // reset 归还所有对象到池
@@ -116,10 +117,10 @@ TEST(ObjectPool, Reset) {
     EXPECT_EQ(pool.available(), 4u);
 
     // reset 后可以重新分配
-    auto* obj3 = pool.alloc();
-    auto* obj4 = pool.alloc();
-    auto* obj5 = pool.alloc();
-    auto* obj6 = pool.alloc();
+    auto *obj3 = pool.alloc();
+    auto *obj4 = pool.alloc();
+    auto *obj5 = pool.alloc();
+    auto *obj6 = pool.alloc();
     ASSERT_NE(obj3, nullptr);
     ASSERT_NE(obj4, nullptr);
     ASSERT_NE(obj5, nullptr);
@@ -141,7 +142,7 @@ TEST(ObjectPool, ResetPreservesObjects) {
     ObjectPool<TestObject, 4> pool;
 
     // 分配并设置值
-    auto* obj1 = pool.alloc();
+    auto *obj1 = pool.alloc();
     obj1->value = 100;
     obj1->name = "original";
 
@@ -150,9 +151,9 @@ TEST(ObjectPool, ResetPreservesObjects) {
     EXPECT_EQ(pool.available(), 4u);
 
     // 再次分配应该能得到原来的对象（值被保留）
-    auto* obj2 = pool.alloc();
-    EXPECT_EQ(obj1, obj2);  // 同一个地址
-    EXPECT_EQ(obj2->value, 100);  // 值保留
+    auto *obj2 = pool.alloc();
+    EXPECT_EQ(obj1, obj2); // 同一个地址
+    EXPECT_EQ(obj2->value, 100); // 值保留
     EXPECT_EQ(obj2->name, "original");
 }
 
@@ -179,13 +180,13 @@ TEST(ObjectPoolThreadSafe, ResetThreadSafe) {
 
     // 并发分配
     std::vector<std::thread> threads;
-    std::vector<int*> ptrs;
+    std::vector<int *> ptrs;
     std::mutex ptrs_mutex;
 
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&]() {
             for (int i = 0; i < 20; ++i) {
-                auto* p = pool.alloc();
+                auto *p = pool.alloc();
                 if (p) {
                     std::lock_guard<std::mutex> lock(ptrs_mutex);
                     ptrs.push_back(p);
@@ -194,7 +195,7 @@ TEST(ObjectPoolThreadSafe, ResetThreadSafe) {
         });
     }
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -205,7 +206,7 @@ TEST(ObjectPoolThreadSafe, ResetThreadSafe) {
     EXPECT_EQ(pool.available(), pool.capacity());
 
     // 可以重新分配
-    auto* p = pool.alloc();
+    auto *p = pool.alloc();
     ASSERT_NE(p, nullptr);
     pool.free(p);
 }
@@ -220,13 +221,13 @@ TEST(ObjectPoolThreadSafe, ConcurrentAllocFree) {
     constexpr int ops_per_thread = 1000;
 
     std::vector<std::thread> threads;
-    std::vector<std::vector<int*>> thread_objects(num_threads);
+    std::vector<std::vector<int *>> thread_objects(num_threads);
 
     // 并发分配
     for (int t = 0; t < num_threads; ++t) {
         threads.emplace_back([&, t]() {
             for (int i = 0; i < ops_per_thread; ++i) {
-                auto* obj = pool.alloc();
+                auto *obj = pool.alloc();
                 if (obj) {
                     alloc_count++;
                     thread_objects[t].push_back(obj);
@@ -236,7 +237,7 @@ TEST(ObjectPoolThreadSafe, ConcurrentAllocFree) {
         });
     }
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -244,7 +245,7 @@ TEST(ObjectPoolThreadSafe, ConcurrentAllocFree) {
     threads.clear();
     for (int t = 0; t < num_threads; ++t) {
         threads.emplace_back([&, t]() {
-            for (auto* obj : thread_objects[t]) {
+            for (auto *obj: thread_objects[t]) {
                 if (pool.free(obj)) {
                     free_count++;
                 }
@@ -252,7 +253,7 @@ TEST(ObjectPoolThreadSafe, ConcurrentAllocFree) {
         });
     }
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -269,7 +270,7 @@ TEST(ObjectPoolThreadSafe, StressTest) {
     std::vector<std::thread> threads;
     for (int t = 0; t < num_threads; ++t) {
         threads.emplace_back([&]() {
-            int* objs[10] = {};
+            int *objs[10] = {};
             while (running.load()) {
                 for (int i = 0; i < 10; ++i) {
                     if (!objs[i]) {
@@ -296,7 +297,7 @@ TEST(ObjectPoolThreadSafe, StressTest) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     running = false;
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -307,11 +308,11 @@ TEST(ObjectPoolThreadSafe, StressTest) {
 
 TEST(ObjectPool, AllocateAllFreeAll) {
     ObjectPool<int, 4> pool;
-    std::vector<int*> ptrs;
+    std::vector<int *> ptrs;
 
     // 分配所有
     for (int i = 0; i < 4; ++i) {
-        auto* p = pool.alloc();
+        auto *p = pool.alloc();
         ASSERT_NE(p, nullptr);
         ptrs.push_back(p);
     }
@@ -321,7 +322,7 @@ TEST(ObjectPool, AllocateAllFreeAll) {
     EXPECT_EQ(pool.alloc(), nullptr);
 
     // 归还所有
-    for (auto* p : ptrs) {
+    for (auto *p: ptrs) {
         EXPECT_TRUE(pool.free(p));
     }
     EXPECT_EQ(pool.available(), 4u);
@@ -333,8 +334,8 @@ TEST(ObjectPool, AllocateAllFreeAll) {
 TEST(ObjectPool, FreeWrongPointer) {
     ObjectPool<int, 2> pool;
 
-    auto* p1 = pool.alloc();
-    auto* p2 = pool.alloc();
+    auto *p1 = pool.alloc();
+    auto *p2 = pool.alloc();
 
     // 顺序归还，跨指针归还
     EXPECT_TRUE(pool.free(p1));
@@ -351,9 +352,9 @@ TEST(ObjectPoolThreadSafe, AvailableThreadSafe) {
     std::vector<std::thread> threads;
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&]() {
-            std::vector<int*> local;
+            std::vector<int *> local;
             while (running.load()) {
-                if (auto* p = pool.alloc()) {
+                if (auto *p = pool.alloc()) {
                     local.push_back(p);
                 }
                 size_t avail = pool.available();
@@ -375,7 +376,7 @@ TEST(ObjectPoolThreadSafe, AvailableThreadSafe) {
                 }
             }
             // 清理
-            for (auto* p : local) {
+            for (auto *p: local) {
                 pool.free(p);
             }
         });
@@ -384,7 +385,7 @@ TEST(ObjectPoolThreadSafe, AvailableThreadSafe) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     running = false;
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -393,13 +394,181 @@ TEST(ObjectPoolThreadSafe, AvailableThreadSafe) {
     EXPECT_GE(min_available.load(), 0);
 }
 
+// ============== Custom LifeManager and Reset Tests ==============
+
+struct CountingLM {
+    static inline std::atomic<int> create_count{0};
+    static inline std::atomic<int> destroy_count{0};
+
+    static int *create() {
+        create_count++;
+        return new int(0);
+    }
+    static void destroy(int *p) {
+        destroy_count++;
+        delete p;
+    }
+    static void reset_counts() {
+        create_count = 0;
+        destroy_count = 0;
+    }
+};
+
+TEST(ObjectPool, CustomLifeManagerCreateDestroy) {
+    CountingLM::reset_counts();
+    {
+        ObjectPool<int, 4, false, CountingLM> pool;
+        EXPECT_EQ(CountingLM::create_count.load(), 4);
+        EXPECT_EQ(CountingLM::destroy_count.load(), 0);
+
+        auto *p1 = pool.alloc();
+        auto *p2 = pool.alloc();
+        pool.free(p1);
+        pool.free(p2);
+    }
+    // 析构 destroy 4 个
+    EXPECT_EQ(CountingLM::destroy_count.load(), 4);
+}
+
+TEST(ObjectPool, CustomLifeManagerClear) {
+    CountingLM::reset_counts();
+    {
+        ObjectPool<int, 4, false, CountingLM> pool;
+        CountingLM::reset_counts(); // 排除构造函数里的 create
+        pool.clear();
+        EXPECT_EQ(CountingLM::destroy_count.load(), 4);
+    }
+    // 析构时不额外 destroy（已被 clear）
+    EXPECT_EQ(CountingLM::destroy_count.load(), 4);
+}
+
+struct SetValueReset {
+    static void reset(int &obj, int new_value) {
+        obj = new_value;
+    }
+};
+
+TEST(ObjectPool, CustomResetForwardArgs) {
+    ObjectPool<int, 4, false, detail::DefaultLM<int>, SetValueReset> pool;
+
+    auto *p = pool.alloc(42);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(*p, 42);
+
+    auto *p2 = pool.alloc(99);
+    ASSERT_NE(p2, nullptr);
+    EXPECT_EQ(*p2, 99);
+    EXPECT_NE(p, p2);
+}
+
+// 模拟 libusb_transfer 的 LifeManager + Reset 用法
+struct MockTransfer {
+    int num_iso_packets = -1;
+    int actual_length = -1;
+    int status = -1;
+};
+
+struct MockTransferLM {
+    static inline std::atomic<int> alloc_count{0};
+    static inline std::atomic<int> free_count{0};
+
+    static MockTransfer *create() {
+        alloc_count++;
+        auto *t = new MockTransfer{};
+        t->num_iso_packets = 0;
+        return t;
+    }
+    static void destroy(MockTransfer *p) {
+        free_count++;
+        delete p;
+    }
+    static void reset_counts() {
+        alloc_count = 0;
+        free_count = 0;
+    }
+};
+
+struct MockTransferReset {
+    static void reset(MockTransfer &t) {
+        t.actual_length = 0;
+        t.status = 0; // LIBUSB_TRANSFER_COMPLETED
+    }
+};
+
+TEST(ObjectPool, CustomLifeManagerAndReset) {
+    MockTransferLM::reset_counts();
+
+    ObjectPool<MockTransfer, 4, false, MockTransferLM, MockTransferReset> pool;
+    EXPECT_EQ(MockTransferLM::alloc_count.load(), 4);
+
+    auto *t = pool.alloc();
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->actual_length, 0); // Reset 清零
+    EXPECT_EQ(t->status, 0);
+    EXPECT_EQ(t->num_iso_packets, 0); // LifeManager 设置
+
+    t->actual_length = 100;
+    t->status = -5;
+    pool.free(t);
+
+    // 再分配同一个对象，应该被 Reset 重置
+    auto *t2 = pool.alloc();
+    EXPECT_EQ(t, t2);
+    EXPECT_EQ(t2->actual_length, 0);
+    EXPECT_EQ(t2->status, 0);
+
+    pool.free(t2);
+}
+
+TEST(ObjectPool, LifeManagerFallbackPattern) {
+    CountingLM::reset_counts();
+
+    ObjectPool<int, 2, false, CountingLM> pool;
+    CountingLM::reset_counts(); // 排除构造
+
+    auto *p1 = pool.alloc();
+    auto *p2 = pool.alloc();
+    auto *p3 = pool.alloc(); // 池空
+    EXPECT_NE(p1, nullptr);
+    EXPECT_NE(p2, nullptr);
+    EXPECT_EQ(p3, nullptr);
+
+    // 回退：直接 create
+    p3 = CountingLM::create();
+    ASSERT_NE(p3, nullptr);
+
+    pool.free(p1);
+    pool.free(p2);
+    // p3 不在池中，直接 destroy
+    CountingLM::destroy(p3);
+
+    // 池恢复后还能分配
+    auto *p4 = pool.alloc();
+    EXPECT_NE(p4, nullptr);
+    pool.free(p4);
+}
+
+// 默认 LifeManager 行为验证
+TEST(ObjectPool, DefaultLifeManagerUsesNewDelete) {
+    ObjectPool<int, 4> pool;
+    auto *p = pool.alloc();
+    ASSERT_NE(p, nullptr);
+    *p = 123;
+    EXPECT_TRUE(pool.free(p));
+    // 默认 Reset 不修改值
+    auto *p2 = pool.alloc();
+    EXPECT_EQ(p, p2);
+    // 默认 Reset 是空操作，值保留
+    EXPECT_EQ(*p2, 123);
+}
+
 TEST(ObjectPool, SingleElement) {
     ObjectPool<int, 1> pool;
 
     EXPECT_EQ(pool.capacity(), 1u);
     EXPECT_EQ(pool.available(), 1u);
 
-    auto* p = pool.alloc();
+    auto *p = pool.alloc();
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(pool.available(), 0u);
 

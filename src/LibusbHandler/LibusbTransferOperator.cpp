@@ -11,22 +11,57 @@
 
 using namespace usbipdcpp;
 
+namespace usbipdcpp::detail {
+
+libusb_transfer *LibusbTransferLM::create() {
+    return libusb_alloc_transfer(0);
+}
+
+void LibusbTransferLM::destroy(libusb_transfer *p) {
+    libusb_free_transfer(p);
+}
+
+void LibusbTransferReset::reset(libusb_transfer &t) {
+    t.actual_length = 0;
+    t.status = LIBUSB_TRANSFER_COMPLETED;
+}
+
+} // namespace usbipdcpp::detail
+
 void *LibusbTransferOperator::alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
                                                     const UsbIpHeaderBasic &header, const SetupPacket &setup_packet) {
-    auto *trx = libusb_alloc_transfer(num_iso_packets);
-    if (!trx) [[unlikely]] {
-        return nullptr;
+    libusb_transfer *trx;
+    if (num_iso_packets == 0) {
+        trx = transfer_pool_.alloc();
+        if (!trx) [[unlikely]] {
+            trx = libusb_alloc_transfer(0);
+            if (!trx) [[unlikely]] {
+                return nullptr;
+            }
+        }
     }
-    // libusb_alloc_transfer 不会设置公开的 num_iso_packets 字段（文档 io.c L443 明确说明），
-    // 必须用户自行赋值，否则 recv_transfer_data 中描述符读取循环读到垃圾值导致协议错位。
-    trx->num_iso_packets = num_iso_packets;
+    else {
+        trx = libusb_alloc_transfer(num_iso_packets);
+        if (!trx) [[unlikely]] {
+            return nullptr;
+        }
+        // libusb_alloc_transfer 不会设置公开的 num_iso_packets 字段（文档 io.c L443 明确说明），
+        // 必须用户自行赋值，否则 recv_transfer_data 中描述符读取循环读到垃圾值导致协议错位。
+        trx->num_iso_packets = num_iso_packets;
+    }
 
     std::size_t write_offset = (header.ep == 0) ? LIBUSB_CONTROL_SETUP_SIZE : 0;
     std::size_t actual_buffer_length = buffer_length + write_offset;
 
     trx->buffer = static_cast<unsigned char *>(malloc(actual_buffer_length));
     if (!trx->buffer) [[unlikely]] {
-        libusb_free_transfer(trx);
+        if (num_iso_packets == 0) {
+            if (!transfer_pool_.free(trx))
+                libusb_free_transfer(trx);
+        }
+        else {
+            libusb_free_transfer(trx);
+        }
         return nullptr;
     }
     trx->length = static_cast<int>(actual_buffer_length);
@@ -36,7 +71,13 @@ void *LibusbTransferOperator::alloc_transfer_handle(std::size_t buffer_length, i
 void LibusbTransferOperator::free_transfer_handle(void *handle) {
     auto *trx = static_cast<libusb_transfer *>(handle);
     free(trx->buffer);
-    libusb_free_transfer(trx);
+    if (trx->num_iso_packets == 0) {
+        if (!transfer_pool_.free(trx))
+            libusb_free_transfer(trx);
+    }
+    else {
+        libusb_free_transfer(trx);
+    }
 }
 
 std::size_t LibusbTransferOperator::get_actual_length(void *handle) {

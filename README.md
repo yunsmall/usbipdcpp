@@ -5,6 +5,7 @@ A C++ library for creating usbip servers
 > [中文文档](README-zh.md)
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
+> ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
 > ✅ Virtual devices: HID (mouse, keyboard), MSC (USB flash drive), CDC ACM (serial port) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
