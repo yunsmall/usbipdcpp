@@ -58,8 +58,8 @@ int main(int argc, char **argv) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out(),
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
     auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();

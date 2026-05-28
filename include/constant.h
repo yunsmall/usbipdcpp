@@ -4,8 +4,6 @@
 
 namespace usbipdcpp {
 
-constexpr std::uint16_t EP0_MAX_PACKET_SIZE = 64;
-
 enum class UsbSpeed {
     Unknown = 0x0,
     Low,
@@ -67,12 +65,7 @@ enum class StandardRequest {
     SynchFrame = 12,
 };
 
-enum class RequestRecipient {
-    Device = 0,
-    Interface,
-    Endpoint,
-    Other
-};
+enum class RequestRecipient { Device = 0, Interface, Endpoint, Other };
 
 enum class DescriptorType {
     Device = 1,
@@ -108,21 +101,16 @@ enum class PortFeat {
     C_PortL1 = 23,
 };
 
-enum class RequestType {
-    Standard = (0x00 << 5),
-    Class = (0x01 << 5),
-    Vendor = (0x02 << 5),
-    Reserved = (0x03 << 5)
-};
+enum class RequestType { Standard = (0x00 << 5), Class = (0x01 << 5), Vendor = (0x02 << 5), Reserved = (0x03 << 5) };
 
 enum class TransferFlag {
-    URB_SHORT_NOT_OK = 0x0001,        /* report short reads as errors */
-    URB_ISO_ASAP = 0x0002,            /* iso-only; use the first unexpired slot in the schedule */
+    URB_SHORT_NOT_OK = 0x0001, /* report short reads as errors */
+    URB_ISO_ASAP = 0x0002, /* iso-only; use the first unexpired slot in the schedule */
     URB_NO_TRANSFER_DMA_MAP = 0x0004, /* urb->transfer_dma valid on submit */
-    URB_NO_FSBR = 0x0020,             /* UHCI-specific */
-    URB_ZERO_PACKET = 0x0040,         /* Finish bulk OUT with short packet */
-    URB_NO_INTERRUPT = 0x0080,        /* HINT: no non-error interrupt needed */
+    URB_NO_FSBR = 0x0020, /* UHCI-specific */
+    URB_ZERO_PACKET = 0x0040, /* Finish bulk OUT with short packet */
+    URB_NO_INTERRUPT = 0x0080, /* HINT: no non-error interrupt needed */
     URB_FREE_BUFFER = 0x0100,
 };
 
-}
+} // namespace usbipdcpp

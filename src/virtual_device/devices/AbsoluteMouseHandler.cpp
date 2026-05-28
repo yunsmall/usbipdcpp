@@ -12,20 +12,15 @@ AbsoluteMouseHandler::AbsoluteMouseHandler(UsbInterface &handle_interface, Strin
     // 绝对坐标模式的报告描述符（6字节报告）
     report_descriptor_ = {
             // Usage Page (Generic Desktop)
-            0x05,
-            0x01,
+            0x05, 0x01,
             // Usage (Mouse)
-            0x09,
-            0x02,
+            0x09, 0x02,
             // Collection (Application)
-            0xA1,
-            0x01,
+            0xA1, 0x01,
             // Usage (Pointer)
-            0x09,
-            0x01,
+            0x09, 0x01,
             // Collection (Physical)
-            0xA1,
-            0x00,
+            0xA1, 0x00,
 
             // 按钮 (3个按键)
             0x05,
@@ -46,10 +41,7 @@ AbsoluteMouseHandler::AbsoluteMouseHandler(UsbInterface &handle_interface, Strin
             0x02, // Input (Data,Var,Abs)
 
             // 填充 (5 bits)
-            0x95,
-            0x05,
-            0x81,
-            0x03,
+            0x95, 0x05, 0x81, 0x03,
 
             // X/Y 绝对坐标
             0x05,
@@ -58,11 +50,9 @@ AbsoluteMouseHandler::AbsoluteMouseHandler(UsbInterface &handle_interface, Strin
             0x30, // Usage (X)
             0x09,
             0x31, // Usage (Y)
-            0x16,
-            0x00,
+            0x16, 0x00,
             0x00, // Logical Minimum (0)
-            0x26,
-            0xFF,
+            0x26, 0xFF,
             0x7F, // Logical Maximum (32767)
             0x75,
             0x10, // Report Size (16)
@@ -148,6 +138,7 @@ void AbsoluteMouseHandler::on_new_connection(Session &current_session, error_cod
 
     client_connected_ = true;
     client_connected_.notify_all();
+    client_connect_cv_.notify_all();
 
     should_stop_ = false;
     state_changed_ = true;
@@ -454,12 +445,8 @@ bool AbsoluteMouseHandler::wait_for_client(int timeout_ms) {
         client_connected_.wait(false);
         return true;
     }
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!client_connected_.load()) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    return true;
+    std::unique_lock lock(client_connect_mutex_);
+    return client_connect_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                                       [this] { return client_connected_.load(); });
 }
 } // namespace usbipdcpp

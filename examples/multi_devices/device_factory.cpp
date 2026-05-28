@@ -7,24 +7,17 @@
 #include "Endpoint.h"
 #include "constant.h"
 
-std::shared_ptr<usbipdcpp::UsbDevice>
-DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_pool) {
+std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int index,
+                                                                          usbipdcpp::StringPool &string_pool) {
     // 创建接口端点
     std::vector<usbipdcpp::UsbInterface> interfaces = {
-            usbipdcpp::UsbInterface{
-                    .interface_class = static_cast<std::uint8_t>(usbipdcpp::ClassCode::HID),
-                    .interface_subclass = 0x00,
-                    .interface_protocol = 0x00,
-                    .endpoints = {
-                            usbipdcpp::UsbEndpoint{
-                                    .address = 0x81,    // IN endpoint
-                                    .attributes = 0x03, // Interrupt
-                                    .max_packet_size = 8,
-                                    .interval = 10
-                            }
-                    }
-            }
-    };
+            usbipdcpp::UsbInterface{.interface_class = static_cast<std::uint8_t>(usbipdcpp::ClassCode::HID),
+                                    .interface_subclass = 0x00,
+                                    .interface_protocol = 0x00,
+                                    .endpoints = {usbipdcpp::UsbEndpoint{.address = 0x81, // IN endpoint
+                                                                         .attributes = 0x03, // Interrupt
+                                                                         .max_packet_size = 8,
+                                                                         .interval = 10}}}};
 
     // 为接口设置处理器
     interfaces[0].with_handler<SimpleHidInterfaceHandler>(string_pool);
@@ -45,22 +38,22 @@ DeviceFactory::create_simple_device(int index, usbipdcpp::StringPool &string_poo
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = usbipdcpp::UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = usbipdcpp::UsbEndpoint::get_default_ep0_out(),
+            .ep0_in = usbipdcpp::UsbEndpoint::get_ep0_in(usbipdcpp::UsbSpeed::Full),
+            .ep0_out = usbipdcpp::UsbEndpoint::get_ep0_out(usbipdcpp::UsbSpeed::Full),
     });
 
     // 为设备设置处理器
     auto device_handler = device->with_handler<SimpleDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();
 
-    SPDLOG_INFO("Created device {}: VID={:04x} PID={:04x} busid={}",
-                index, generate_vendor_id(index), generate_product_id(index), generate_busid(index));
+    SPDLOG_INFO("Created device {}: VID={:04x} PID={:04x} busid={}", index, generate_vendor_id(index),
+                generate_product_id(index), generate_busid(index));
 
     return device;
 }
 
 std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> DeviceFactory::create_devices(int count,
-    usbipdcpp::StringPool &string_pool) {
+                                                                                 usbipdcpp::StringPool &string_pool) {
     std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> devices;
     devices.reserve(count);
 

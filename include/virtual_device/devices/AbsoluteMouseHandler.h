@@ -266,6 +266,8 @@ private:
     bool state_changed_{false};
 
     std::atomic_bool client_connected_{false};
+    mutable std::mutex client_connect_mutex_;
+    std::condition_variable client_connect_cv_;
 
     data_type report_descriptor_;
 

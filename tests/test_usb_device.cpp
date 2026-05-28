@@ -17,10 +17,10 @@ TEST(TestUsbEndpoint, Direction) {
 }
 
 TEST(TestUsbEndpoint, IsEp0) {
-    UsbEndpoint ep0_in = UsbEndpoint::get_default_ep0_in();
+    UsbEndpoint ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full);
     EXPECT_TRUE(ep0_in.is_ep0());
 
-    UsbEndpoint ep0_out = UsbEndpoint::get_default_ep0_out();
+    UsbEndpoint ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full);
     EXPECT_TRUE(ep0_out.is_ep0());
 
     UsbEndpoint ep_other{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10};
@@ -65,8 +65,8 @@ TEST(TestUsbDevice, BasicDevice) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = {},
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     EXPECT_EQ(device->busid, "1-1");
@@ -102,8 +102,8 @@ TEST(TestUsbDevice, FindEndpoint) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     // 查找存在的端点
@@ -163,8 +163,8 @@ TEST(TestUsbDevice, EmptyInterfaces) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = {},
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     // 无接口设备
@@ -211,8 +211,8 @@ TEST(TestUsbDevice, MultipleInterfacesFindEndpoint) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     // 在第一个接口找到
@@ -255,8 +255,8 @@ TEST(TestUsbDevice, AllSpeeds) {
                 .configuration_value = 1,
                 .num_configurations = 1,
                 .interfaces = {},
-                .ep0_in = UsbEndpoint::get_default_ep0_in(),
-                .ep0_out = UsbEndpoint::get_default_ep0_out()
+                .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+                .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
         });
 
         EXPECT_EQ(device->speed, static_cast<std::uint32_t>(speed));

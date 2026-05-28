@@ -120,8 +120,8 @@ def main():
     device.device_protocol = 0x00
     device.configuration_value = 1
     device.num_configurations = 1
-    device.ep0_in = usbipdcpp.UsbEndpoint.get_default_ep0_in()
-    device.ep0_out = usbipdcpp.UsbEndpoint.get_default_ep0_out()
+    device.ep0_in = usbipdcpp.UsbEndpoint.get_ep0_in(UsbSpeed.Full)
+    device.ep0_out = usbipdcpp.UsbEndpoint.get_ep0_out(UsbSpeed.Full)
 
     interface = usbipdcpp.UsbInterface()
     interface.interface_class = usbipdcpp.ClassCode.HID

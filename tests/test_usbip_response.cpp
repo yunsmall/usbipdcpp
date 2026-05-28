@@ -40,8 +40,8 @@ inline UsbDevice create_test_device() {
         .configuration_value = 1,
         .num_configurations = 1,
         .interfaces = {},
-        .ep0_in = UsbEndpoint::get_default_ep0_in(),
-        .ep0_out = UsbEndpoint::get_default_ep0_out()
+        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     };
 }
 
@@ -137,8 +137,8 @@ TEST(TestOpRepImport, CreateOnSuccess) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = {},
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     auto ret = UsbIpResponse::OpRepImport::create_on_success(device);
@@ -166,8 +166,8 @@ TEST(TestOpRepDevlist, CreateFromDevices) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = {},
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     }));
 
     devices.push_back(std::make_shared<UsbDevice>(UsbDevice{
@@ -185,8 +185,8 @@ TEST(TestOpRepDevlist, CreateFromDevices) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = {},
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     }));
 
     auto ret = UsbIpResponse::OpRepDevlist::create_from_devices(devices);
@@ -306,8 +306,8 @@ TEST(TestOpRepImport, DeviceWithMultipleInterfaces) {
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out()
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
     });
 
     auto ret = UsbIpResponse::OpRepImport::create_on_success(device);
@@ -337,8 +337,8 @@ TEST(TestOpRepDevlist, ManyDevices) {
                 .configuration_value = 1,
                 .num_configurations = 1,
                 .interfaces = {},
-                .ep0_in = UsbEndpoint::get_default_ep0_in(),
-                .ep0_out = UsbEndpoint::get_default_ep0_out()
+                .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+                .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
         }));
     }
 

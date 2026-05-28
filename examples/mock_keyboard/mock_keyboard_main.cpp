@@ -1,7 +1,9 @@
 #include <iostream>
 #include <thread>
 
-#include "mock_keyboard.h"
+#include "Server.h"
+#include "virtual_device/SimpleVirtualDeviceHandler.h"
+#include "virtual_device/devices/KeyboardHandler.h"
 
 using namespace usbipdcpp;
 
@@ -12,88 +14,70 @@ int main() {
 
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
-                    .interface_class = static_cast<std::uint8_t>(
-                        ClassCode::HID),
+                    .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
                     .interface_subclass = 0x01, // Boot Interface Subclass
                     .interface_protocol = 0x01, // Keyboard
-                    .endpoints = {
-                            UsbEndpoint{
-                                    .address = 0x81, // IN
-                                    .attributes = 0x03,
-                                    .max_packet_size = 8,
-                                    .interval = 10
-                            }
-                    }
-            }
+                    .endpoints =
+                            {
+                                    UsbEndpoint{
+                                            .address = 0x81, // IN
+                                            .attributes = 0x03,
+                                            .max_packet_size = 16,
+                                            .interval = 10,
+                                    },
+                            },
+            },
     };
-    interfaces[0].with_handler<MockKeyboardInterfaceHandler>(string_pool);
-
+    interfaces[0].with_handler<KeyboardHandler>(string_pool);
 
     auto mock_keyboard = std::make_shared<UsbDevice>(UsbDevice{
             .path = "/usbipdcpp/mock_keyboard",
             .busid = "1-1",
             .bus_num = 1,
             .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
             .vendor_id = 0x1234,
             .product_id = 0x5679,
-            .device_bcd = 0xabcd,
+            .device_bcd = 0xABCD,
             .device_class = 0x00,
             .device_subclass = 0x00,
             .device_protocol = 0x00,
             .configuration_value = 1,
             .num_configurations = 1,
             .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_default_ep0_in(),
-            .ep0_out = UsbEndpoint::get_default_ep0_out(),
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
     auto device_handler = mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();
 
-    MockKeyboardInterfaceHandler &keyboard_interface_handler = *std::dynamic_pointer_cast<MockKeyboardInterfaceHandler>(
-            mock_keyboard->interfaces[0].handler);
-
+    auto &kb = dynamic_cast<KeyboardHandler &>(*mock_keyboard->interfaces[0].handler);
 
     Server server;
     server.add_device(std::move(mock_keyboard));
 
     asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), 54325};
-
     server.start(endpoint);
 
-    SPDLOG_INFO("Mock keyboard started");
-    SPDLOG_INFO("Port: 54325");
-    SPDLOG_INFO("Busid: 1-1");
+    SPDLOG_INFO("Mock keyboard started on port 54325, busid 1-1");
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
     SPDLOG_INFO("Press Enter to exit...");
 
-    // 后台线程模拟按键
-    constexpr std::uint8_t KEY_A = 0x04;
+    // 每隔一秒按下/释放 A 键
     std::atomic<bool> running{true};
     std::thread key_thread([&]() {
         while (running) {
-            // 按下A键
-            {
-                std::unique_lock lock(keyboard_interface_handler.state_mutex);
-                keyboard_interface_handler.current_state.keys[0] = KEY_A;
-                keyboard_interface_handler.state_cv.notify_one();
-            }
+            kb.press_key(HIDKey::A);
             SPDLOG_INFO("Key A pressed");
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-            // 释放A键
-            {
-                std::unique_lock lock(keyboard_interface_handler.state_mutex);
-                keyboard_interface_handler.current_state.keys[0] = 0;
-                keyboard_interface_handler.state_cv.notify_one();
-            }
+            kb.release_key(HIDKey::A);
             SPDLOG_INFO("Key A released");
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
     });
 
     std::cin.get();
-
     running = false;
     key_thread.join();
     server.stop();

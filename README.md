@@ -6,7 +6,7 @@ A C++ library for creating usbip servers
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard), MSC (USB flash drive), CDC ACM (serial port) — no libusb dependency
+> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -78,7 +78,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 
 | Class | Description |
 |-------|-------------|
-| `ObjectPool<T, PoolSize, ThreadSafe>` | Fixed-size object pool for memory-efficient allocation. Supports pointer validation and duplicate-free detection. alloc O(1), free O(log n). |
+| `ObjectPool<T, PoolSize, ThreadSafe, LifeManager, Reset>` | Fixed-size object pool. Supports custom create/destroy/reset policies. alloc O(1), free O(log n). |
 
 ### Virtual Device Classes
 
@@ -88,9 +88,14 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `SimpleVirtualDeviceHandler` | Simple device handler with no-op standard request implementations |
 | `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
 | `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
+| `AbsoluteMouseHandler` | Absolute-coordinate mouse with screen-to-HID mapping and smooth movement |
+| `KeyboardHandler` | USB HID keyboard with media keys (Consumer Control) |
+| `GamepadHandler` | USB HID gamepad: 16 buttons, D-pad, 4 analog axes |
+| `DigitizerHandler` | USB HID touchscreen with pressure support |
 | `MscBulkOnlyHandler` | USB Mass Storage BOT handler with SCSI command support |
 | `StorageBackend` | Abstract block storage backend interface for MSC devices |
 | `RawImageBackend` | Memory-mapped file storage backend (cross-platform) |
+| `MemoryBackend` | In-memory block storage backend for MSC testing |
 | `CdcAcmCommunicationInterfaceHandler` | CDC ACM communication interface handler |
 | `CdcAcmDataInterfaceHandler` | CDC ACM data interface handler |
 
@@ -210,12 +215,19 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    HID device.
 3. mock_keyboard
 
-   A keyboard demonstration which simulates pressing and releasing the 'A' key every second.
-   Shows how to implement a virtual HID keyboard with standard keyboard report descriptor.
-4. multi_devices
+   A keyboard demonstration using the `KeyboardHandler` class which simulates pressing and releasing
+   the 'A' key every second. Built-in Consumer Control support (volume, play/pause, etc. media keys).
+4. mock_gamepad
+
+   A gamepad demonstration using the `GamepadHandler` class. Rotates the D-pad through 8 directions,
+   sweeps the left analog stick in a circle, and toggles button 0 on/off.
+5. mock_cdc_acm
+
+   A virtual serial port (CDC ACM) demonstration. Shows bidirectional data transfer over USB bulk endpoints.
+6. multi_devices
 
    A demonstration with 10 virtual HID devices. Shows how to create multiple devices using a factory pattern.
-5. absolute_mouse
+7. absolute_mouse
 
    Absolute coordinate mouse virtual device example providing complete mouse operation API:
    - **Screen coordinate API**: Position using pixel coordinates, set screen bounds via `set_screen_bounds()`
@@ -229,12 +241,12 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    - Screen coordinates are linearly mapped to HID coordinates [0, 32767]
    - Coordinates outside bounds are clamped to boundary values
    - Note: Windows host doesn't accept HID (0, 0), avoid screen coordinates at (x1, y1) boundary
-6. libusb_server
+8. libusb_server
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
-7. mock_msc
+9. mock_msc
 
    A virtual USB Mass Storage (flash drive) device backed by a disk image file.
    Supports BOT (Bulk-Only Transport) protocol and common SCSI commands (INQUIRY, READ CAPACITY,
@@ -244,7 +256,7 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 
    Usage: `mock_msc [disk.img]` (defaults to `disk.img`, 4096 blocks × 512 bytes = 2 MiB)
 
-8. termux_libusb_server
+10. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`

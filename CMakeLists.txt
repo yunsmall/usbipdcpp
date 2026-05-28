@@ -43,6 +43,7 @@ option(
 
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_GAMEPAD "Build example mock gamepad applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MSC "Build example mock MSC (virtual USB flash drive) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
@@ -174,6 +175,13 @@ if (USBIPDCPP_BUILD_EXAMPLES)
         add_executable(mock_keyboard ${MOCK_KEYBOARD_SRC})
         target_link_libraries(mock_keyboard ${PROJECT_NAME}_virtual_device)
         target_include_directories(mock_keyboard PRIVATE examples/mock_keyboard)
+    endif ()
+
+    if (USBIPDCPP_BUILD_EXAMPLE_MOCK_GAMEPAD)
+        file(GLOB_RECURSE MOCK_GAMEPAD_SRC examples/mock_gamepad/*.cpp)
+        add_executable(mock_gamepad ${MOCK_GAMEPAD_SRC})
+        target_link_libraries(mock_gamepad ${PROJECT_NAME}_virtual_device)
+        target_include_directories(mock_gamepad PRIVATE examples/mock_gamepad)
     endif ()
 
     if (USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM)
