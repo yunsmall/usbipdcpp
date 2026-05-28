@@ -6,6 +6,7 @@
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/socket.h> // macOS sendfile
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -124,7 +125,7 @@ RawImageBackend::RawImageBackend(std::string path, std::uint64_t initial_blocks,
     mapped_size_ = file_size;
 #endif
 
-#ifndef _WIN32
+#ifdef __linux__
     if (pipe(splice_pipe_) < 0) {
         SPDLOG_WARN("pipe 创建失败，splice 零拷贝接收不可用");
     }
@@ -143,8 +144,10 @@ RawImageBackend::~RawImageBackend() {
 #else
         munmap(mapped_data_, mapped_size_);
         close(fd_);
+#ifdef __linux__
         close(splice_pipe_[0]);
         close(splice_pipe_[1]);
+#endif
 #endif
     }
 }
@@ -176,7 +179,7 @@ void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
     zero.FileOffset.QuadPart = static_cast<LONGLONG>(offset);
     zero.BeyondFinalZero.QuadPart = static_cast<LONGLONG>(offset + length);
     DeviceIoControl(file_handle_, FSCTL_SET_ZERO_DATA, &zero, sizeof(zero), nullptr, 0, nullptr, nullptr);
-#else
+#elif defined(__linux__)
     // fallocate punch_hole 要求 offset 对齐到 fs 块边界，向下对齐并扩容覆盖整段
     auto aligned_off = (offset / fs_block_size_) * fs_block_size_;
     auto end = offset + length;
@@ -192,7 +195,7 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
                                   std::error_code &ec) {
 #ifdef _WIN32
     return false; // Windows 无 splice，回退 asio::read
-#else
+#elif defined(__linux__)
     if (splice_pipe_[0] < 0)
         return false;
     auto file_offset = static_cast<off64_t>(lba) * block_size_ + offset;
@@ -216,6 +219,8 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
         remaining -= m;
     }
     return true;
+#else
+    return false; // macOS 等无 splice，回退 asio::read
 #endif
 }
 
@@ -246,7 +251,7 @@ bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::si
         }
     }
     return true;
-#else
+#elif defined(__linux__)
     // splice: file → pipe → sock（与 recv 共用 splice_pipe_）
     if (splice_pipe_[0] < 0)
         return false;
@@ -268,6 +273,24 @@ bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::si
         remaining -= m;
     }
     return true;
+#elif defined(__APPLE__)
+    // macOS sendfile: file → socket，零用户态拷贝
+    off_t off = static_cast<off_t>(file_offset);
+    off_t remaining = static_cast<off_t>(length);
+    while (remaining > 0) {
+        off_t sent = remaining;
+        if (sendfile(fd_, static_cast<int>(sock_fd), off, &sent, nullptr, 0) < 0) {
+            if (errno == EAGAIN)
+                continue;
+            ec.assign(errno, std::generic_category());
+            return false;
+        }
+        off += sent;
+        remaining -= sent;
+    }
+    return true;
+#else
+    return false; // 其他平台回退 asio::write
 #endif
 }
 
