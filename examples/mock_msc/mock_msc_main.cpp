@@ -15,32 +15,21 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {
-            UsbInterface{
-                    .interface_class = 0x08,    // Mass Storage
-                    .interface_subclass = 0x06, // SCSI transparent
-                    .interface_protocol = 0x50, // Bulk-Only Transport
-                    .endpoints = {
-                            // Bulk IN
-                            UsbEndpoint{
-                                    .address = 0x81,
-                                    .attributes = 0x02, // Bulk
-                                    .max_packet_size = 512,
-                                    .interval = 0
-                            },
-                            // Bulk OUT
-                            UsbEndpoint{
-                                    .address = 0x02,
-                                    .attributes = 0x02, // Bulk
-                                    .max_packet_size = 512,
-                                    .interval = 0
-                            }
-                    }
-            }
-    };
+    std::vector<UsbInterface> interfaces = {UsbInterface{.interface_class = 0x08, // Mass Storage
+                                                         .interface_subclass = 0x06, // SCSI transparent
+                                                         .interface_protocol = 0x50, // Bulk-Only Transport
+                                                         .endpoints = {{// Bulk IN
+                                                                        UsbEndpoint{.address = 0x81,
+                                                                                    .attributes = 0x02, // Bulk
+                                                                                    .max_packet_size = 512,
+                                                                                    .interval = 0},
+                                                                        // Bulk OUT
+                                                                        UsbEndpoint{.address = 0x02,
+                                                                                    .attributes = 0x02, // Bulk
+                                                                                    .max_packet_size = 512,
+                                                                                    .interval = 0}}}}};
 
-    auto backend = std::unique_ptr<StorageBackend>(
-            std::make_unique<RawImageBackend>(image_path, 4096));
+    auto backend = std::unique_ptr<StorageBackend>(std::make_unique<RawImageBackend>(image_path, 4096));
     interfaces[0].with_handler<MscBulkOnlyHandler>(string_pool, std::move(backend));
 
     auto device = std::make_shared<UsbDevice>(UsbDevice{
@@ -73,8 +62,7 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Mock MSC (USB Flash Drive) started");
     SPDLOG_INFO("Port: 54327  Busid: 1-1");
-    SPDLOG_INFO("Image: {} ({} MiB)", image_path,
-                4096 * 512 / 1024 / 1024);
+    SPDLOG_INFO("Image: {} ({} MiB)", image_path, 4096 * 512 / 1024 / 1024);
     SPDLOG_INFO("Connect: usbip attach -r <host> -b 1-1");
     SPDLOG_INFO("Press Enter to exit...");
 

@@ -46,6 +46,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applic
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_GAMEPAD "Build example mock gamepad applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MSC "Build example mock MSC (virtual USB flash drive) applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC "Build example mock UVC (virtual USB camera) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_ABSOLUTE_MOUSE "Build example absolute mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_VIRTUAL_DEVICE "Build virtual device component" ON)
@@ -96,6 +97,7 @@ file(GLOB INTERFACE_HANDLER_SRC_FILES src/InterfaceHandler/*.cpp)
 file(GLOB VIRTUAL_DEVICE_SRC_FILES src/virtual_device/*.cpp)
 file(GLOB VIRTUAL_DEVICE_DEVICES_SRC_FILES src/virtual_device/devices/*.cpp)
 file(GLOB VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES src/virtual_device/storage_backends/*.cpp)
+file(GLOB VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES src/virtual_device/video_sources/*.cpp)
 file(GLOB LIBUSB_SRC_FILES src/LibusbHandler/*.cpp)
 
 # 核心库（不含虚拟设备）
@@ -131,7 +133,7 @@ endif()
 
 # 虚拟设备库
 if(USBIPDCPP_BUILD_VIRTUAL_DEVICE)
-    add_library(${PROJECT_NAME}_virtual_device ${LIB_TYPE} ${VIRTUAL_DEVICE_SRC_FILES} ${VIRTUAL_DEVICE_DEVICES_SRC_FILES} ${VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES})
+    add_library(${PROJECT_NAME}_virtual_device ${LIB_TYPE} ${VIRTUAL_DEVICE_SRC_FILES} ${VIRTUAL_DEVICE_DEVICES_SRC_FILES} ${VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES} ${VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES})
     set_target_properties(${PROJECT_NAME}_virtual_device PROPERTIES EXPORT_NAME virtual_device)
     target_link_libraries(${PROJECT_NAME}_virtual_device PUBLIC ${PROJECT_NAME})
     target_include_directories(${PROJECT_NAME}_virtual_device PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
@@ -196,6 +198,13 @@ if (USBIPDCPP_BUILD_EXAMPLES)
         add_executable(mock_msc ${MOCK_MSC_SRC})
         target_link_libraries(mock_msc ${PROJECT_NAME}_virtual_device)
         target_include_directories(mock_msc PRIVATE examples/mock_msc)
+    endif ()
+
+    if (USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC)
+        file(GLOB_RECURSE MOCK_UVC_SRC examples/mock_uvc/*.cpp)
+        add_executable(mock_uvc ${MOCK_UVC_SRC})
+        target_link_libraries(mock_uvc ${PROJECT_NAME}_virtual_device)
+        target_include_directories(mock_uvc PRIVATE examples/mock_uvc)
     endif ()
 
     if (USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES)

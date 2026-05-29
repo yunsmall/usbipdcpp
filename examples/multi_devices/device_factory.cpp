@@ -14,10 +14,10 @@ std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int in
             usbipdcpp::UsbInterface{.interface_class = static_cast<std::uint8_t>(usbipdcpp::ClassCode::HID),
                                     .interface_subclass = 0x00,
                                     .interface_protocol = 0x00,
-                                    .endpoints = {usbipdcpp::UsbEndpoint{.address = 0x81, // IN endpoint
-                                                                         .attributes = 0x03, // Interrupt
-                                                                         .max_packet_size = 8,
-                                                                         .interval = 10}}}};
+                                    .endpoints = {{usbipdcpp::UsbEndpoint{.address = 0x81, // IN endpoint
+                                                                          .attributes = 0x03, // Interrupt
+                                                                          .max_packet_size = 8,
+                                                                          .interval = 10}}}}};
 
     // 为接口设置处理器
     interfaces[0].with_handler<SimpleHidInterfaceHandler>(string_pool);

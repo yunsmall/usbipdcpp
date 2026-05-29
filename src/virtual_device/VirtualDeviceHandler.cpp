@@ -22,25 +22,27 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                         const SetupPacket &setup_packet, usbipdcpp::error_code &ec) {
     // 控制传输较少，Bulk/Interrupt 更常见
-    if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Control)) [[unlikely]] {
-        SPDLOG_DEBUG("处理控制传输，setup包为{}\n{}", get_every_byte(setup_packet.to_bytes()),
-                     setup_packet.to_string());
+    // bmAttributes 只取 bit0-1 传输类型，bit2-3 是 ISO sync type，bit4-5 是 usage type
+    const auto xfer_type = ep.attributes & 0x03;
+    if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Control)) [[unlikely]] {
+        SPDLOG_INFO("控制传输: type={:02x} req={:02x} val={:04x} idx={:04x} len={}", setup_packet.request_type,
+                    setup_packet.request, setup_packet.value, setup_packet.index, setup_packet.length);
         handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer),
                            ec);
     }
     else if (interface.has_value()) [[likely]] {
         auto &intf = interface.value();
         // Bulk 和 Interrupt 最常见
-        if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
+        if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
             SPDLOG_DEBUG("处理块传输");
             handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
         }
-        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
+        else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
             SPDLOG_DEBUG("处理中断传输");
             handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer),
                                       ec);
         }
-        else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
+        else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
             SPDLOG_DEBUG("处理等时传输");
             int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
                                   ? static_cast<int>(cmd.number_of_packets)
@@ -68,10 +70,12 @@ void VirtualDeviceHandler::setup_interface_handlers() {
             auto *virtual_handler = intf.handler.get();
             if (virtual_handler) {
                 virtual_handler->set_device_handler(this);
-                // 把接口级 TransferOperator 注册到该接口所有端点
+                // 把接口级 TransferOperator 注册到该接口所有 alt 的所有端点
                 auto *if_op = virtual_handler->get_transfer_operator();
-                for (auto &ep: intf.endpoints) {
-                    device_op->register_endpoint_operator(ep.address, if_op);
+                for (auto &alt_eps: intf.endpoints) {
+                    for (auto &ep: alt_eps) {
+                        device_op->register_endpoint_operator(ep.address, if_op);
+                    }
                 }
                 virtual_handler->on_setup_interface_handlers();
             }
@@ -230,6 +234,12 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
             case RequestRecipient::Interface: {
                 SPDLOG_TRACE("发给接口");
                 auto intf_idx = setup_packet.index;
+                if (intf_idx >= handle_device.interfaces.size()) {
+                    SPDLOG_WARN("接口号{}越界（总共{}个接口），返回EPIPE", intf_idx, handle_device.interfaces.size());
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
+                }
                 auto handler = handle_device.interfaces[intf_idx].handler;
                 if (handler) {
                     StandardRequest std_request = static_cast<StandardRequest>(setup_packet.calc_standard_request());
@@ -246,8 +256,12 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 break;
                             }
                             case StandardRequest::SetInterface: {
-                                SPDLOG_TRACE("接口request_set_interface");
+                                SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", intf_idx, setup_packet.value);
                                 handler->request_set_interface(setup_packet.value, &status);
+                                if (status == 0 &&
+                                    setup_packet.value < handle_device.interfaces[intf_idx].endpoints.size())
+                                    handle_device.interfaces[intf_idx].current_altsetting =
+                                            static_cast<std::uint8_t>(setup_packet.value);
                                 break;
                             }
                             default: {
@@ -423,7 +437,13 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
             }
             case RequestRecipient::Interface: {
                 SPDLOG_TRACE("发给{}号接口的非标准控制传输包", setup_packet.index);
-                auto intf_idx = setup_packet.index;
+                auto intf_idx = setup_packet.index & 0xFF;
+                if (intf_idx >= handle_device.interfaces.size()) {
+                    SPDLOG_WARN("接口号{}越界（总共{}个接口），返回EPIPE", intf_idx, handle_device.interfaces.size());
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
+                }
                 auto handler = handle_device.interfaces[intf_idx].handler;
                 if (handler) {
                     handler->handle_non_standard_request_type_control_urb(
@@ -440,17 +460,36 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                 break;
             }
             case RequestRecipient::Endpoint: {
-                SPDLOG_TRACE("发给{}号接口的{:04x}号地址端口的非标准控制传输包", setup_packet.index, ep.address);
-                auto intf_idx = setup_packet.index;
-                auto handler = handle_device.interfaces[intf_idx].handler;
-                if (handler) {
-                    handler->handle_non_standard_request_type_control_urb_to_endpoint(
-                            seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(transfer), ec);
+                SPDLOG_TRACE("发给{}号地址端口的非标准控制传输包", setup_packet.index);
+                auto find_ret = handle_device.find_ep(setup_packet.index);
+                if (find_ret) {
+                    auto &intf = find_ret->second;
+                    if (intf) [[likely]] {
+                        auto handler = intf->handler;
+                        if (handler) [[likely]] {
+                            handler->handle_non_standard_request_type_control_urb_to_endpoint(
+                                    seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet,
+                                    std::move(transfer), ec);
+                        }
+                        else {
+                            SPDLOG_ERROR("端点{:04x}所在的接口没注册对应handler", setup_packet.index);
+                            ec = make_error_code(ErrorType::INVALID_ARG);
+                            session->submit_ret_submit(
+                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                            return;
+                        }
+                    }
+                    else {
+                        SPDLOG_ERROR("端点{:04x}没有对应的接口", setup_packet.index);
+                        ec = make_error_code(ErrorType::INVALID_ARG);
+                        session->submit_ret_submit(
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                        return;
+                    }
                 }
                 else {
-                    SPDLOG_ERROR("接口未注册handler，无法处理发往接口的信息");
+                    SPDLOG_ERROR("找不到端点{:04x}", setup_packet.index);
                     ec = make_error_code(ErrorType::INVALID_ARG);
-                    // transfer 析构时自动释放
                     session->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
@@ -586,9 +625,13 @@ std::uint8_t VirtualDeviceHandler::request_get_interface(std::uint16_t intf, std
 
 void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf,
                                                  std::uint32_t *p_status) {
-    auto handler = handle_device.interfaces[intf].handler;
+    auto &interface = handle_device.interfaces[intf];
+    auto handler = interface.handler;
     if (handler) {
-        handler->request_get_interface(p_status);
+        handler->request_set_interface(alternate_setting, p_status);
+        if (*p_status == 0 && alternate_setting < interface.endpoints.size()) {
+            interface.current_altsetting = static_cast<std::uint8_t>(alternate_setting);
+        }
     }
     else {
         SPDLOG_ERROR("接口未注册handler，无法处理");
@@ -629,11 +672,16 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
 data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                    std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
+    // BOS header (5) + USB 2.0 Extension Device Capability (7) = 12 bytes
     data_type desc = {
             0x05, // bLength
-            static_cast<std::uint8_t>(DescriptorType::BOS), // bDescriptorType: BOS
-            0x05, 0x00, // wTotalLength
-            0x00 // bNumCapabilities
+            static_cast<std::uint8_t>(DescriptorType::BOS), 0x0C, 0x00, // wTotalLength = 12
+            0x01, // bNumCapabilities = 1
+            // USB 2.0 Extension Device Capability
+            0x07, // bLength
+            0x10, // bDescriptorType: DEVICE CAPABILITY
+            0x02, // bDevCapabilityType: USB 2.0 EXTENSION
+            0x00, 0x00, 0x00, 0x00, // bmAttributes: no LPM
     };
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
@@ -655,32 +703,57 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
             0x80, // bmAttributes Bus Powered
             0x32, // bMaxPower 100mA
     };
+    // IAD: Windows 要求多接口 UVC 设备在配置描述符里包含 IAD
+    if (handle_device.device_class == 0xEF) {
+        desc.insert(desc.end(), {
+                                        0x08, // bLength
+                                        0x0B, // bDescriptorType: IAD
+                                        0x00, // bFirstInterface
+                                        static_cast<std::uint8_t>(handle_device.interfaces.size()), // bInterfaceCount
+                                        handle_device.interfaces[0].interface_class, // bFunctionClass
+                                        0x03, // bFunctionSubClass: SC_VIDEO_INTERFACE_COLLECTION
+                                        0x00, // bFunctionProtocol
+                                        0x00, // iFunction
+                                });
+    }
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
-        data_type intf_desc = {
-                0x09, // bLength
-                static_cast<std::uint8_t>(DescriptorType::Interface), // bDescriptorType: Interface
-                static_cast<std::uint8_t>(i), // bInterfaceNum
-                0x00, // bAlternateSettings
-                static_cast<std::uint8_t>(intf.endpoints.size()), // bNumEndpoints
-                intf.interface_class, // bInterfaceClass
-                intf.interface_subclass, // bInterfaceSubClass
-                intf.interface_protocol, // bInterfaceProtocol
-                intf.handler->get_string_interface_value(), // iInterface
-        };
         auto class_specific_descriptor = intf.handler->get_class_specific_descriptor();
-        intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
-        for (auto &endpoint: intf.endpoints) {
-            data_type ep_desc = {0x07, // bLength
-                                 static_cast<std::uint8_t>(DescriptorType::Endpoint),
-                                 endpoint.address,
-                                 endpoint.attributes,
-                                 static_cast<std::uint8_t>(endpoint.max_packet_size),
-                                 static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
-                                 endpoint.interval};
-            intf_desc.insert(intf_desc.end(), ep_desc.begin(), ep_desc.end());
+
+        auto num_alts = intf.endpoints.size();
+        if (num_alts == 0)
+            num_alts = 1; // 至少保证 alt 0 如果没有初始化
+
+        for (std::size_t alt = 0; alt < num_alts; alt++) {
+            auto &alt_endpoints = (alt < intf.endpoints.size()) ? intf.endpoints[alt] : intf.endpoints[0];
+            data_type intf_desc = {
+                    0x09, // bLength
+                    static_cast<std::uint8_t>(DescriptorType::Interface), // bDescriptorType: Interface
+                    static_cast<std::uint8_t>(i), // bInterfaceNum
+                    static_cast<std::uint8_t>(alt), // bAlternateSettings
+                    static_cast<std::uint8_t>(alt_endpoints.size()), // bNumEndpoints
+                    intf.interface_class, // bInterfaceClass
+                    intf.interface_subclass, // bInterfaceSubClass
+                    intf.interface_protocol, // bInterfaceProtocol
+                    intf.handler->get_string_interface_value(), // iInterface
+            };
+            // class-specific 描述符只放 alt 0（TinyUSB 做法），alt>0 只放端点
+            // 若放所有 alt，config descriptor 会被撑到超过 255 字节导致 Windows 截断解析失败
+            if (alt == 0 && !class_specific_descriptor.empty()) {
+                intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
+            }
+            for (auto &endpoint: alt_endpoints) {
+                data_type ep_desc = {0x07, // bLength
+                                     static_cast<std::uint8_t>(DescriptorType::Endpoint),
+                                     endpoint.address,
+                                     endpoint.attributes,
+                                     static_cast<std::uint8_t>(endpoint.max_packet_size),
+                                     static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
+                                     endpoint.interval};
+                intf_desc.insert(intf_desc.end(), ep_desc.begin(), ep_desc.end());
+            }
+            desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());
         }
-        desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());
     }
     desc[2] = static_cast<std::uint8_t>(desc.size());
     desc[3] = static_cast<std::uint8_t>(desc.size() >> 8);

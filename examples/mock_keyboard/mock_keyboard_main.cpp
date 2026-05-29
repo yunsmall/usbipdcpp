@@ -17,15 +17,14 @@ int main() {
                     .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
                     .interface_subclass = 0x01, // Boot Interface Subclass
                     .interface_protocol = 0x01, // Keyboard
-                    .endpoints =
-                            {
-                                    UsbEndpoint{
-                                            .address = 0x81, // IN
-                                            .attributes = 0x03,
-                                            .max_packet_size = 16,
-                                            .interval = 10,
-                                    },
+                    .endpoints = {{
+                            UsbEndpoint{
+                                    .address = 0x81, // IN
+                                    .attributes = 0x03,
+                                    .max_packet_size = 16,
+                                    .interval = 10,
                             },
+                    }},
             },
     };
     interfaces[0].with_handler<KeyboardHandler>(string_pool);

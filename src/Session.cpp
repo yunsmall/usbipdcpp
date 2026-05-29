@@ -7,7 +7,7 @@
 
 #include "DeviceHandler/DeviceHandler.h"
 
-#include "../include/utils/utils.h"
+#include "utils/utils.h"
 #include "Device.h"
 #include "Server.h"
 #include "network.h"

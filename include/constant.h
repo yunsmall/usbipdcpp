@@ -51,6 +51,14 @@ enum class EndpointAttributes {
     Interrupt,
 };
 
+/// USB 2.0 Table 9-13: ISO endpoint synchronization type (bmAttributes bits 2-3)
+enum class IsoSyncType : std::uint8_t {
+    NoSync = 0x00,
+    Async = 0x04,
+    Adaptive = 0x08,
+    Sync = 0x0C,
+};
+
 enum class StandardRequest {
     GetStatus = 0,
     ClearFeature = 1,

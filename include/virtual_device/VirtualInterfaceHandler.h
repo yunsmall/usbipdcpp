@@ -244,6 +244,11 @@ public:
         string_pool.change_string(string_interface, new_str);
     }
 
+    /// 使 iInterface 与另一个 handler 一致（USBCCGP 移除 IAD 后，同功能接口靠 iInterface 分组）
+    void sync_string_interface_from(const VirtualInterfaceHandler &other) {
+        string_interface = other.string_interface;
+    }
+
 protected:
     Session *session = nullptr;
     VirtualDeviceHandler *device_handler = nullptr;

@@ -1,15 +1,15 @@
 #include "libevdev_mouse.h"
 
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <poll.h>
-#include <csignal>
 #include <atomic>
+#include <condition_variable>
+#include <csignal>
+#include <iostream>
+#include <mutex>
+#include <poll.h>
+#include <thread>
 
-#include "Session.h"
 #include "Server.h"
+#include "Session.h"
 
 #include <libevdev/libevdev.h>
 
@@ -63,23 +63,15 @@ int main() {
         StringPool string_pool;
 
         std::vector<UsbInterface> interfaces = {
-                UsbInterface{
-                        .interface_class = static_cast<std::uint8_t>(
-                            ClassCode::HID),
-                        .interface_subclass = 0x00,
-                        .interface_protocol = 0x00,
-                        .endpoints = {
-                                UsbEndpoint{
-                                        .address = 0x81, // IN
-                                        .attributes = 0x03,
-                                        // 8 bytes
-                                        .max_packet_size = 8,
-                                        // Interrupt
-                                        .interval = 10
-                                }
-                        }
-                }
-        };
+                UsbInterface{.interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                             .interface_subclass = 0x00,
+                             .interface_protocol = 0x00,
+                             .endpoints = {{UsbEndpoint{.address = 0x81, // IN
+                                                        .attributes = 0x03,
+                                                        // 8 bytes
+                                                        .max_packet_size = 8,
+                                                        // Interrupt
+                                                        .interval = 10}}}}};
         interfaces[0].with_handler<LibevdevMouseInterfaceHandler>(string_pool);
 
 
@@ -104,9 +96,8 @@ int main() {
         auto device_handler = libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
         device_handler->setup_interface_handlers();
 
-        LibevdevMouseInterfaceHandler &mouse_interface_handler = *std::dynamic_pointer_cast<
-            LibevdevMouseInterfaceHandler>(
-                libevdev_mouse->interfaces[0].handler);
+        LibevdevMouseInterfaceHandler &mouse_interface_handler =
+                *std::dynamic_pointer_cast<LibevdevMouseInterfaceHandler>(libevdev_mouse->interfaces[0].handler);
 
         Server server;
 
@@ -184,17 +175,17 @@ int main() {
                                 mouse_interface_handler.current_state.wheel_vertical = std::clamp(
                                         mouse_interface_handler.current_state.wheel_vertical + resized, -127, 127);
 
-                                std::cout << std::format("Mouse wheel high resolution: Vertical={}", ev.value) <<
-                                        std::endl;
+                                std::cout << std::format("Mouse wheel high resolution: Vertical={}", ev.value)
+                                          << std::endl;
                                 break;
                             }
                             case REL_HWHEEL_HI_RES:
-                                std::cout << std::format("Mouse wheel high resolution: Horizontal={}", ev.value) <<
-                                        std::endl;
+                                std::cout << std::format("Mouse wheel high resolution: Horizontal={}", ev.value)
+                                          << std::endl;
                                 break;
                             default:
                                 std::cout << std::format("Unknown relative event: code={}, value={}", ev.code, ev.value)
-                                        << std::endl;
+                                          << std::endl;
                         }
                         break;
 
@@ -203,32 +194,32 @@ int main() {
                         switch (ev.code) {
                             case BTN_LEFT:
                                 mouse_interface_handler.current_state.left_pressed = ev.value;
-                                std::cout << std::format("Left button: {}", ev.value ? "PRESSED" : "RELEASED") <<
-                                        std::endl;
+                                std::cout << std::format("Left button: {}", ev.value ? "PRESSED" : "RELEASED")
+                                          << std::endl;
                                 break;
                             case BTN_RIGHT:
                                 mouse_interface_handler.current_state.right_pressed = ev.value;
-                                std::cout << std::format("Right button: {}", ev.value ? "PRESSED" : "RELEASED") <<
-                                        std::endl;
+                                std::cout << std::format("Right button: {}", ev.value ? "PRESSED" : "RELEASED")
+                                          << std::endl;
                                 break;
                             case BTN_MIDDLE:
                                 mouse_interface_handler.current_state.middle_pressed = ev.value;
-                                std::cout << std::format("Middle button: {}", ev.value ? "PRESSED" : "RELEASED") <<
-                                        std::endl;
+                                std::cout << std::format("Middle button: {}", ev.value ? "PRESSED" : "RELEASED")
+                                          << std::endl;
                                 break;
                             case BTN_SIDE:
                                 mouse_interface_handler.current_state.side_pressed = ev.value;
-                                std::cout << std::format("Side button: {}", ev.value ? "PRESSED" : "RELEASED") <<
-                                        std::endl;
+                                std::cout << std::format("Side button: {}", ev.value ? "PRESSED" : "RELEASED")
+                                          << std::endl;
                                 break;
                             case BTN_EXTRA:
                                 mouse_interface_handler.current_state.extra_pressed = ev.value;
-                                std::cout << std::format("Extra button: {}", ev.value ? "PRESSED" : "RELEASED") <<
-                                        std::endl;
+                                std::cout << std::format("Extra button: {}", ev.value ? "PRESSED" : "RELEASED")
+                                          << std::endl;
                                 break;
                             default:
-                                std::cout << std::format("Unknown key event: code={}, value={}", ev.code, ev.value) <<
-                                        std::endl;
+                                std::cout << std::format("Unknown key event: code={}, value={}", ev.code, ev.value)
+                                          << std::endl;
                         }
                         break;
 
@@ -241,7 +232,8 @@ int main() {
 
                     default:
                         std::cout << std::format("Unknown event type: {}, code={}, value={}", ev.type, ev.code,
-                                                 ev.value) << std::endl;
+                                                 ev.value)
+                                  << std::endl;
                 }
                 mouse_interface_handler.state_cv.notify_all();
             }
@@ -259,7 +251,6 @@ int main() {
         server.stop();
 
         SPDLOG_INFO("已退出");
-
     }
     else {
         std::cout << "！无可使用的鼠标设备" << std::endl;

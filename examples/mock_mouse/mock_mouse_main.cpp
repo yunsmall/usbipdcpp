@@ -1,6 +1,6 @@
+#include <atomic>
 #include <iostream>
 #include <thread>
-#include <atomic>
 
 #include "mock_mouse.h"
 
@@ -11,24 +11,15 @@ int main() {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {
-            UsbInterface{
-                    .interface_class = static_cast<std::uint8_t>(
-                        ClassCode::HID),
-                    .interface_subclass = 0x00,
-                    .interface_protocol = 0x00,
-                    .endpoints = {
-                            UsbEndpoint{
-                                    .address = 0x81, // IN
-                                    .attributes = 0x03,
-                                    // 8 bytes
-                                    .max_packet_size = 8,
-                                    // Interrupt
-                                    .interval = 10
-                            }
-                    }
-            }
-    };
+    std::vector<UsbInterface> interfaces = {UsbInterface{.interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                                                         .interface_subclass = 0x00,
+                                                         .interface_protocol = 0x00,
+                                                         .endpoints = {{UsbEndpoint{.address = 0x81, // IN
+                                                                                    .attributes = 0x03,
+                                                                                    // 8 bytes
+                                                                                    .max_packet_size = 8,
+                                                                                    // Interrupt
+                                                                                    .interval = 10}}}}};
     interfaces[0].with_handler<MockMouseInterfaceHandler>(string_pool);
 
 
@@ -53,8 +44,8 @@ int main() {
     auto device_handler = mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();
 
-    MockMouseInterfaceHandler &mouse_interface_handler = *std::dynamic_pointer_cast<MockMouseInterfaceHandler>(
-            mock_mouse->interfaces[0].handler);
+    MockMouseInterfaceHandler &mouse_interface_handler =
+            *std::dynamic_pointer_cast<MockMouseInterfaceHandler>(mock_mouse->interfaces[0].handler);
 
 
     Server server;
@@ -76,7 +67,8 @@ int main() {
         while (running) {
             {
                 std::unique_lock lock(mouse_interface_handler.state_mutex);
-                mouse_interface_handler.current_state.left_pressed = !mouse_interface_handler.current_state.left_pressed;
+                mouse_interface_handler.current_state.left_pressed =
+                        !mouse_interface_handler.current_state.left_pressed;
                 mouse_interface_handler.state_cv.notify_one();
             }
             SPDLOG_INFO("Toggle left button");

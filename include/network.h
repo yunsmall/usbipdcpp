@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cstdint>
 #include <bit>
+#include <cstdint>
 
-#include <asio/read.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/read.hpp>
 
 #include "type.h"
 
@@ -35,33 +35,28 @@ constexpr T hton(T num) {
 
 
 template<typename T>
-concept SerializableFromSocket = requires(const T &t, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec)
-{
+concept SerializableFromSocket = requires(const T &t, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     { t.to_socket(sock, ec) } -> std::same_as<void>;
-    { std::declval<T&>().from_socket(sock) } -> std::same_as<void>;
+    { std::declval<T &>().from_socket(sock) } -> std::same_as<void>;
 };
 
 template<typename T>
-concept Serializable = requires(const T &t, asio::ip::tcp::socket &sock)
-{
+concept Serializable = requires(const T &t, asio::ip::tcp::socket &sock) {
     { t.to_bytes() } -> supported_data_type;
-    { std::declval<T&>().from_socket(sock) } -> std::same_as<void>;
+    { std::declval<T &>().from_socket(sock) } -> std::same_as<void>;
 };
 
 template<typename T>
-concept is_serializable_can_be_array = requires(T &&t1)
-{
+concept is_serializable_can_be_array = requires(T &&t1) {
     requires Serializable<T>;
     requires is_array_data_type<decltype(t1.to_bytes())>;
 };
 
 template<typename T>
-struct is_serializable_vector_t : std::false_type {
-};
+struct is_serializable_vector_t : std::false_type {};
 
 template<Serializable T>
-struct is_serializable_vector_t<std::vector<T>> : std::true_type {
-};
+struct is_serializable_vector_t<std::vector<T>> : std::true_type {};
 
 template<typename T>
 concept serializable_vector = is_serializable_vector_t<T>::value;
@@ -83,12 +78,10 @@ constexpr std::size_t calculate_unsigned_integral_total_size() {
  * @return 总长度
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         is_array_data_type<std::remove_cvref_t<Args>>)
-        && ...)
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
 constexpr std::size_t calculate_total_size_with_array() {
-    auto calc_type_size = []<typename T>()-> std::size_t {
+    auto calc_type_size = []<typename T>() -> std::size_t {
         using RawType = std::remove_cvref_t<T>;
         if constexpr (is_array_data_type<RawType>) {
             return std::size(RawType{});
@@ -108,26 +101,23 @@ constexpr std::size_t calculate_total_size_with_array() {
  * @return 长度
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         is_array_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-constexpr std::size_t calculate_data_total_size_with_array(const Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+constexpr std::size_t calculate_data_total_size_with_array(const Args &...args) {
     return calculate_data_total_size_with_array<Args...>();
 }
 
 /**
- * @brief 只能处理 unsigned_integral 类型和 supported_data_type 类型，整数类型用sizeof计算，supported_data_type 类型会用std::size计算
+ * @brief 只能处理 unsigned_integral 类型和 supported_data_type 类型，整数类型用sizeof计算，supported_data_type
+ * 类型会用std::size计算
  * @param arg 参数
  * @return 长度
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-constexpr std::size_t calculate_data_total_size_with_range(const Args &... arg) {
-    auto calc_type_size = []<typename T>(const T &t)-> std::size_t {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+constexpr std::size_t calculate_data_total_size_with_range(const Args &...arg) {
+    auto calc_type_size = []<typename T>(const T &t) -> std::size_t {
         if constexpr (supported_data_type<T>) {
             return std::size(t);
         }
@@ -144,7 +134,7 @@ constexpr std::size_t calculate_data_total_size_with_range(const Args &... arg) 
  * @param args 整数
  */
 template<std::unsigned_integral... Args>
-void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
+void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
     constexpr auto total_size = calculate_unsigned_integral_total_size<Args...>();
 
     std::array<std::uint8_t, total_size> buffer;
@@ -172,12 +162,10 @@ void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &... a
  * @param args 希望读入的数据
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-void data_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
-    auto process = [&](auto &arg)-> void {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+void data_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
+    auto process = [&](auto &arg) -> void {
         using RawType = std::remove_reference_t<decltype(arg)>;
         if constexpr (supported_data_type<RawType>) {
             asio::read(sock, asio::buffer(arg));
@@ -224,11 +212,9 @@ inline std::uint8_t read_u8(asio::ip::tcp::socket &sock) {
  * @param args 希望读入的数据（整数引用或数组引用）
  */
 template<std::size_t padding = 0, typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         is_array_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
     constexpr auto total_size = calculate_total_size_with_array<Args...>() + padding;
 
     std::array<std::uint8_t, total_size> buffer;
@@ -259,13 +245,10 @@ void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, A
  * @param array 源数组
  * @return padding后的数组
  */
-template<
-    std::size_t padding,
-    is_array_data_type Array,
-    std::size_t total_size = calculate_total_size_with_array<Array>() + padding
->
+template<std::size_t padding, is_array_data_type Array,
+         std::size_t total_size = calculate_total_size_with_array<Array>() + padding>
 constexpr array_data_type<total_size> array_add_padding(const Array &array) {
-    array_data_type<total_size> result;
+    array_data_type<total_size> result{};
     std::memcpy(result.data(), array.data(), std::size(array));
     return result;
 }
@@ -297,11 +280,9 @@ data_type serializable_array_range_to_network_data(const T &vec) {
  * @return 创建的数组
  */
 template<typename... Args, std::size_t total_size = calculate_total_size_with_array<Args...>()>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         is_array_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-array_data_type<total_size> to_network_array(const Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+array_data_type<total_size> to_network_array(const Args &...args) {
     // 创建缓冲区
     array_data_type<total_size> buffer;
 
@@ -335,11 +316,9 @@ array_data_type<total_size> to_network_array(const Args &... args) {
  * @return 创建的数组
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-std::vector<std::uint8_t> to_network_data(const Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+std::vector<std::uint8_t> to_network_data(const Args &...args) {
     // 计算总缓冲区大小
     std::size_t total_size = calculate_data_total_size_with_range(args...);
 
@@ -378,11 +357,9 @@ std::vector<std::uint8_t> to_network_data(const Args &... args) {
  * @param args 整数引用
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-void vector_mem_order_append(data_type &vec, const Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+void vector_mem_order_append(data_type &vec, const Args &...args) {
     // 计算总缓冲区大小
     std::size_t total_size = calculate_data_total_size_with_range(args...);
 
@@ -416,11 +393,9 @@ void vector_mem_order_append(data_type &vec, const Args &... args) {
  * @param args 整数引用
  */
 template<typename... Args>
-    requires (
-        (std::unsigned_integral<std::remove_cvref_t<Args>> ||
-         supported_data_type<std::remove_cvref_t<Args>>)
-        && ...)
-void vector_append_to_net(data_type &vec, const Args &... args) {
+    requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
+             ...)
+void vector_append_to_net(data_type &vec, const Args &...args) {
     // 计算总缓冲区大小
     std::size_t total_size = calculate_data_total_size_with_range(args...);
 
@@ -448,4 +423,4 @@ void vector_append_to_net(data_type &vec, const Args &... args) {
 }
 
 
-}
+} // namespace usbipdcpp

@@ -19,15 +19,14 @@ int main() {
                     .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
                     .interface_subclass = 0x00,
                     .interface_protocol = 0x00,
-                    .endpoints =
-                            {
-                                    UsbEndpoint{
-                                            .address = 0x81, // IN
-                                            .attributes = 0x03, // Interrupt
-                                            .max_packet_size = 16,
-                                            .interval = 8,
-                                    },
+                    .endpoints = {{
+                            UsbEndpoint{
+                                    .address = 0x81, // IN
+                                    .attributes = 0x03, // Interrupt
+                                    .max_packet_size = 16,
+                                    .interval = 8,
                             },
+                    }},
             },
     };
     interfaces[0].with_handler<GamepadHandler>(string_pool);

@@ -31,7 +31,10 @@ void usbipdcpp::SimpleVirtualDeviceHandler::request_set_address(std::uint16_t ad
 
 void usbipdcpp::SimpleVirtualDeviceHandler::request_set_configuration(std::uint16_t configuration_value,
                                                                       std::uint32_t *p_status) {
-    SPDLOG_WARN("Unimplement request_set_configuration to simple device");
+    if (configuration_value == 0 || configuration_value == handle_device.configuration_value)
+        *p_status = 0;
+    else
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 void usbipdcpp::SimpleVirtualDeviceHandler::request_set_descriptor(std::uint8_t desc_type, std::uint8_t desc_index,

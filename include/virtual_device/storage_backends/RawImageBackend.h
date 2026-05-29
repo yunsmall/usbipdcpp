@@ -67,8 +67,10 @@ private:
     void *mapping_handle_ = nullptr; // CreateFileMapping 返回的 HANDLE
 #else
     int fd_ = -1; // open 返回的文件描述符
-    int splice_pipe_[2] = {-1, -1}; // splice 用管道
     int fs_block_size_ = 4096; // 文件系统块大小，punch_hole 对齐用
+#ifdef __linux__
+    int splice_pipe_[2] = {-1, -1}; // splice 用管道
+#endif
 #endif
 };
 

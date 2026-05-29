@@ -98,6 +98,10 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `MemoryBackend` | In-memory block storage backend for MSC testing |
 | `CdcAcmCommunicationInterfaceHandler` | CDC ACM communication interface handler |
 | `CdcAcmDataInterfaceHandler` | CDC ACM data interface handler |
+| `UvcVideoControlHandler` | UVC VideoControl interface (camera controls, status interrupt) |
+| `UvcVideoStreamingHandler` | UVC VideoStreaming interface (PROBE/COMMIT, ISO video streaming) |
+| `VideoSource` | Abstract video source interface for UVC devices |
+| `ColorBarSource` | Test pattern video source (color bars) |
 
 ### Class Hierarchy
 
@@ -143,6 +147,15 @@ Virtual device handlers should:
 The client only sends URBs, and the server receives them. In the original USBIP, the server stores received URBs and the USB controller sends them to the real device in order, ensuring only one URB is being transferred at a time.
 
 Virtual devices need to simulate this "store URBs in order" behavior, so request queues (`std::deque`) are used to store received requests and process them sequentially.
+
+### UVC Virtual Camera (experimental)
+
+A virtual UVC (USB Video Class) camera implementation is provided:
+
+- **Linux**: Fully functional — PROBE/COMMIT negotiation, ISO streaming via vhci-hcd + uvcvideo
+- **Windows**: Currently **fails with Code 10** (STATUS_IO_DEVICE_ERROR). Standard USB enumeration completes successfully, but usbvideo.sys fails during StartDevice before sending any UVC class-specific requests to the server. See the comment in `include/virtual_device/UvcVirtualInterfaceHandler.h` for details. **Help wanted — if you can debug or fix the Windows compatibility issue, PRs are very welcome!**
+
+Example: `mock_uvc` — a 320×240 YUY2 virtual camera with color bar test pattern.
 
 ---
 

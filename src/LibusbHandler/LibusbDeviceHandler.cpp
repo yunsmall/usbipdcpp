@@ -311,29 +311,13 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &s
         SPDLOG_DEBUG("{}: usb_set_interface done: inf {} alt {}", get_device_busid(libusb_get_device(native_handle)),
                      interface, alternate);
 
-        // 同步更新 handle_device 中该接口的端点列表
+        // 切换 current_altsetting（端点数据已在 bind 时预填）
         if (interface < handle_device.interfaces.size()) {
-            libusb_device *dev = libusb_get_device(native_handle);
-            libusb_config_descriptor *config = nullptr;
-            if (libusb_get_active_config_descriptor(dev, &config) == 0 && config) {
-                if (interface < config->bNumInterfaces) {
-                    auto &intf = config->interface[interface];
-                    if (alternate < intf.num_altsetting) {
-                        auto &intf_desc = intf.altsetting[alternate];
-                        std::vector<UsbEndpoint> endpoints;
-                        endpoints.reserve(intf_desc.bNumEndpoints);
-                        for (int ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-                            endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
-                                                   intf_desc.endpoint[ep_i].bmAttributes & 0x03,
-                                                   intf_desc.endpoint[ep_i].wMaxPacketSize,
-                                                   intf_desc.endpoint[ep_i].bInterval);
-                        }
-                        handle_device.interfaces[interface].endpoints = std::move(endpoints);
-                        SPDLOG_DEBUG("已更新接口 {} 的端点列表，新端点数量: {}", interface,
-                                     handle_device.interfaces[interface].endpoints.size());
-                    }
-                }
-                libusb_free_config_descriptor(config);
+            auto &dev_intf = handle_device.interfaces[interface];
+            if (alternate < dev_intf.endpoints.size()) {
+                dev_intf.current_altsetting = static_cast<std::uint8_t>(alternate);
+                SPDLOG_DEBUG("已切换接口 {} 到 alt {}，端点数量: {}", interface, alternate,
+                             dev_intf.current_endpoints().size());
             }
         }
     }
@@ -646,6 +630,13 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
         }
     }
 
+    // 确保所有接口在 alt 0，与 current_altsetting 一致
+    for (int intf_i = 0; intf_i < num_interfaces; intf_i++) {
+        libusb_set_interface_alt_setting(native_handle, intf_i, 0);
+        if (intf_i < static_cast<int>(handle_device.interfaces.size()))
+            handle_device.interfaces[intf_i].current_altsetting = 0;
+    }
+
     libusb_free_config_descriptor(active_config_desc);
     interfaces_claimed_ = true;
     SPDLOG_INFO("成功打开设备并声明 {} 个接口", num_interfaces);
@@ -700,6 +691,13 @@ bool usbipdcpp::LibusbDeviceHandler::wrap_fd_and_claim_interfaces() {
             native_handle = nullptr;
             return false;
         }
+    }
+
+    // 确保所有接口在 alt 0，与 current_altsetting 一致
+    for (int intf_i = 0; intf_i < num_interfaces; intf_i++) {
+        libusb_set_interface_alt_setting(native_handle, intf_i, 0);
+        if (intf_i < static_cast<int>(handle_device.interfaces.size()))
+            handle_device.interfaces[intf_i].current_altsetting = 0;
     }
 
     libusb_free_config_descriptor(active_config_desc);

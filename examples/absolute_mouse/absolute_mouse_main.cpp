@@ -3,9 +3,9 @@
  * @brief 绝对坐标鼠标虚拟设备示例
  */
 
+#include <atomic>
 #include <iostream>
 #include <thread>
-#include <atomic>
 
 #include "Server.h"
 #include "virtual_device/SimpleVirtualDeviceHandler.h"
@@ -40,41 +40,31 @@ int main() {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {
-        UsbInterface{
+    std::vector<UsbInterface> interfaces = {UsbInterface{
             .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
             .interface_subclass = 0x01,
-            .interface_protocol = 0x02,  // Mouse
-            .endpoints = {
-                UsbEndpoint{
-                    .address = 0x81,
-                    .attributes = 0x03,
-                    .max_packet_size = 8,
-                    .interval = 1
-                }
-            }
-        }
-    };
+            .interface_protocol = 0x02, // Mouse
+            .endpoints = {{UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 1}}}}};
 
     interfaces[0].with_handler<AbsoluteMouseHandler>(string_pool, 1920, 1080);
 
     auto mouse_device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/usbipdcpp/absolute_mouse",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234,
-        .product_id = 0x5680,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,
-        .device_subclass = 0x00,
-        .device_protocol = 0x00,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = interfaces,
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+            .path = "/usbipdcpp/absolute_mouse",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5680,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
 
     auto device_handler = mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
@@ -101,7 +91,8 @@ int main() {
 
     std::string line;
     while (std::getline(std::cin, line)) {
-        if (line.empty()) continue;
+        if (line.empty())
+            continue;
 
         // 按空格分割命令
         std::vector<std::string> parts;
@@ -111,9 +102,10 @@ int main() {
             parts.push_back(part);
         }
 
-        if (parts.empty()) continue;
+        if (parts.empty())
+            continue;
 
-        const std::string& cmd = parts[0];
+        const std::string &cmd = parts[0];
         int cx = mouse->get_screen_x1() + mouse->get_screen_width() / 2;
         int cy = mouse->get_screen_y1() + mouse->get_screen_height() / 2;
 
@@ -123,8 +115,8 @@ int main() {
                       << " 右键=" << (state.right_button ? "按下" : "释放")
                       << " 中键=" << (state.middle_button ? "按下" : "释放")
                       << " 滚轮=" << static_cast<int>(state.wheel) << "\n"
-                      << "屏幕范围: (" << mouse->get_screen_x1() << ", " << mouse->get_screen_y1()
-                      << ") - (" << mouse->get_screen_x2() << ", " << mouse->get_screen_y2() << ")\n"
+                      << "屏幕范围: (" << mouse->get_screen_x1() << ", " << mouse->get_screen_y1() << ") - ("
+                      << mouse->get_screen_x2() << ", " << mouse->get_screen_y2() << ")\n"
                       << "屏幕尺寸: " << mouse->get_screen_width() << "x" << mouse->get_screen_height() << std::endl;
         }
         else if (cmd == "pos" && parts.size() >= 3) {
@@ -138,11 +130,13 @@ int main() {
             mouse->set_position(cx, cy);
         }
         else if (cmd == "2") {
-            std::cout << "移动到左上角 (" << mouse->get_screen_x1() << ", " << mouse->get_screen_y1() << ")" << std::endl;
+            std::cout << "移动到左上角 (" << mouse->get_screen_x1() << ", " << mouse->get_screen_y1() << ")"
+                      << std::endl;
             mouse->set_position(mouse->get_screen_x1() + 1, mouse->get_screen_y1() + 1);
         }
         else if (cmd == "3") {
-            std::cout << "移动到右下角 (" << mouse->get_screen_x2() - 1 << ", " << mouse->get_screen_y2() - 1 << ")" << std::endl;
+            std::cout << "移动到右下角 (" << mouse->get_screen_x2() - 1 << ", " << mouse->get_screen_y2() - 1 << ")"
+                      << std::endl;
             mouse->set_position(mouse->get_screen_x2() - 1, mouse->get_screen_y2() - 1);
         }
         else if (cmd == "6") {

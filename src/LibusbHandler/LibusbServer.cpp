@@ -193,17 +193,24 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
     for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
         auto &intf = active_config_desc->interface[intf_i];
         SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
-        auto &intf_desc = intf.altsetting[0];
 
-        std::vector<UsbEndpoint> endpoints;
-        endpoints.reserve(intf_desc.bNumEndpoints);
-        for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-            endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
-                                   intf_desc.endpoint[ep_i].bmAttributes & 0x03,
-                                   intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
+        std::vector<std::vector<UsbEndpoint>> endpoints;
+        endpoints.reserve(intf.num_altsetting);
+        for (auto alt_i = 0; alt_i < intf.num_altsetting; alt_i++) {
+            auto &intf_desc = intf.altsetting[alt_i];
+            std::vector<UsbEndpoint> alt_endpoints;
+            alt_endpoints.reserve(intf_desc.bNumEndpoints);
+            for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
+                alt_endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
+                                           intf_desc.endpoint[ep_i].bmAttributes & 0x03,
+                                           intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
+            }
+            endpoints.push_back(std::move(alt_endpoints));
         }
-        interfaces.emplace_back(UsbInterface{intf_desc.bInterfaceClass, intf_desc.bInterfaceSubClass,
-                                             intf_desc.bInterfaceProtocol, std::move(endpoints)});
+        interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
+                                             .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
+                                             .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
+                                             .endpoints = std::move(endpoints)});
     }
 
     // 创建 UsbDevice 和 LibusbDeviceHandler
@@ -286,17 +293,24 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
         auto &intf = active_config_desc->interface[intf_i];
         SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
-        auto &intf_desc = intf.altsetting[0];
 
-        std::vector<UsbEndpoint> endpoints;
-        endpoints.reserve(intf_desc.bNumEndpoints);
-        for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-            endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
-                                   intf_desc.endpoint[ep_i].bmAttributes & 0x03,
-                                   intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
+        std::vector<std::vector<UsbEndpoint>> endpoints;
+        endpoints.reserve(intf.num_altsetting);
+        for (auto alt_i = 0; alt_i < intf.num_altsetting; alt_i++) {
+            auto &intf_desc = intf.altsetting[alt_i];
+            std::vector<UsbEndpoint> alt_endpoints;
+            alt_endpoints.reserve(intf_desc.bNumEndpoints);
+            for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
+                alt_endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
+                                           intf_desc.endpoint[ep_i].bmAttributes & 0x03,
+                                           intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
+            }
+            endpoints.push_back(std::move(alt_endpoints));
         }
-        interfaces.emplace_back(UsbInterface{intf_desc.bInterfaceClass, intf_desc.bInterfaceSubClass,
-                                             intf_desc.bInterfaceProtocol, std::move(endpoints)});
+        interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
+                                             .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
+                                             .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
+                                             .endpoints = std::move(endpoints)});
     }
 
     // 保存设备信息
