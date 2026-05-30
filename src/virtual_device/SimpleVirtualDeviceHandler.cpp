@@ -53,8 +53,13 @@ void usbipdcpp::SimpleVirtualDeviceHandler::request_set_feature(std::uint16_t fe
 usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_descriptor(std::uint8_t language_id,
                                                                                        std::uint16_t descriptor_length,
                                                                                        std::uint32_t *p_status) {
-    SPDLOG_WARN("Unimplement get_other_speed_descriptor to simple device");
-    return {};
+    // USB 2.0 §9.6.4: 高速设备必须返回 other_speed_configuration
+    // 内容与配置描述符相同，仅 bDescriptorType 改为 0x07
+    auto desc = get_configuration_descriptor(language_id, descriptor_length, p_status);
+    if (!desc.empty() && desc.size() >= 2) {
+        desc[1] = static_cast<std::uint8_t>(DescriptorType::OtherSpeedConfiguration);
+    }
+    return desc;
 }
 
 void usbipdcpp::SimpleVirtualDeviceHandler::set_descriptor(std::uint16_t configuration_value) {

@@ -114,7 +114,15 @@ constexpr std::uint8_t VS_STREAM_ERROR_CODE_CONTROL = 0x06;
 constexpr std::uint8_t CS_INTERFACE = 0x24;
 constexpr std::uint8_t CS_ENDPOINT = 0x25;
 
+// Video Class-Specific Endpoint Descriptor Subtypes (Table A-7)
+constexpr std::uint8_t EP_UNDEFINED = 0x00;
+constexpr std::uint8_t EP_GENERAL = 0x01;
+constexpr std::uint8_t EP_ENDPOINT = 0x02;
+constexpr std::uint8_t EP_INTERRUPT = 0x03;
+
 // UVC version
+constexpr std::uint16_t UVC_BCD_1_00 = 0x0100;
+constexpr std::uint16_t UVC_BCD_1_10 = 0x0110;
 constexpr std::uint16_t UVC_BCD_1_50 = 0x0150;
 
 // Color Matching Descriptor
@@ -126,7 +134,7 @@ constexpr std::uint8_t VIDEO_COLOR_COEF_SMPTE170M = 0x04;
 constexpr std::uint8_t VC_HEADER_1ITF_LEN = 13; // 12 + bInCollection(1)
 constexpr std::uint8_t CAMERA_TERM_LEN = 18; // 8 + focal(2+2+2) + bControlSize(1) + bmControls(3)
 constexpr std::uint8_t OUTPUT_TERM_LEN = 9;
-constexpr std::uint8_t PU_LEN = 11;
+constexpr std::uint8_t PU_LEN = 13;
 constexpr std::uint8_t VS_INPUT_HEADER_LEN = 14; // 13 + bControlSize(1)
 constexpr std::uint8_t VS_FMT_UNCOMPR_LEN = 27;
 constexpr std::uint8_t VS_FRM_UNCOMPR_CONT_LEN = 38; // 26 + 3*4 (continuous: min/max/step)

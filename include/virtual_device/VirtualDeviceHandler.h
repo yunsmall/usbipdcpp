@@ -17,7 +17,7 @@ public:
         string_configuration_value = string_pool.new_string(L"Default Configuration");
         string_manufacturer_value = string_pool.new_string(L"Usbipdcpp");
         string_product_value = string_pool.new_string(L"Usbipdcpp Virtual Device");
-        string_serial_value = string_pool.new_string(L"Usbipdcpp Serial");
+        string_serial_value = 0; // 无序列号，匹配物理 UVC 设备行为
     }
 
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
@@ -111,6 +111,9 @@ protected:
      */
     virtual data_type get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
                                             std::uint16_t descriptor_length, std::uint32_t *p_status);
+
+    /// 处理特殊字符串索引（如 Microsoft OS 0xEE）。返回 nullopt 表示继续走 string_pool 查找
+    virtual std::optional<data_type> get_special_string_descriptor(std::uint8_t string_index);
 
     virtual void set_descriptor(std::uint16_t configuration_value) = 0;
 

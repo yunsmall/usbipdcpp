@@ -1,15 +1,5 @@
 #pragma once
 
-// ==================== 已知问题 / Known Issues ====================
-// Windows: usbvideo.sys 加载后报 Code 10 (STATUS_IO_DEVICE_ERROR 0xC00000E5)。
-//   标准 USB 枚举（15 个控制传输）全部成功，但 usbvideo.sys 在 StartDevice 阶段
-//   就失败了，我们的服务器看不到任何 UVC 类特定请求或非控制传输。
-//   已经尝试过：修正 bcdUVC 版本号、CS_INTERFACE GET_DESCRIPTOR 响应、
-//   PROBE/COMMIT 大小适配、RET_SUBMIT padding 清零、iInterface 同步等，均未解决。
-//   Linux (vhci-hcd + uvcvideo) 完全正常，可以 PROBE/COMMIT 协商 + ISO 推流。
-//   如果你知道原因或能修复 Windows 兼容性，请提 PR，非常感谢！
-// ================================================================
-
 #include <memory>
 #include <vector>
 
@@ -47,7 +37,7 @@ struct UvcStreamingControl {
     std::uint16_t bmRateControlModes = 0;
     std::uint64_t bmLayoutPerStream = 0;
 
-    static constexpr std::size_t SIZE = 48;
+    static constexpr std::size_t SIZE = 48; // UVC 1.5 full size
 
     data_type serialize() const;
     void deserialize(const std::uint8_t *data, std::size_t len);
@@ -61,6 +51,8 @@ public:
     explicit UvcVideoControlHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
+    data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
+                                     std::uint32_t *p_status) override;
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,
@@ -107,6 +99,8 @@ public:
                              std::unique_ptr<VideoSource> source);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
+    data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
+                                     std::uint32_t *p_status) override;
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                       std::uint32_t transfer_flags,
                                                       std::uint32_t transfer_buffer_length,

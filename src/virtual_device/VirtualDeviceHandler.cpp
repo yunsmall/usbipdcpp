@@ -3,6 +3,7 @@
 #include "Session.h"
 #include "constant.h"
 #include "protocol.h"
+#include "virtual_device/UvcConstants.h"
 #include "virtual_device/VirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -25,7 +26,7 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
     // bmAttributes 只取 bit0-1 传输类型，bit2-3 是 ISO sync type，bit4-5 是 usage type
     const auto xfer_type = ep.attributes & 0x03;
     if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Control)) [[unlikely]] {
-        SPDLOG_INFO("控制传输: type={:02x} req={:02x} val={:04x} idx={:04x} len={}", setup_packet.request_type,
+        SPDLOG_TRACE("控制传输: type={:02x} req={:02x} val={:04x} idx={:04x} len={}", setup_packet.request_type,
                     setup_packet.request, setup_packet.value, setup_packet.index, setup_packet.length);
         handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer),
                            ec);
@@ -34,16 +35,17 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
         auto &intf = interface.value();
         // Bulk 和 Interrupt 最常见
         if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
-            SPDLOG_DEBUG("处理块传输");
+            SPDLOG_TRACE("块传输 ep={:02x} len={}", ep.address, transfer_buffer_length);
             handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
         }
         else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
-            SPDLOG_DEBUG("处理中断传输");
+            SPDLOG_TRACE("中断传输 ep={:02x} len={}", ep.address, transfer_buffer_length);
             handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer),
                                       ec);
         }
         else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
-            SPDLOG_DEBUG("处理等时传输");
+            SPDLOG_TRACE("等时传输 ep={:02x} len={} iso_packets={}", ep.address, transfer_buffer_length,
+                        cmd.number_of_packets);
             int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
                                   ? static_cast<int>(cmd.number_of_packets)
                                   : 0;
@@ -226,8 +228,10 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                     trx->actual_length = trx->data.size();
                     trx->data_offset = 0; // 虚拟设备没有 setup 包偏移
 
-                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                            seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
+                    session->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                    seqnum, status, static_cast<std::uint32_t>(trx->actual_length),
+                                    std::move(transfer)));
                 }
                 break;
             }
@@ -309,8 +313,10 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         trx->actual_length = trx->data.size();
                         trx->data_offset = 0;
 
-                        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
+                        session->submit_ret_submit(
+                                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                        seqnum, status, static_cast<std::uint32_t>(trx->actual_length),
+                                        std::move(transfer)));
                     }
                 }
                 else {
@@ -386,8 +392,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 trx->data_offset = 0;
 
                                 session->submit_ret_submit(
-                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                                                seqnum, static_cast<std::uint32_t>(trx->actual_length),
+                                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                                                seqnum, status, static_cast<std::uint32_t>(trx->actual_length),
                                                 std::move(transfer)));
                             }
                         }
@@ -605,7 +611,7 @@ data_type VirtualDeviceHandler::request_get_descriptor(std::uint8_t type, std::u
             break;
         }
         default: {
-            SPDLOG_INFO("请求非标准描述符 {:08b}", type);
+            SPDLOG_DEBUG("请求非标准描述符 {:08b}", type);
             return get_custom_descriptor(type, language_id, descriptor_length, p_status);
         }
     }
@@ -701,10 +707,14 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
             handle_device.configuration_value, // bConfigurationValue
             string_configuration_value, // iConfiguration
             0x80, // bmAttributes Bus Powered
-            0x32, // bMaxPower 100mA
+            0xFA, // bMaxPower 500mA
     };
     // IAD: Windows 要求多接口 UVC 设备在配置描述符里包含 IAD
+    // UVC 1.5 Table 3-1: iFunction 必须等于 VC interface 的 iInterface
     if (handle_device.device_class == 0xEF) {
+        auto iFunc = handle_device.interfaces[0].handler
+                             ? handle_device.interfaces[0].handler->get_string_interface_value()
+                             : std::uint8_t{0};
         desc.insert(desc.end(), {
                                         0x08, // bLength
                                         0x0B, // bDescriptorType: IAD
@@ -712,8 +722,8 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                                         static_cast<std::uint8_t>(handle_device.interfaces.size()), // bInterfaceCount
                                         handle_device.interfaces[0].interface_class, // bFunctionClass
                                         0x03, // bFunctionSubClass: SC_VIDEO_INTERFACE_COLLECTION
-                                        0x00, // bFunctionProtocol
-                                        0x00, // iFunction
+                                        0x00, // bFunctionProtocol (PC_PROTOCOL_UNDEFINED)
+                                        iFunc, // iFunction: must equal VC iInterface per spec
                                 });
     }
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
@@ -751,6 +761,19 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                                      static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
                                      endpoint.interval};
                 intf_desc.insert(intf_desc.end(), ep_desc.begin(), ep_desc.end());
+
+                // UVC 1.5 Table 3-12: VC interrupt endpoint requires class-specific endpoint descriptor
+                if (intf.interface_class == CC_VIDEO && intf.interface_subclass == SC_VIDEOCONTROL &&
+                    (endpoint.attributes & 0x03) == 0x03) {
+                    data_type cs_ep = {
+                            0x05, // bLength
+                            CS_ENDPOINT, // bDescriptorType
+                            EP_INTERRUPT, // bDescriptorSubType
+                            static_cast<std::uint8_t>(endpoint.max_packet_size), // wMaxTransferSize low
+                            static_cast<std::uint8_t>(endpoint.max_packet_size >> 8), // wMaxTransferSize high
+                    };
+                    intf_desc.insert(intf_desc.end(), cs_ep.begin(), cs_ep.end());
+                }
             }
             desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());
         }
@@ -766,6 +789,13 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
 data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
                                                       std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
+    // 先尝试虚函数：允许子类处理特殊字符串索引（如 Microsoft OS 0xEE）
+    if (auto special = get_special_string_descriptor(language_id)) {
+        if (descriptor_length < special->size())
+            special->resize(descriptor_length);
+        return *special;
+    }
+
     if (language_id == 0) [[unlikely]] {
         // language ids - 特殊情况，用于获取支持的语言ID列表
         data_type desc = {4, static_cast<std::uint8_t>(DescriptorType::String), 0x09, 0x04};
@@ -799,23 +829,29 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, 
 data_type VirtualDeviceHandler::get_device_qualifier_descriptor(std::uint8_t language_id,
                                                                 std::uint16_t descriptor_length,
                                                                 std::uint32_t *p_status) {
+    // USB 2.0 §9.6.2: 高速设备必须返回 other-speed 信息
+    // 返回全速模式下的设备描述信息（bMaxPacketSize0 等与高速相同）
     std::shared_lock lock(data_mutex);
     data_type desc = {
-            0x0A,
-            static_cast<std::uint8_t>(DescriptorType::DeviceQualifier),
-            usb_version.minor,
-            usb_version.major,
-            handle_device.device_class,
-            handle_device.device_subclass,
-            handle_device.device_protocol,
-            static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size),
-            handle_device.num_configurations,
-            0x00,
+            0x0A,                                                           // bLength
+            static_cast<std::uint8_t>(DescriptorType::DeviceQualifier),     // bDescriptorType
+            usb_version.minor, usb_version.major,                           // bcdUSB
+            handle_device.device_class,                                     // bDeviceClass
+            handle_device.device_subclass,                                  // bDeviceSubClass
+            handle_device.device_protocol,                                  // bDeviceProtocol
+            static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0 (FS)
+            handle_device.num_configurations,                               // bNumConfigurations
+            0x00,                                                           // bReserved
     };
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
     }
     return desc;
+}
+
+std::optional<data_type> VirtualDeviceHandler::get_special_string_descriptor(std::uint8_t string_index) {
+    (void)string_index;
+    return std::nullopt;
 }
 
 data_type VirtualDeviceHandler::get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,

@@ -14,13 +14,13 @@ int main() {
 
     StringPool string_pool;
 
-    // UVC 需要两个接口：VideoControl + VideoStreaming
+    // UVC 1.5 Table 3-2/3-13: VC/VS interface protocol must be PC_PROTOCOL_15
     std::vector<UsbInterface> interfaces = {
             // Interface 0: VideoControl（含中断端点用于状态通知）
             UsbInterface{
                     .interface_class = CC_VIDEO,
                     .interface_subclass = SC_VIDEOCONTROL,
-                    .interface_protocol = PC_PROTOCOL_UNDEFINED,
+                    .interface_protocol = PC_PROTOCOL_15,
                     .endpoints = {{UsbEndpoint{
                             .address = 0x87, // IN, endpoint 7 — interrupt for status
                             .attributes = 0x03, // Interrupt
@@ -32,7 +32,7 @@ int main() {
             UsbInterface{
                     .interface_class = CC_VIDEO,
                     .interface_subclass = SC_VIDEOSTREAMING,
-                    .interface_protocol = PC_PROTOCOL_UNDEFINED,
+                    .interface_protocol = PC_PROTOCOL_15,
                     .endpoints = {{}, // alt 0: zero bandwidth
                                   {UsbEndpoint{
                                           .address = 0x81, // IN, endpoint 1

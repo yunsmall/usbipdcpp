@@ -41,6 +41,7 @@ data_type UvcStreamingControl::serialize() const {
     d[23] = static_cast<std::uint8_t>((dwMaxPayloadTransferSize >> 8) & 0xFF);
     d[24] = static_cast<std::uint8_t>((dwMaxPayloadTransferSize >> 16) & 0xFF);
     d[25] = static_cast<std::uint8_t>((dwMaxPayloadTransferSize >> 24) & 0xFF);
+    // UVC 1.1 fields (offsets 26–33)
     d[26] = static_cast<std::uint8_t>(dwClockFrequency & 0xFF);
     d[27] = static_cast<std::uint8_t>((dwClockFrequency >> 8) & 0xFF);
     d[28] = static_cast<std::uint8_t>((dwClockFrequency >> 16) & 0xFF);
@@ -49,7 +50,7 @@ data_type UvcStreamingControl::serialize() const {
     d[31] = bPreferredVersion;
     d[32] = bMinVersion;
     d[33] = bMaxVersion;
-    // UVC 1.5 fields
+    // UVC 1.5 fields (offsets 34–47)
     d[34] = bUsage;
     d[35] = bBitDepthLuma;
     d[36] = bmSettings;
@@ -89,7 +90,7 @@ void UvcStreamingControl::deserialize(const std::uint8_t *data, std::size_t len)
         bMinVersion = data[32];
         bMaxVersion = data[33];
     }
-    if (len >= SIZE) {
+    if (len >= 48) { // UVC 1.5 extension fields
         bUsage = data[34];
         bBitDepthLuma = data[35];
         bmSettings = data[36];
@@ -121,20 +122,23 @@ void UvcVideoControlHandler::build_class_descriptor() {
     // VS interface is always at index 1 in UVC setup
     std::uint8_t vs_if_num = 1;
 
-    // VC Header(13) + CameraTerminal(18) + PU(11) + OT(9) = 51
+    // VC Header(13) + CameraTerminal(18) + PU(13) + OT(9) = 53
+    // UVC 1.5: Processing Unit bControlSize=3 + bmVideoStandards(1)
+    static constexpr std::uint8_t cam_term_len = 18; // 15 + bControlSize(3)
+    static constexpr std::uint8_t pu_len = 13;       // 10 + bControlSize(3) + bmVideoStandards(1)
     data_type d;
-    auto total_vc_size = VC_HEADER_1ITF_LEN + CAMERA_TERM_LEN + PU_LEN + OUTPUT_TERM_LEN;
+    auto total_vc_size = VC_HEADER_1ITF_LEN + cam_term_len + pu_len + OUTPUT_TERM_LEN;
 
     d.insert(d.end(),
              {VC_HEADER_1ITF_LEN, 0x24, VC_DESC_HEADER, 0x50, 0x01, // bcdUVC 0x0150 (UVC 1.5)
               static_cast<std::uint8_t>(total_vc_size & 0xFF), static_cast<std::uint8_t>((total_vc_size >> 8) & 0xFF),
-              0x00, 0x00, 0x00, 0x00, // dwClockFrequency
+              0xC0, 0xFC, 0x9B, 0x01, // dwClockFrequency = 27000000 (27 MHz)
               0x01, // bInCollection
               vs_if_num});
 
-    // Camera Terminal (UVC 1.5, 18 bytes): bControlSize=3, bmControls all zero
+    // Camera Terminal: 18 bytes, bControlSize=3
     d.insert(d.end(),
-             {CAMERA_TERM_LEN, 0x24, VC_DESC_INPUT_TERMINAL,
+             {cam_term_len, 0x24, VC_DESC_INPUT_TERMINAL,
               0x01, // bTerminalID
               static_cast<std::uint8_t>(ITT_CAMERA & 0xFF), static_cast<std::uint8_t>((ITT_CAMERA >> 8) & 0xFF),
               0x00, // bAssocTerminal
@@ -143,15 +147,17 @@ void UvcVideoControlHandler::build_class_descriptor() {
               0x00, 0x00, // wObjectiveFocalLengthMax
               0x00, 0x00, // wOcularFocalLength
               0x03, // bControlSize
-              0x00, 0x00, 0x00}); // bmControls[3]
+              0x00, 0x00, 0x00}); // bmControls[3]: no camera terminal controls
 
-    d.insert(d.end(), {PU_LEN, 0x24, VC_DESC_PROCESSING_UNIT,
+    // Processing Unit: 13 bytes, bControlSize=3 + bmVideoStandards (UVC 1.5 Table 3-8)
+    d.insert(d.end(), {pu_len, 0x24, VC_DESC_PROCESSING_UNIT,
                        0x02, // bUnitID
                        0x01, // bSourceID → IT
                        0x00, 0x00, // wMaxMultiplier
-                       0x02, // bControlSize
-                       0xEE, 0x00, // bmControls: Brightness|Contrast|Gain|Hue|Saturation|Sharpness
-                       0x00}); // iProcessing
+                       0x03, // bControlSize = 3
+                       0x1F, 0x02, 0x00, // bmControls[3]: Brightness|Contrast|Hue|Saturation|Sharpness|Gain
+                       0x00, // iProcessing
+                       0x00}); // bmVideoStandards: no analog video
 
     d.insert(d.end(),
              {OUTPUT_TERM_LEN, 0x24, VC_DESC_OUTPUT_TERMINAL,
@@ -423,6 +429,14 @@ std::uint16_t UvcVideoControlHandler::request_endpoint_get_status(std::uint8_t e
     return 0;
 }
 
+data_type UvcVideoControlHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
+                                                          std::uint16_t descriptor_length, std::uint32_t *p_status) {
+    if (type == CS_INTERFACE) {
+        return class_desc_;
+    }
+    return VirtualInterfaceHandler::request_get_descriptor(type, language_id, descriptor_length, p_status);
+}
+
 // ==================== UvcVideoStreamingHandler ====================
 
 UvcVideoStreamingHandler::UvcVideoStreamingHandler(UsbInterface &handle_interface, StringPool &string_pool,
@@ -470,8 +484,8 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
         format[21] = static_cast<std::uint8_t>(fmt.bits_per_pixel);
         format[22] = 0x01; // bDefaultFrameIndex
     }
-    format[23] = 0x01; // bAspectRatioX
-    format[24] = 0x01; // bAspectRatioY
+    format[23] = 0x00; // bAspectRatioX: 0 for non-interlaced
+    format[24] = 0x00; // bAspectRatioY: 0 for non-interlaced
     // [25] bmInterlaceFlags = 0
     // [26] bCopyProtect = 0
 
@@ -504,10 +518,19 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     frame[24] = static_cast<std::uint8_t>((frame_interval >> 24) & 0xFF);
     frame[25] = 0x00; // bFrameIntervalType = 0 (continuous)
     // continuous: dwFrameInterval[0]=min, [1]=max, [2]=step
+    //
+    // usbvideo.sys!DumpAndValidateFrameUncompressed 对连续帧间隔有三项整除检查：
+    //   if (step != 0) {
+    //       if (max <= min)                → STATUS_INVALID_PARAMETER
+    //       if ((max - min) % step != 0)   → STATUS_INVALID_PARAMETER
+    //   }
+    // 因此 max 必须是 min + N*step（N为正整数），否则 Windows 直接 Code 10。
+    // 这里取 N=9，即最慢帧率为默认的 1/10。
+    auto max_frame_interval = frame_interval * 10;
     for (int i = 0; i < 4; ++i)
         frame[26 + i] = static_cast<std::uint8_t>((frame_interval >> (i * 8)) & 0xFF); // min
     for (int i = 0; i < 4; ++i)
-        frame[30 + i] = static_cast<std::uint8_t>((10000000 >> (i * 8)) & 0xFF); // max = 1 sec
+        frame[30 + i] = static_cast<std::uint8_t>((max_frame_interval >> (i * 8)) & 0xFF); // max
     for (int i = 0; i < 4; ++i)
         frame[34 + i] = static_cast<std::uint8_t>((frame_interval >> (i * 8)) & 0xFF); // step
 
@@ -611,21 +634,38 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
     bool is_commit = (ctrl_code == VS_COMMIT_CONTROL);
 
     if (request == GET_CUR || request == GET_MIN || request == GET_MAX || request == GET_DEF) {
+        auto fmt = source_->current_format();
+        auto max_frame_size = static_cast<std::uint32_t>(source_->max_frame_size());
         auto ctrl = probe_data_;
-        // 设备能力字段必须始终设对（内核 SET_CUR 发过来的全为 0）
-        ctrl.bmFramingInfo = 0x03;
+        // 设备能力字段 — 内核可能发来全 0 的 SET_CUR，必须每次都设对
+        ctrl.bmFramingInfo = 0x03;     // 支持动态帧率 + 帧 ID
         ctrl.bPreferredVersion = 1;
         ctrl.bMinVersion = 1;
         ctrl.bMaxVersion = 1;
         ctrl.dwClockFrequency = 27000000;
-        if (request == GET_MAX)
-            ctrl.dwMaxPayloadTransferSize = 512;
-        if (request == GET_DEF) {
-            auto fmt = source_->current_format();
+        auto interval = fmt.default_frame_interval;
+        if (request == GET_MIN) {
+            ctrl.dwMaxVideoFrameSize = 0;
+            ctrl.dwMaxPayloadTransferSize = 0;
+            ctrl.dwFrameInterval = interval * 4; // 最低帧率 = 1/4 默认
+        } else if (request == GET_MAX) {
+            ctrl.dwMaxVideoFrameSize = max_frame_size;
+            ctrl.dwMaxPayloadTransferSize = max_frame_size;
+            ctrl.dwFrameInterval = interval / 4; // 最高帧率 = 4x 默认
+        } else if (request == GET_DEF) {
             ctrl.bFormatIndex = 1;
             ctrl.bFrameIndex = 1;
-            ctrl.dwFrameInterval = fmt.default_frame_interval;
-            ctrl.dwMaxVideoFrameSize = static_cast<std::uint32_t>(source_->max_frame_size());
+            ctrl.dwFrameInterval = interval;
+            ctrl.dwMaxVideoFrameSize = max_frame_size;
+            ctrl.dwMaxPayloadTransferSize = max_frame_size;
+        } else {
+            // GET_CUR: 用上次协商的值，未协商过时用默认值
+            if (ctrl.dwMaxVideoFrameSize == 0)
+                ctrl.dwMaxVideoFrameSize = max_frame_size;
+            if (ctrl.dwMaxPayloadTransferSize == 0)
+                ctrl.dwMaxPayloadTransferSize = max_frame_size;
+            if (ctrl.dwFrameInterval == 0)
+                ctrl.dwFrameInterval = interval;
         }
         auto resp = ctrl.serialize();
         auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
@@ -658,6 +698,13 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             probe_data_.bMinVersion = 1;
             probe_data_.bMaxVersion = 1;
             probe_data_.dwClockFrequency = 27000000;
+            // UVC 1.5 fields: device capabilities
+            probe_data_.bUsage = 0;
+            probe_data_.bBitDepthLuma = 0;
+            probe_data_.bmSettings = 0;
+            probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
+            probe_data_.bmRateControlModes = 0;
+            probe_data_.bmLayoutPerStream = 0;
         }
         session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
@@ -670,6 +717,12 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             probe_data_.bMinVersion = 1;
             probe_data_.bMaxVersion = 1;
             probe_data_.dwClockFrequency = 27000000;
+            probe_data_.bUsage = 0;
+            probe_data_.bBitDepthLuma = 0;
+            probe_data_.bmSettings = 0;
+            probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
+            probe_data_.bmRateControlModes = 0;
+            probe_data_.bmLayoutPerStream = 0;
         }
         auto fmt = source_->current_format();
         source_->set_format(fmt.fourcc, fmt.width, fmt.height, probe_data_.dwFrameInterval);
@@ -804,6 +857,14 @@ std::uint16_t UvcVideoStreamingHandler::request_get_status(std::uint32_t *p_stat
 }
 std::uint16_t UvcVideoStreamingHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
     return 0;
+}
+
+data_type UvcVideoStreamingHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
+                                                            std::uint16_t descriptor_length, std::uint32_t *p_status) {
+    if (type == CS_INTERFACE) {
+        return class_desc_;
+    }
+    return VirtualInterfaceHandler::request_get_descriptor(type, language_id, descriptor_length, p_status);
 }
 
 // ==================== UvcDeviceHelper ====================
