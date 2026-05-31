@@ -492,7 +492,9 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     // Frame descriptor: continuous (bFrameIntervalType=0) — 26 fixed + 3*4 intervals = 38 bytes
     auto fps_val = 10'000'000ULL / fmt.default_frame_interval;
     auto bit_rate = static_cast<std::uint32_t>(fmt.max_frame_size * 8 * fps_val);
-    auto frame_interval = static_cast<std::uint32_t>(fmt.default_frame_interval);
+    auto min_iv = fmt.min_frame_interval;
+    auto max_iv = fmt.max_frame_interval;
+    auto step_iv = min_iv; // 步长 = 最小帧间隔
 
     data_type frame(VS_FRM_UNCOMPR_CONT_LEN, 0);
     frame[0] = VS_FRM_UNCOMPR_CONT_LEN;
@@ -512,10 +514,10 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     frame[18] = static_cast<std::uint8_t>((fmt.max_frame_size >> 8) & 0xFF);
     frame[19] = static_cast<std::uint8_t>((fmt.max_frame_size >> 16) & 0xFF);
     frame[20] = static_cast<std::uint8_t>((fmt.max_frame_size >> 24) & 0xFF);
-    frame[21] = static_cast<std::uint8_t>(frame_interval & 0xFF);
-    frame[22] = static_cast<std::uint8_t>((frame_interval >> 8) & 0xFF);
-    frame[23] = static_cast<std::uint8_t>((frame_interval >> 16) & 0xFF);
-    frame[24] = static_cast<std::uint8_t>((frame_interval >> 24) & 0xFF);
+    frame[21] = static_cast<std::uint8_t>(fmt.default_frame_interval & 0xFF);
+    frame[22] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 8) & 0xFF);
+    frame[23] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 16) & 0xFF);
+    frame[24] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 24) & 0xFF);
     frame[25] = 0x00; // bFrameIntervalType = 0 (continuous)
     // continuous: dwFrameInterval[0]=min, [1]=max, [2]=step
     //
@@ -524,15 +526,14 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     //       if (max <= min)                → STATUS_INVALID_PARAMETER
     //       if ((max - min) % step != 0)   → STATUS_INVALID_PARAMETER
     //   }
-    // 因此 max 必须是 min + N*step（N为正整数），否则 Windows 直接 Code 10。
-    // 这里取 N=9，即最慢帧率为默认的 1/10。
-    auto max_frame_interval = frame_interval * 10;
+    // 因此 max 必须是 min + N*step（N 为正整数），否则 Windows 直接 Code 10。
+    // min/max/step 均取自 VideoSource，step=min 保证 (max-min) 是 min 的整数倍。
     for (int i = 0; i < 4; ++i)
-        frame[26 + i] = static_cast<std::uint8_t>((frame_interval >> (i * 8)) & 0xFF); // min
+        frame[26 + i] = static_cast<std::uint8_t>((min_iv >> (i * 8)) & 0xFF); // min
     for (int i = 0; i < 4; ++i)
-        frame[30 + i] = static_cast<std::uint8_t>((max_frame_interval >> (i * 8)) & 0xFF); // max
+        frame[30 + i] = static_cast<std::uint8_t>((max_iv >> (i * 8)) & 0xFF); // max
     for (int i = 0; i < 4; ++i)
-        frame[34 + i] = static_cast<std::uint8_t>((frame_interval >> (i * 8)) & 0xFF); // step
+        frame[34 + i] = static_cast<std::uint8_t>((step_iv >> (i * 8)) & 0xFF); // step
 
     // Color Matching descriptor: 6 bytes
     data_type color = {VS_COLOR_MATCHING_LEN,     0x24,
@@ -650,17 +651,19 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         ctrl.wCompWindowSize = 0;
         ctrl.wDelay = 0;
         auto interval = fmt.default_frame_interval;
+        auto min_iv = fmt.min_frame_interval;
+        auto max_iv = fmt.max_frame_interval;
         // UVC 1.5 Table 4-76: GET_MIN 返回各协商字段的最小值
         if (request == GET_MIN) {
             // 非零避免 host 误判为"字段未设置"触发 fix-up（libuvc stream.c:273）
             ctrl.dwMaxVideoFrameSize = 1;
             // UVC 1.5 §4.3.1.1 offset 22: 单次 payload 传输最大字节数，设 1 为最小合法值
             ctrl.dwMaxPayloadTransferSize = 1;
-            ctrl.dwFrameInterval = interval * 4; // 最大帧间隔 = 最低帧率
+            ctrl.dwFrameInterval = max_iv; // 最长帧间隔 = 最低数据速率
         } else if (request == GET_MAX) {
             ctrl.dwMaxVideoFrameSize = max_frame_size;
             ctrl.dwMaxPayloadTransferSize = max_frame_size;
-            ctrl.dwFrameInterval = interval / 4; // 最小帧间隔 = 最高帧率
+            ctrl.dwFrameInterval = min_iv; // 最短帧间隔 = 最高帧率
         } else if (request == GET_DEF) {
             ctrl.bFormatIndex = 1;
             ctrl.bFrameIndex = 1;

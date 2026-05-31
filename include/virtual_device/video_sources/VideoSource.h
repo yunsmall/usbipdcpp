@@ -13,6 +13,13 @@ struct VideoFormatInfo {
     std::uint16_t height; // 帧高度
     std::uint32_t max_frame_size; // 最大帧字节数
     std::uint32_t default_frame_interval; // 默认帧间隔（100ns 单位）
+    /// 支持的最短帧间隔（100ns 单位），即最高帧率。
+    /// Frame 描述符 dwMinFrameInterval + PROBE GET_MAX 共用此值。
+    std::uint32_t min_frame_interval;
+    /// 支持的最长帧间隔（100ns 单位），即最低帧率。
+    /// Frame 描述符 dwMaxFrameInterval + PROBE GET_MIN 共用此值。
+    /// 约束：(max - min) % min == 0（usbvideo.sys 整除检查）。
+    std::uint32_t max_frame_interval;
     std::uint8_t bits_per_pixel; // 每像素位数
 };
 

@@ -14,8 +14,13 @@ ColorBarSource::ColorBarSource(std::uint16_t width, std::uint16_t height, std::u
 }
 
 std::vector<VideoFormatInfo> ColorBarSource::supported_formats() const {
+    // 仅支持单一固定帧率：min 和 default 相同，max = min * 10（可降至 1/10 帧率）
+    auto min_iv = frame_interval_;
+    auto max_iv = frame_interval_ * 10;
+    // (max - min) % min == 0 满足 usbvideo.sys 整除检查
     return {
-            {UvcFourCC::YUY2, width_, height_, static_cast<std::uint32_t>(width_ * height_ * 2), frame_interval_, 16},
+            {UvcFourCC::YUY2, width_, height_, static_cast<std::uint32_t>(width_ * height_ * 2),
+             frame_interval_, min_iv, max_iv, 16},
     };
 }
 
