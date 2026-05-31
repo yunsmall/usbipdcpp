@@ -1,0 +1,33 @@
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+find_package(GTest CONFIG REQUIRED)
+include(GoogleTest)
+
+function(add_test_file name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE usbipdcpp GTest::gtest GTest::gtest_main)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    gtest_discover_tests(${name})
+endfunction()
+
+function(add_test_dir name)
+    file(GLOB_RECURSE src ${name}/*.cpp)
+    add_executable(${name} ${src})
+    target_link_libraries(${name} PRIVATE usbipdcpp GTest::gtest GTest::gtest_main)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    gtest_discover_tests(${name})
+endfunction()
+
+add_test_dir(test_protocol)
+
+add_test_file(test_network)
+add_test_file(test_stringpool)
+add_test_file(test_usb_device)
+add_test_file(test_setup_packet)
+add_test_file(test_usbip_response)
+add_test_file(test_object_pool)
+add_test_file(test_small_vector)
+add_test_file(test_transfer_handle)
+add_test_file(test_generic_transfer)
+add_test_file(test_reuse_map)
+add_test_file(test_reuse_set)

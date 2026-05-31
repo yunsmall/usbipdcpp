@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cxxopts.hpp>
 #include <iostream>
 #include <thread>
 
@@ -6,7 +7,27 @@
 
 using namespace usbipdcpp;
 
-int main() {
+int main(int argc, char **argv) {
+    cxxopts::Options options("mock_mouse", "USB/IP virtual mouse device");
+    options.add_options()
+        ("p,port", "TCP port", cxxopts::value<std::uint16_t>()->default_value("53240"))
+        ("b,busid", "Bus ID", cxxopts::value<std::string>()->default_value("1-1"))
+        ("help", "Print help");
+    cxxopts::ParseResult result;
+    try {
+        result = options.parse(argc, argv);
+    } catch (const cxxopts::exceptions::exception &e) {
+        std::cerr << e.what() << std::endl;
+        std::cout << options.help() << std::endl;
+        return 1;
+    }
+    if (result.count("help")) {
+        std::cout << options.help() << std::endl;
+        return 0;
+    }
+    auto port = result["port"].as<std::uint16_t>();
+    auto busid = result["busid"].as<std::string>();
+
     spdlog::set_level(spdlog::level::trace);
 
     StringPool string_pool;
@@ -25,7 +46,7 @@ int main() {
 
     auto mock_mouse = std::make_shared<UsbDevice>(UsbDevice{
             .path = "/usbipdcpp/mock_mouse",
-            .busid = "1-1",
+            .busid = busid,
             .bus_num = 1,
             .dev_num = 1,
             .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
@@ -51,14 +72,12 @@ int main() {
     Server server;
     server.add_device(std::move(mock_mouse));
 
-    asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), 54324};
+    asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
 
     server.start(endpoint);
 
-    SPDLOG_INFO("Mock mouse started");
-    SPDLOG_INFO("Port: 54324");
-    SPDLOG_INFO("Busid: 1-1");
-    SPDLOG_INFO("Connect with: usbip attach -r <host> -b 1-1");
+    SPDLOG_INFO("Mock mouse started on port {}, busid {}", port, busid);
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Press Enter to exit...");
 
     // 后台线程模拟鼠标点击
