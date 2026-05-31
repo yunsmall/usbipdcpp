@@ -637,33 +637,42 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         auto fmt = source_->current_format();
         auto max_frame_size = static_cast<std::uint32_t>(source_->max_frame_size());
         auto ctrl = probe_data_;
-        // 设备能力字段 — 内核可能发来全 0 的 SET_CUR，必须每次都设对
-        ctrl.bmFramingInfo = 0x03;     // 支持动态帧率 + 帧 ID
-        ctrl.bPreferredVersion = 1;
-        ctrl.bMinVersion = 1;
-        ctrl.bMaxVersion = 1;
-        ctrl.dwClockFrequency = 27000000;
+        // UVC 1.5 §4.3.1.1 Table 4-75: 以下字段为设备能力，host 不可修改
+        ctrl.bmFramingInfo = 0x03; // D0: FID 必须, D1: EOF 可选
+        ctrl.bPreferredVersion = 1; // 首选 payload 格式版本（UVC 1.5 offset 31）
+        ctrl.bMinVersion = 1;       // 最小支持版本（offset 32）
+        ctrl.bMaxVersion = 1;       // 最大支持版本（offset 33）
+        ctrl.dwClockFrequency = 27000000; // 27MHz, offset 26
+        // 不压缩视频：压缩相关字段必须为 0，否则与 VS Input Header bmaControls=0 矛盾
+        ctrl.wKeyFrameRate = 0;
+        ctrl.wPFrameRate = 0;
+        ctrl.wCompQuality = 0;
+        ctrl.wCompWindowSize = 0;
+        ctrl.wDelay = 0;
         auto interval = fmt.default_frame_interval;
+        // UVC 1.5 Table 4-76: GET_MIN 返回各协商字段的最小值
         if (request == GET_MIN) {
-            ctrl.dwMaxVideoFrameSize = 0;
-            ctrl.dwMaxPayloadTransferSize = 0;
-            ctrl.dwFrameInterval = interval * 4; // 最低帧率 = 1/4 默认
+            // 非零避免 host 误判为"字段未设置"触发 fix-up（libuvc stream.c:273）
+            ctrl.dwMaxVideoFrameSize = 1;
+            // UVC 1.5 §4.3.1.1 offset 22: 单次 payload 传输最大字节数，设 1 为最小合法值
+            ctrl.dwMaxPayloadTransferSize = 1;
+            ctrl.dwFrameInterval = interval * 4; // 最大帧间隔 = 最低帧率
         } else if (request == GET_MAX) {
             ctrl.dwMaxVideoFrameSize = max_frame_size;
             ctrl.dwMaxPayloadTransferSize = max_frame_size;
-            ctrl.dwFrameInterval = interval / 4; // 最高帧率 = 4x 默认
+            ctrl.dwFrameInterval = interval / 4; // 最小帧间隔 = 最高帧率
         } else if (request == GET_DEF) {
             ctrl.bFormatIndex = 1;
             ctrl.bFrameIndex = 1;
             ctrl.dwFrameInterval = interval;
             ctrl.dwMaxVideoFrameSize = max_frame_size;
-            ctrl.dwMaxPayloadTransferSize = max_frame_size;
+            // UVC 1.5 §4.3.1.1 Table 4-75 offset 22: 设备设定，host 只读，必须支持。
+            // 取 ISO 端点 wMaxPacketSize（512），不对齐 max_frame_size
+            ctrl.dwMaxPayloadTransferSize = 512;
         } else {
             // GET_CUR: 用上次协商的值，未协商过时用默认值
             if (ctrl.dwMaxVideoFrameSize == 0)
                 ctrl.dwMaxVideoFrameSize = max_frame_size;
-            if (ctrl.dwMaxPayloadTransferSize == 0)
-                ctrl.dwMaxPayloadTransferSize = max_frame_size;
             if (ctrl.dwFrameInterval == 0)
                 ctrl.dwFrameInterval = interval;
         }
@@ -693,18 +702,19 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
     else if (request == SET_CUR && !is_commit) {
         if (trx->data.size() >= 26) {
             probe_data_.deserialize(trx->data.data(), trx->data.size());
-            probe_data_.bmFramingInfo = 0x03;
-            probe_data_.bPreferredVersion = 1;
-            probe_data_.bMinVersion = 1;
-            probe_data_.bMaxVersion = 1;
-            probe_data_.dwClockFrequency = 27000000;
-            // UVC 1.5 fields: device capabilities
-            probe_data_.bUsage = 0;
-            probe_data_.bBitDepthLuma = 0;
-            probe_data_.bmSettings = 0;
-            probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
-            probe_data_.bmRateControlModes = 0;
-            probe_data_.bmLayoutPerStream = 0;
+            // UVC 1.5 §4.3.1.1 Table 4-75: 设备能力字段，host 不可修改
+            probe_data_.bmFramingInfo = 0x03;          // offset 30: FID+EOF
+            probe_data_.bPreferredVersion = 1;          // offset 31
+            probe_data_.bMinVersion = 1;                // offset 32
+            probe_data_.bMaxVersion = 1;                // offset 33
+            probe_data_.dwClockFrequency = 27000000;    // offset 26: 27MHz
+            // UVC 1.5 Table 4-75 offset 34–47: 时域编码字段，不压缩视频全为 0
+            probe_data_.bUsage = 0;                     // offset 34
+            probe_data_.bBitDepthLuma = 0;              // offset 35
+            probe_data_.bmSettings = 0;                 // offset 36
+            probe_data_.bMaxNumberOfRefFramesPlus1 = 0; // offset 37
+            probe_data_.bmRateControlModes = 0;         // offset 38
+            probe_data_.bmLayoutPerStream = 0;          // offset 40
         }
         session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
@@ -712,6 +722,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
     else if (request == SET_CUR && is_commit) {
         if (trx->data.size() >= 26) {
             probe_data_.deserialize(trx->data.data(), trx->data.size());
+            // UVC 1.5 §4.3.1.1 Table 4-75: 同 PROBE SET_CUR，写入设备状态
             probe_data_.bmFramingInfo = 0x03;
             probe_data_.bPreferredVersion = 1;
             probe_data_.bMinVersion = 1;

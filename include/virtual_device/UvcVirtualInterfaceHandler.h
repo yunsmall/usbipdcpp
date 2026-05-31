@@ -17,10 +17,10 @@ struct UvcStreamingControl {
     std::uint8_t bFormatIndex = 1;
     std::uint8_t bFrameIndex = 1;
     std::uint32_t dwFrameInterval = 333333;
-    std::uint16_t wKeyFrameRate = 1;
+    std::uint16_t wKeyFrameRate = 0;
     std::uint16_t wPFrameRate = 0;
-    std::uint16_t wCompQuality = 1;
-    std::uint16_t wCompWindowSize = 1;
+    std::uint16_t wCompQuality = 0;
+    std::uint16_t wCompWindowSize = 0;
     std::uint16_t wDelay = 0;
     std::uint32_t dwMaxVideoFrameSize = 0;
     std::uint32_t dwMaxPayloadTransferSize = 0;

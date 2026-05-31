@@ -264,7 +264,7 @@ protected:
     std::unique_ptr<asio::ip::tcp::acceptor> acceptor;
 
     void SetUp() override {
-        asio::ip::tcp::endpoint ep(asio::ip::tcp::v4(), 0);
+        asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
         acceptor = std::make_unique<asio::ip::tcp::acceptor>(io, ep);
         write_sock = std::make_unique<asio::ip::tcp::socket>(io);
         write_sock->connect(acceptor->local_endpoint());
@@ -272,9 +272,9 @@ protected:
     }
 
     void TearDown() override {
-        write_sock->close();
-        read_sock->close();
-        acceptor->close();
+        if (write_sock) write_sock->close();
+        if (read_sock) read_sock->close();
+        if (acceptor) acceptor->close();
     }
 
     std::vector<std::uint8_t> write_and_read(const UsbIpResponse::UsbIpRetSubmit &ret, std::size_t read_size) {
