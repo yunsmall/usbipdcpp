@@ -31,6 +31,8 @@ constexpr std::uint8_t VS_DESC_FORMAT_UNCOMPRESSED = 0x04;
 constexpr std::uint8_t VS_DESC_FRAME_UNCOMPRESSED = 0x05;
 constexpr std::uint8_t VS_DESC_FORMAT_FRAME_BASED = 0x10;
 constexpr std::uint8_t VS_DESC_FRAME_FRAME_BASED = 0x11;
+constexpr std::uint8_t VS_DESC_FORMAT_H264 = 0x13; // UVC 1.5 H.264 Payload spec Table 3-1
+constexpr std::uint8_t VS_DESC_FRAME_H264 = 0x14;  // UVC 1.5 H.264 Payload spec Table 3-2
 constexpr std::uint8_t VS_DESC_COLORFORMAT = 0x0D;
 
 // Terminal Types
@@ -138,6 +140,11 @@ constexpr std::uint8_t PU_LEN = 13;
 constexpr std::uint8_t VS_INPUT_HEADER_LEN = 14; // 13 + bControlSize(1)
 constexpr std::uint8_t VS_FMT_UNCOMPR_LEN = 27;
 constexpr std::uint8_t VS_FRM_UNCOMPR_CONT_LEN = 38; // 26 + 3*4 (continuous: min/max/step)
+constexpr std::uint8_t VS_FMT_MJPEG_LEN = 11;
+constexpr std::uint8_t VS_FMT_FRAME_BASED_LEN = 28;    // generic frame-based (VP8 etc.)
+constexpr std::uint8_t VS_FMT_H264_LEN = 52;           // H.264 Payload spec Table 3-1
+constexpr std::uint8_t VS_FRM_H264_BASE_LEN = 44;      // H.264 frame before intervals, Table 3-2
+constexpr std::uint8_t VS_FRM_H264_CONT_LEN = 56;      // 44 + 3*4
 constexpr std::uint8_t VS_COLOR_MATCHING_LEN = 6;
 
 // UVC Payload Header
@@ -152,6 +159,23 @@ namespace UvcFourCC {
     constexpr std::uint32_t H264 = 0x34363248; // 'H264' LE
     constexpr std::uint32_t I420 = 0x30323449; // 'I420' LE
 } // namespace UvcFourCC
+
+/// UVC 格式类别 — 决定 VS 描述符子类型和 PROBE/COMMIT 字段行为
+enum class UvcFormatCategory : std::uint8_t {
+    Uncompressed, // YUY2 / NV12 / I420 — VS_DESC_FORMAT_UNCOMPRESSED
+    Mjpeg,       // MJPEG — VS_DESC_FORMAT_MJPEG
+    FrameBased,  // 通用 Frame-Based (VP8 等) — VS_DESC_FORMAT_FRAME_BASED
+    H264,        // H.264 — VS_DESC_FORMAT_H264（UVC 1.5 H.264 Payload spec）
+};
+
+inline constexpr UvcFormatCategory uvc_format_category(std::uint32_t fourcc) {
+    switch (fourcc) {
+    case UvcFourCC::MJPEG: return UvcFormatCategory::Mjpeg;
+    case UvcFourCC::H264:  return UvcFormatCategory::H264;
+    // YUY2 / NV12 / I420 及其他未知均视为不压缩
+    default:               return UvcFormatCategory::Uncompressed;
+    }
+}
 
 /// UVC 使用的 16 字节 GUID（USB 描述符中的小端序）
 struct UvcGuid {

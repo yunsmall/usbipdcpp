@@ -461,43 +461,85 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     else if (!handle_interface.endpoints.empty() && !handle_interface.endpoints[0].empty())
         ep_addr = handle_interface.endpoints[0][0].address;
 
-    bool is_mjpeg = (fmt.fourcc == UvcFourCC::MJPEG);
-    std::uint8_t format_subtype = is_mjpeg ? VS_DESC_FORMAT_MJPEG : VS_DESC_FORMAT_UNCOMPRESSED;
-    std::uint8_t frame_subtype = is_mjpeg ? VS_DESC_FRAME_MJPEG : VS_DESC_FRAME_UNCOMPRESSED;
+    auto cat = uvc_format_category(fmt.fourcc);
     auto guid = UvcGuid::from_fourcc(fmt.fourcc);
+    auto bpp = static_cast<std::uint8_t>(fmt.bits_per_pixel);
 
-    // Format descriptor: 27 bytes
-    data_type format(27, 0);
-    format[0] = 27;
-    format[1] = 0x24;
-    format[2] = format_subtype;
-    format[3] = 0x01; // bFormatIndex
-    format[4] = 0x01; // bNumFrameDescriptors
+    std::uint8_t format_subtype{};
+    std::uint8_t frame_subtype{};
+    data_type format;
 
-    if (is_mjpeg) {
-        format[5] = 0x01; // bmFlags
-        std::memcpy(&format[6], guid.data, 16);
-        format[22] = 0x01; // bDefaultFrameIndex
-    }
-    else {
+    if (cat == UvcFormatCategory::Uncompressed) {
+        format_subtype = VS_DESC_FORMAT_UNCOMPRESSED;
+        frame_subtype = VS_DESC_FRAME_UNCOMPRESSED;
+        // Format descriptor: 27 bytes（保持与修复前完全一致的布局）
+        format.resize(27, 0);
+        format[0] = 27;
+        format[1] = 0x24;
+        format[2] = format_subtype;
+        format[3] = 0x01;
+        format[4] = 0x01;
         std::memcpy(&format[5], guid.data, 16);
-        format[21] = static_cast<std::uint8_t>(fmt.bits_per_pixel);
-        format[22] = 0x01; // bDefaultFrameIndex
+        format[21] = bpp;
+        format[22] = 0x01;
+        format[23] = 0x00;
+        format[24] = 0x00;
+    } else if (cat == UvcFormatCategory::Mjpeg) {
+        format_subtype = VS_DESC_FORMAT_MJPEG;
+        frame_subtype = VS_DESC_FRAME_MJPEG;
+        // MJPEG Format descriptor: 11 bytes（UVC 1.5 MJPEG Payload Table 3-1）
+        format.resize(11, 0);
+        format[0] = 11;
+        format[1] = 0x24;
+        format[2] = format_subtype;
+        format[3] = 0x01;
+        format[4] = 0x01;
+        format[5] = 0x01; // bmFlags
+        format[6] = 0x01; // bDefaultFrameIndex
+    } else if (cat == UvcFormatCategory::FrameBased) {
+        format_subtype = VS_DESC_FORMAT_FRAME_BASED;
+        frame_subtype = VS_DESC_FRAME_FRAME_BASED;
+        // Frame-Based Format: 28 bytes（UVC 1.5 Frame-Based Payload Table 3-1）
+        format.resize(28, 0);
+        format[0] = 28;
+        format[1] = 0x24;
+        format[2] = format_subtype;
+        format[3] = 0x01;
+        format[4] = 0x01;
+        std::memcpy(&format[5], guid.data, 16);
+        format[21] = bpp;
+        format[22] = 0x01;
+        format[23] = 0x00;
+        format[24] = 0x00;
+        format[27] = 0x01; // bVariableSize
+    } else { // H264
+        format_subtype = VS_DESC_FORMAT_H264;
+        frame_subtype = VS_DESC_FRAME_H264;
+        // H.264 Format: 52 bytes（UVC 1.5 H.264 Payload Table 3-1）
+        format.resize(52, 0);
+        format[0] = 52;
+        format[1] = 0x24;
+        format[2] = format_subtype;
+        format[3] = 0x01;
+        format[4] = 0x01;
+        format[5] = 0x01; // bDefaultFrameIndex
+        std::memcpy(&format[21], guid.data, 16);
+        format[37] = bpp;
+        format[38] = 0x01;
+        format[39] = 0x01;
     }
-    format[23] = 0x00; // bAspectRatioX: 0 for non-interlaced
-    format[24] = 0x00; // bAspectRatioY: 0 for non-interlaced
-    // [25] bmInterlaceFlags = 0
-    // [26] bCopyProtect = 0
 
-    // Frame descriptor: continuous (bFrameIntervalType=0) — 26 fixed + 3*4 intervals = 38 bytes
+    // Frame descriptor（Uncompressed/MJPEG/FrameBased: 26基础+12间隔=38; H264: 44基础+12间隔=56）
     auto fps_val = 10'000'000ULL / fmt.default_frame_interval;
     auto bit_rate = static_cast<std::uint32_t>(fmt.max_frame_size * 8 * fps_val);
     auto min_iv = fmt.min_frame_interval;
     auto max_iv = fmt.max_frame_interval;
-    auto step_iv = min_iv; // 步长 = 最小帧间隔
+    auto step_iv = min_iv;
 
-    data_type frame(VS_FRM_UNCOMPR_CONT_LEN, 0);
-    frame[0] = VS_FRM_UNCOMPR_CONT_LEN;
+    auto frame_base = (cat == UvcFormatCategory::H264) ? VS_FRM_H264_BASE_LEN : 26u;
+    auto frame_len = frame_base + 12;
+    data_type frame(frame_len, 0);
+    frame[0] = static_cast<std::uint8_t>(frame_len);
     frame[1] = 0x24;
     frame[2] = frame_subtype;
     frame[3] = 0x01; // bFrameIndex
@@ -519,8 +561,6 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     frame[23] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 16) & 0xFF);
     frame[24] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 24) & 0xFF);
     frame[25] = 0x00; // bFrameIntervalType = 0 (continuous)
-    // continuous: dwFrameInterval[0]=min, [1]=max, [2]=step
-    //
     // usbvideo.sys!DumpAndValidateFrameUncompressed 对连续帧间隔有三项整除检查：
     //   if (step != 0) {
     //       if (max <= min)                → STATUS_INVALID_PARAMETER
@@ -529,20 +569,25 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     // 因此 max 必须是 min + N*step（N 为正整数），否则 Windows 直接 Code 10。
     // min/max/step 均取自 VideoSource，step=min 保证 (max-min) 是 min 的整数倍。
     for (int i = 0; i < 4; ++i)
-        frame[26 + i] = static_cast<std::uint8_t>((min_iv >> (i * 8)) & 0xFF); // min
+        frame[frame_base + i] = static_cast<std::uint8_t>((min_iv >> (i * 8)) & 0xFF);
     for (int i = 0; i < 4; ++i)
-        frame[30 + i] = static_cast<std::uint8_t>((max_iv >> (i * 8)) & 0xFF); // max
+        frame[frame_base + 4 + i] = static_cast<std::uint8_t>((max_iv >> (i * 8)) & 0xFF);
     for (int i = 0; i < 4; ++i)
-        frame[34 + i] = static_cast<std::uint8_t>((step_iv >> (i * 8)) & 0xFF); // step
+        frame[frame_base + 8 + i] = static_cast<std::uint8_t>((step_iv >> (i * 8)) & 0xFF);
 
-    // Color Matching descriptor: 6 bytes
-    data_type color = {VS_COLOR_MATCHING_LEN,     0x24,
-                       VS_DESC_COLORFORMAT,       VIDEO_COLOR_PRIMARIES_BT709,
-                       VIDEO_COLOR_XFER_CH_BT709, VIDEO_COLOR_COEF_SMPTE170M};
+    // Color Matching: Uncompressed 和 MJPEG 强制（各自 payload spec §3）
+    bool has_color = (cat == UvcFormatCategory::Uncompressed || cat == UvcFormatCategory::Mjpeg);
+    data_type color;
+    if (has_color) {
+        color = {VS_COLOR_MATCHING_LEN,     0x24,
+                 VS_DESC_COLORFORMAT,       VIDEO_COLOR_PRIMARIES_BT709,
+                 VIDEO_COLOR_XFER_CH_BT709, VIDEO_COLOR_COEF_SMPTE170M};
+    }
 
-    // VS Input Header: 13 + bControlSize(1) = 14
+    // VS Input Header
     static constexpr std::uint8_t bControlSize = 1;
-    auto total_vs_len = VS_INPUT_HEADER_LEN + VS_FMT_UNCOMPR_LEN + VS_FRM_UNCOMPR_CONT_LEN + VS_COLOR_MATCHING_LEN;
+    auto total_vs_len = static_cast<std::uint16_t>(
+            VS_INPUT_HEADER_LEN + format.size() + frame.size() + (has_color ? VS_COLOR_MATCHING_LEN : 0));
 
     data_type header(VS_INPUT_HEADER_LEN, 0);
     header[0] = VS_INPUT_HEADER_LEN;
@@ -711,13 +756,15 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             probe_data_.bMinVersion = 1;                // offset 32
             probe_data_.bMaxVersion = 1;                // offset 33
             probe_data_.dwClockFrequency = 27000000;    // offset 26: 27MHz
-            // UVC 1.5 Table 4-75 offset 34–47: 时域编码字段，不压缩视频全为 0
-            probe_data_.bUsage = 0;                     // offset 34
-            probe_data_.bBitDepthLuma = 0;              // offset 35
-            probe_data_.bmSettings = 0;                 // offset 36
-            probe_data_.bMaxNumberOfRefFramesPlus1 = 0; // offset 37
-            probe_data_.bmRateControlModes = 0;         // offset 38
-            probe_data_.bmLayoutPerStream = 0;          // offset 40
+            // UVC 1.5 Table 4-75 offset 34–47: 时域编码字段仅 H.264 有效，其余清零
+            if (uvc_format_category(source_->current_format().fourcc) != UvcFormatCategory::H264) {
+                probe_data_.bUsage = 0;
+                probe_data_.bBitDepthLuma = 0;
+                probe_data_.bmSettings = 0;
+                probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
+                probe_data_.bmRateControlModes = 0;
+                probe_data_.bmLayoutPerStream = 0;
+            }
         }
         session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
@@ -731,12 +778,14 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             probe_data_.bMinVersion = 1;
             probe_data_.bMaxVersion = 1;
             probe_data_.dwClockFrequency = 27000000;
-            probe_data_.bUsage = 0;
-            probe_data_.bBitDepthLuma = 0;
-            probe_data_.bmSettings = 0;
-            probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
-            probe_data_.bmRateControlModes = 0;
-            probe_data_.bmLayoutPerStream = 0;
+            if (uvc_format_category(source_->current_format().fourcc) != UvcFormatCategory::H264) {
+                probe_data_.bUsage = 0;
+                probe_data_.bBitDepthLuma = 0;
+                probe_data_.bmSettings = 0;
+                probe_data_.bMaxNumberOfRefFramesPlus1 = 0;
+                probe_data_.bmRateControlModes = 0;
+                probe_data_.bmLayoutPerStream = 0;
+            }
         }
         auto fmt = source_->current_format();
         source_->set_format(fmt.fourcc, fmt.width, fmt.height, probe_data_.dwFrameInterval);

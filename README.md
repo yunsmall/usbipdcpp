@@ -51,6 +51,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | spdlog | ✅ | Logging library |
 | libusb-1.0 | Optional | For physical USB device forwarding |
 | libevdev | Optional (Linux) | For evdev-based input device forwarding |
+| cxxopts | Optional | For building example applications |
 | GTest | Optional | For building tests |
 
 ### Platform Support
@@ -269,7 +270,22 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 
    Usage: `mock_msc [disk.img]` (defaults to `disk.img`, 4096 blocks × 512 bytes = 2 MiB)
 
-10. termux_libusb_server
+10. mock_uvc
+
+   A virtual UVC camera using `ColorBarSource` to output a 320×240 YUY2 color bar test pattern.
+   Demonstrates the `UvcVideoControlHandler` + `UvcVideoStreamingHandler` + `VideoSource` combination.
+   Currently functional on Linux; Windows has known issues (see UVC section above).
+
+11. mock_uvc_ffmpeg
+
+   A virtual UVC camera that reads video files via FFmpeg as the video source. Supports any format
+   decodable by FFmpeg (MP4, MKV, AVI, etc.), with optional MJPEG/H264 passthrough mode.
+
+   Usage: `mock_uvc_ffmpeg --video video.mp4` (add `--passthrough` for MJPEG/H264 passthrough)
+
+   Requires FFmpeg libraries (libavformat, libavcodec, libswscale, libavutil).
+
+12. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
@@ -359,6 +375,9 @@ Install dependencies directly via apt:
 # Required
 sudo apt install libasio-dev libspdlog-dev
 
+# If building examples (USBIPDCPP_BUILD_EXAMPLES=ON by default)
+sudo apt install libcxxopts-dev
+
 # If building tests (USBIPDCPP_BUILD_TESTS=ON by default)
 sudo apt install libgtest-dev
 
@@ -372,12 +391,17 @@ cmake --install build
 ```
 
 Skip the corresponding apt packages when disabling features:
+- `-DUSBIPDCPP_BUILD_EXAMPLES=OFF` → skip `libcxxopts-dev`
 - `-DUSBIPDCPP_BUILD_TESTS=OFF` → skip `libgtest-dev`
 - `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → skip `libusb-1.0-0-dev`
 
 #### Use vcpkg as the package manager:
 
-Please install asio libusb libevdev spdlog in advance
+Please install asio libusb libevdev spdlog in advance.
+To build examples, also install cxxopts:
+```bash
+./vcpkg install asio libusb libevdev spdlog cxxopts
+```
 
 ```bash
 cmake -B build \
