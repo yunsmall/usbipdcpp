@@ -50,6 +50,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC "Build example mock UVC (virtual USB cam
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_ABSOLUTE_MOUSE "Build example absolute mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC_FFMPEG "Build example mock UVC applications with FFmpeg" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MULTI_INTERFACE_HID "Build example multi-interface HID (mouse + keyboard) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_VIRTUAL_DEVICE "Build virtual device component" ON)
 option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})

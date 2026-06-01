@@ -16,11 +16,11 @@ namespace usbipdcpp {
  * 提供基于相对偏移的鼠标操作 API。移动量累积到主机读取为止，
  * 多次 move() 调用会自动叠加，报告发送后归零。
  *
- * HID 报告格式（4 字节）：
- *   [0] 按钮 (bit0:左, bit1:右, bit2:中, bit3:侧, bit4:额外) + 3位填充
- *   [1] X 轴相对移动 (-127~127)
- *   [2] Y 轴相对移动 (-127~127)
- *   [3] 滚轮 (-127~127)
+ * HID 报告格式（6 字节）：
+ *   [0]    按钮 (bit0:左, bit1:右, bit2:中, bit3:侧, bit4:额外) + 3位填充
+ *   [1-2]  X 轴相对移动 (-32767~32767，小端)
+ *   [3-4]  Y 轴相对移动 (-32767~32767，小端)
+ *   [5]    滚轮 (-127~127)
  */
 class USBIPDCPP_API RelativeMouseHandler : public HidVirtualInterfaceHandler {
 public:
@@ -33,8 +33,8 @@ public:
     std::uint16_t get_report_descriptor_size() override;
     data_type get_report_descriptor() override;
 
-    /// 累积相对移动偏移量，clamp 到 [-127, 127]，主机取走前持续累积
-    void move(std::int8_t dx, std::int8_t dy);
+    /// 累积相对移动偏移量，clamp 到 [-32767, 32767]，主机取走前持续累积
+    void move(std::int16_t dx, std::int16_t dy);
     /// 累积滚轮偏移量，clamp 到 [-127, 127]
     void set_wheel(std::int8_t delta);
 
@@ -69,8 +69,8 @@ private:
         bool middle = false;
         bool side = false;
         bool extra = false;
-        std::int8_t dx = 0;
-        std::int8_t dy = 0;
+        std::int16_t dx = 0;
+        std::int16_t dy = 0;
         std::int8_t wheel = 0;
 
         bool operator==(const State &) const = default;

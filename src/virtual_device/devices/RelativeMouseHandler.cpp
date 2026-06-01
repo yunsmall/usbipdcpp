@@ -6,8 +6,8 @@ namespace usbipdcpp {
 
 RelativeMouseHandler::RelativeMouseHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     HidVirtualInterfaceHandler(handle_interface, string_pool) {
-    // 相对坐标鼠标: 4 字节报告，5 按钮 + X/Y 相对移动 + 滚轮
-    // [0] 按钮 bit0-4 + 3 位填充, [1] X, [2] Y, [3] 滚轮
+    // 相对坐标鼠标: 6 字节报告，5 按钮 + X/Y 16位相对移动 + 滚轮
+    // [0] 按钮 bit0-4 + 3 位填充, [1-2] X LE, [3-4] Y LE, [5] 滚轮
     report_descriptor = {
             0x05,
             0x01, // Usage Page (Generic Desktop)
@@ -45,19 +45,21 @@ RelativeMouseHandler::RelativeMouseHandler(UsbInterface &handle_interface, Strin
             0x81,
             0x03, //   Input (Const)
 
-            // X/Y 相对移动 (-127~127)
+            // X/Y 相对移动 16位 (-32767~32767)
             0x05,
             0x01, //   Usage Page (Generic Desktop)
             0x09,
             0x30, //   Usage (X)
             0x09,
             0x31, //   Usage (Y)
-            0x15,
-            0x81, //   Logical Minimum (-127)
-            0x25,
-            0x7F, //   Logical Maximum (127)
+            0x16,
+            0x01,
+            0x80, //   Logical Minimum (-32767)
+            0x26,
+            0xFF,
+            0x7F, //   Logical Maximum (32767)
             0x75,
-            0x08, //   Report Size (8)
+            0x10, //   Report Size (16)
             0x95,
             0x02, //   Report Count (2)
             0x81,
@@ -127,22 +129,21 @@ data_type RelativeMouseHandler::get_report_descriptor() {
 }
 
 void RelativeMouseHandler::send_report() {
-    std::array<std::uint8_t, 4> report{};
+    std::array<std::uint8_t, 6> report{};
 
-    if (current.left)
-        report[0] |= 0x01;
-    if (current.right)
-        report[0] |= 0x02;
-    if (current.middle)
-        report[0] |= 0x04;
-    if (current.side)
-        report[0] |= 0x08;
-    if (current.extra)
-        report[0] |= 0x10;
+    if (current.left)  report[0] |= 0x01;
+    if (current.right) report[0] |= 0x02;
+    if (current.middle) report[0] |= 0x04;
+    if (current.side)   report[0] |= 0x08;
+    if (current.extra)  report[0] |= 0x10;
 
-    report[1] = static_cast<std::uint8_t>(current.dx);
-    report[2] = static_cast<std::uint8_t>(current.dy);
-    report[3] = static_cast<std::uint8_t>(current.wheel);
+    auto x = static_cast<std::uint16_t>(current.dx);
+    auto y = static_cast<std::uint16_t>(current.dy);
+    report[1] = x & 0xFF;
+    report[2] = (x >> 8) & 0xFF;
+    report[3] = y & 0xFF;
+    report[4] = (y >> 8) & 0xFF;
+    report[5] = static_cast<std::uint8_t>(current.wheel);
 
     send_input_report(asio::buffer(report));
 
@@ -156,14 +157,14 @@ void RelativeMouseHandler::notify() {
     state_cv.notify_one();
 }
 
-void RelativeMouseHandler::move(std::int8_t dx, std::int8_t dy) {
+void RelativeMouseHandler::move(std::int16_t dx, std::int16_t dy) {
     std::lock_guard lock(state_mutex);
-    // 累加钳位：int8 溢出会导致方向反向（如 100+100=-56），
-    // 钳位到 ±127 与 HID 描述符的 Logical Min/Max 一致，保证饱和而非回绕
-    int new_dx = std::clamp(static_cast<int>(current.dx) + dx, -127, 127);
-    int new_dy = std::clamp(static_cast<int>(current.dy) + dy, -127, 127);
-    current.dx = static_cast<std::int8_t>(new_dx);
-    current.dy = static_cast<std::int8_t>(new_dy);
+    // 累加钳位到 ±32767：int16 溢出会导致方向反向，
+    // 钳位到 HID 描述符 16 位 Logical Min/Max 一致，保证饱和而非回绕
+    int new_dx = std::clamp(static_cast<int>(current.dx) + dx, -32767, 32767);
+    int new_dy = std::clamp(static_cast<int>(current.dy) + dy, -32767, 32767);
+    current.dx = static_cast<std::int16_t>(new_dx);
+    current.dy = static_cast<std::int16_t>(new_dy);
     notify();
 }
 

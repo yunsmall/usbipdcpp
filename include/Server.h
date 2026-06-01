@@ -43,8 +43,13 @@ struct ServerNetworkConfig {
 /**
  * @brief USB/IP 服务器
  *
- * @note 所有对 Server 的公共方法调用（如 start、stop、bind_host_device 等）
- *       必须在同一个线程中进行，不支持跨线程调用。
+ * @attention 线程安全摘要：
+ *   - 构造 / start / stop / ~Server：生命周期方法，必须在同一线程串行调用
+ *   - add_device / has_bound_device / get_session_count / print_bound_devices / register_session_exit_callback：
+ *     内部加锁，任意线程安全
+ *   - get_available_devices / get_using_devices：不锁，调用方必须自行持有 get_devices_mutex()
+ *   - get_devices_mutex：始终安全，仅返回 mutex 引用
+ *   - set_before_thread_create_callback / set_after_thread_create_callback：必须在 start() 之前调用
  */
 class USBIPDCPP_API Server final {
 public:
@@ -59,11 +64,15 @@ public:
      * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
      * 在start前后调用add_device都可以。
      * @param ep 监听地址
+     *
+     * @thread_safety 不可并发调用。至多调用一次（重复调用需先 stop()）。
      */
     void start(asio::ip::tcp::endpoint &ep);
     /**
      * @brief 内部先关闭每一个session的socket，再关闭io_context。
      * 效果相当于每个客户端都调用了detach
+     *
+     * @thread_safety 不可并发调用。必须在 start() 之后、析构之前调用，至多一次。
      */
     void stop();
 
@@ -71,18 +80,31 @@ public:
      * @brief 添加一个device，线程安全。不管server是否启动都可以调用
      * @param device 待添加的设备
      * @return 添加的设备
+     *
+     * @thread_safety 内部加锁，任意线程安全。
      */
     std::shared_ptr<UsbDevice> add_device(std::shared_ptr<UsbDevice> &&device);
 
+    /**
+     * @thread_safety 内部加锁，任意线程安全。
+     */
     bool has_bound_device(const std::string &busid);
 
+    /**
+     * @thread_safety 内部加锁，任意线程安全。
+     */
     size_t get_session_count();
 
+    /**
+     * @thread_safety 内部加锁，任意线程安全。
+     */
     void print_bound_devices();
 
     /**
      * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
      * @return
+     *
+     * @thread_safety 调用方必须持有 get_devices_mutex() 的读锁或写锁。
      */
     [[nodiscard]] std::vector<std::shared_ptr<UsbDevice>> &get_available_devices() {
         return available_devices;
@@ -91,6 +113,8 @@ public:
     /**
      * @brief 毫无线程安全性，请自行调用get_devices_mutex来获取锁
      * @return
+     *
+     * @thread_safety 调用方必须持有 get_devices_mutex() 的读锁或写锁。
      */
     [[nodiscard]] std::map<std::string, std::shared_ptr<UsbDevice>> &get_using_devices() {
         return using_devices;
@@ -99,16 +123,23 @@ public:
     /**
      * @brief 操作设备数据请调用这个函数获取锁后使用
      * @return
+     *
+     * @thread_safety 始终安全（仅返回引用）。
      */
     [[nodiscard]] std::shared_mutex &get_devices_mutex() const {
         return devices_mutex;
     }
 
+    /**
+     * @thread_safety 内部加锁，任意线程安全。
+     */
     void register_session_exit_callback(std::function<void()> &&callback);
 
     /**
      * @brief 设置线程创建前回调，用于嵌入式平台设置线程核心亲和性等
      * @param callback 回调函数，接收线程用途标识
+     *
+     * @thread_safety 必须在 start() 之前调用。
      */
     void set_before_thread_create_callback(std::function<void(ThreadPurpose)> &&callback) {
         before_thread_create_callback = std::move(callback);
@@ -117,6 +148,8 @@ public:
     /**
      * @brief 设置线程创建后回调，用于设置线程名称等
      * @param callback 回调函数，接收线程用途标识和线程引用
+     *
+     * @thread_safety 必须在 start() 之前调用。
      */
     void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread&)> &&callback) {
         after_thread_create_callback = std::move(callback);
@@ -125,6 +158,8 @@ public:
     /**
      * @brief 移除指定的 session 并触发 on_session_exit
      * @param session 要移除的 session 指针
+     *
+     * @thread_safety 内部加锁，但仅应在 Session 退出路径中调用。
      */
     void remove_session(Session *session);
 
