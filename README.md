@@ -90,6 +90,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `VirtualInterfaceHandler` | Base class for implementing virtual USB interfaces |
 | `HidVirtualInterfaceHandler` | Base class for HID devices (mouse, keyboard, etc.) |
 | `AbsoluteMouseHandler` | Absolute-coordinate mouse with screen-to-HID mapping and smooth movement |
+| `RelativeMouseHandler` | Relative-coordinate mouse with delta accumulation, 5-button + wheel |
 | `KeyboardHandler` | USB HID keyboard with media keys (Consumer Control) |
 | `GamepadHandler` | USB HID gamepad: 16 buttons, D-pad, 4 analog axes |
 | `DigitizerHandler` | USB HID touchscreen with pressure support |
@@ -225,8 +226,8 @@ This project is ideal for implementing **virtual USB devices** on Windows.
    to implement forwarding local mouse signals.
 2. mock_mouse
 
-   A mouse demonstration which switches left button statu each second, to introduce how to implement a virtual
-   HID device.
+   A relative mouse example based on `RelativeMouseHandler`. By default, it toggles the left button
+   every second. With the `--circle` flag, the cursor traces a circular pattern.
 3. mock_keyboard
 
    A keyboard demonstration using the `KeyboardHandler` class which simulates pressing and releasing

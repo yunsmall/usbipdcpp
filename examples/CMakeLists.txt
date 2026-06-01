@@ -1,9 +1,10 @@
 # 示例 exe 输出到构建根目录，与 DLL 同目录，避免找不到 dll
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(cxxopts CONFIG QUIET)
+find_package(cxxopts CONFIG)
 
 if (cxxopts_FOUND)
+    message(STATUS "cxxopts found — building examples")
     if (USBIPDCPP_BUILD_EXAMPLE_LIBEVDEV_MOUSE)
         if (CAN_THIS_SYSTEM_SUPPORT_EVDEV)
             find_package(PkgConfig REQUIRED)
