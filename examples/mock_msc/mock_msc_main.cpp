@@ -1,9 +1,10 @@
 #include <cxxopts.hpp>
 #include <iostream>
 
-#include "usbipdcpp.h"
 #include "virtual_device/devices/MscBulkOnlyHandler.h"
 #include "virtual_device/storage_backends/RawImageBackend.h"
+#include "virtual_device/SimpleVirtualDeviceHandler.h"
+#include "usbipdcpp_core.h"
 
 using namespace usbipdcpp;
 

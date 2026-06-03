@@ -4,7 +4,7 @@
 #include "FfmpegSource.h"
 #include "Device.h"
 #include "Server.h"
-#include "usbipdcpp.h"
+#include "usbipdcpp_core.h"
 #include "virtual_device/UvcConstants.h"
 #include "virtual_device/UvcVirtualInterfaceHandler.h"
 
