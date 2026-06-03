@@ -1,14 +1,15 @@
 # 多平台 CMake 编译 + 测试
-# 触发：push 到 main/develop，PR 到 main/develop
+# 触发：push/PR 到 main，也可手动 workflow_dispatch
 # 矩阵：Linux(gcc) 8 种 × Windows(msvc) 4 种选项排列
 
 name: CMake on multiple platforms
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,41 +21,32 @@ jobs:
       matrix:
         include:
           # ======== Linux (gcc) : VIRTUAL_DEVICE × LIBUSB × SHARED 全排列 (8) ========
-          - { os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: ON  }
-          - { os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: OFF }
-          - { os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: ON  }
-          - { os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: OFF }
-          - { os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: ON  }
-          - { os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
-          - { os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON  }
-          - { os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
+          - { name: linux-gcc  vdev+libusb+shared, os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: ON  }
+          - { name: linux-gcc  vdev+libusb static,  os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: OFF }
+          - { name: linux-gcc  vdev shared,         os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: ON  }
+          - { name: linux-gcc  vdev static,         os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: OFF }
+          - { name: linux-gcc  libusb+shared,       os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: ON  }
+          - { name: linux-gcc  libusb static,       os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
+          - { name: linux-gcc  shared only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON  }
+          - { name: linux-gcc  static only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
           # ======== Windows (msvc) : libusb 不开（runner 无 libusb）(4) ========
-          - { os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: ON  }
-          - { os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: OFF }
-          - { os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: ON  }
-          - { os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: OFF }
+          - { name: win-msvc  vdev+shared,          os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: ON  }
+          - { name: win-msvc  vdev static,          os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: OFF }
+          - { name: win-msvc  shared only,          os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: ON  }
+          - { name: win-msvc  static only,          os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: OFF }
 
     steps:
       - uses: actions/checkout@v4
 
-      # ======== 依赖（vcpkg + GitHub Actions 缓存，二次跑不用重编译） ========
-
-      - name: Enable vcpkg binary cache (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          echo "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" >> $GITHUB_ENV
-
-      - name: Enable vcpkg binary cache (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" | Out-File -Append -FilePath $env:GITHUB_ENV
+      # ======== 依赖 ========
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          vcpkg install asio spdlog gtest cxxopts --triplet x64-linux
+          sudo apt-get update
+          sudo apt-get install -y libasio-dev libspdlog-dev libgtest-dev libcxxopts-dev libevdev-dev
           if [ "${{ matrix.libusb }}" = "ON" ]; then
-            vcpkg install libusb --triplet x64-linux
+            sudo apt-get install -y libusb-1.0-0-dev
           fi
 
       - name: Install dependencies (Windows)
@@ -70,7 +62,7 @@ jobs:
           cmake -B build \
             -DCMAKE_CXX_COMPILER=${{ matrix.cpp }} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
             -DUSBIPDCPP_BUILD_EXAMPLES=ON \
             -DUSBIPDCPP_BUILD_TESTS=ON \
             -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=${{ matrix.vdev }} \
@@ -96,7 +88,7 @@ jobs:
       # ======== 编译 + 测试 ========
 
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --parallel
 
       - name: Test
         working-directory: build
