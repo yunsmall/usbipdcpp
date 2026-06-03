@@ -1,28 +1,14 @@
-#include <cxxopts.hpp>
 #include <iostream>
 
+#include "../example_utils.h"
 #include "device_factory.h"
 #include "Server.h"
 #include "utils/StringPool.h"
 
 int main(int argc, char **argv) {
-    cxxopts::Options options("multi_devices", "USB/IP multi-device server");
-    options.add_options()
-        ("p,port", "TCP port", cxxopts::value<std::uint16_t>()->default_value("53240"))
-        ("n,count", "Number of virtual devices", cxxopts::value<int>()->default_value("10"))
-        ("help", "Print help");
-    cxxopts::ParseResult result;
-    try {
-        result = options.parse(argc, argv);
-    } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << e.what() << std::endl;
-        std::cout << options.help() << std::endl;
-        return 1;
-    }
-    if (result.count("help")) {
-        std::cout << options.help() << std::endl;
-        return 0;
-    }
+    auto opts = make_example_options("multi_devices", "USB/IP multi-device server");
+    opts.add_options()("n,count", "Number of virtual devices", cxxopts::value<int>()->default_value("10"));
+    auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto count = result["count"].as<int>();
 

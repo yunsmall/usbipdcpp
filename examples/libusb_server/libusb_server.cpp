@@ -1,5 +1,5 @@
 #include <asio.hpp>
-#include <cxxopts.hpp>
+#include "../example_utils.h"
 #include <iostream>
 #include <libusb-1.0/libusb.h>
 #include <spdlog/spdlog.h>
@@ -9,22 +9,8 @@
 using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
-    cxxopts::Options options("libusb_server", "USB/IP libusb server");
-    options.add_options()
-        ("p,port", "TCP port", cxxopts::value<std::uint16_t>()->default_value("53240"))
-        ("help", "Print help");
-    cxxopts::ParseResult result;
-    try {
-        result = options.parse(argc, argv);
-    } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << e.what() << std::endl;
-        std::cout << options.help() << std::endl;
-        return 1;
-    }
-    if (result.count("help")) {
-        std::cout << options.help() << std::endl;
-        return 0;
-    }
+    auto opts = make_example_options("libusb_server", "USB/IP libusb server");
+    auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
 
     spdlog::set_level(spdlog::level::trace);

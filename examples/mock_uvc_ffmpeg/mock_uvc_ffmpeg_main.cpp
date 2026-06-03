@@ -1,6 +1,6 @@
-#include <cxxopts.hpp>
 #include <iostream>
 
+#include "../example_utils.h"
 #include "FfmpegSource.h"
 #include "Device.h"
 #include "Server.h"
@@ -11,25 +11,11 @@
 using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
-    cxxopts::Options options("mock_uvc_ffmpeg", "USB/IP virtual UVC camera — FFmpeg video source");
-    options.add_options()
-        ("p,port", "TCP port", cxxopts::value<std::uint16_t>()->default_value("53240"))
-        ("b,busid", "Bus ID", cxxopts::value<std::string>()->default_value("1-1"))
+    auto opts = make_example_options("mock_uvc_ffmpeg", "USB/IP virtual UVC camera — FFmpeg video source");
+    opts.add_options()
         ("v,video", "Video file path", cxxopts::value<std::string>()->default_value("video.mp4"))
-        ("passthrough", "Passthrough MJPEG/H264 without transcoding")
-        ("help", "Print help");
-    cxxopts::ParseResult result;
-    try {
-        result = options.parse(argc, argv);
-    } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << e.what() << std::endl;
-        std::cout << options.help() << std::endl;
-        return 1;
-    }
-    if (result.count("help")) {
-        std::cout << options.help() << std::endl;
-        return 0;
-    }
+        ("passthrough", "Passthrough MJPEG/H264 without transcoding");
+    auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
     auto video_path = result["video"].as<std::string>();
