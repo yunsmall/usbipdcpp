@@ -3,7 +3,7 @@
 /.cache
 /cmake-build*
 /[Bb]uild*
-/install
+/install*
 /.claude/settings.local.json
 compile_commands.json
 CMakeUserPresets.json

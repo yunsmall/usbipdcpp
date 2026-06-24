@@ -1,19 +1,13 @@
-# 发布预编译二进制到 GitHub Release
-# 触发：推送 v* 标签（如 v1.0.4）
-# 产出：linux-x64 / linux-aarch64 / macos-arm64 / win-x64 动态库 tar.gz 包
+# 手动打包 CI — 不创建 Release，产物作为 workflow artifact 下载
+# 与 release.yml 相同的构建配置，但无需 tag，版本号从 CMakeLists.txt 提取
 
-name: Release
+name: Build packages (manual)
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  release:
+  build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
@@ -101,22 +95,22 @@ jobs:
       - name: Install to staging
         run: cmake --install build --config Release --prefix staging
 
-      # ======== 打包 ========
+      # ======== 打包（版本号从 CMakeLists.txt 提取 + commit hash） ========
 
       - name: Package
         shell: bash
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          DIRNAME="usbipdcpp-${VERSION}-${{ matrix.name }}"
+          VERSION=$(grep -oP 'project\(\w+ VERSION \K[0-9.]+' CMakeLists.txt)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          DIRNAME="usbipdcpp-${VERSION}-${SHORT_SHA}-${{ matrix.name }}"
           mv staging "${DIRNAME}"
           tar czf "${DIRNAME}.tar.gz" "${DIRNAME}"
           echo "archive=${DIRNAME}.tar.gz" >> $GITHUB_ENV
 
-      # ======== 上传到 Release ========
+      # ======== 上传为 workflow artifact ========
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ${{ env.archive }}
-          generate_release_notes: true
+          name: ${{ matrix.name }}
+          path: ${{ env.archive }}

@@ -298,6 +298,21 @@ This project is ideal for implementing **virtual USB devices** on Windows.
 
 ---
 
+## Pre-built Binaries
+
+Pre-built packages for each platform are available on the [Releases](https://github.com/yunsmall/usbipdcpp/releases) page when a version tag is pushed.
+
+If you need a package without waiting for a release, or want to build from a specific commit:
+
+1. **Fork** this repository
+2. Go to the **Actions** tab in your fork → select **"Build packages (manual)"** → **"Run workflow"**
+3. After the workflow completes, download the artifacts for your platform
+
+> ⚠️ The `linux-aarch64` job requires an ARM64 runner, which GitHub provides for free only on **public** repositories.
+> If your fork is private, that job will be skipped; the other three platforms will still build.
+
+---
+
 ## Building
 
 If compiled with gcc, the minimum gcc version is **gcc13**. The C++23 standard support under **gcc14** is broken,

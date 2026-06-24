@@ -21,14 +21,14 @@ jobs:
       matrix:
         include:
           # ======== Linux (gcc) : VIRTUAL_DEVICE × LIBUSB × SHARED 全排列 (8) ========
-          - { name: linux-gcc  vdev+libusb+shared, os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: ON  }
-          - { name: linux-gcc  vdev+libusb static,  os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: ON,  shared: OFF }
-          - { name: linux-gcc  vdev shared,         os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: ON  }
-          - { name: linux-gcc  vdev static,         os: ubuntu-latest, cpp: g++,    vdev: ON,  libusb: OFF, shared: OFF }
-          - { name: linux-gcc  libusb+shared,       os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: ON  }
-          - { name: linux-gcc  libusb static,       os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
-          - { name: linux-gcc  shared only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON  }
-          - { name: linux-gcc  static only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
+          - { name: linux-gcc  vdev+libusb+shared, os: ubuntu-24.04, cpp: g++,    vdev: ON,  libusb: ON,  shared: ON  }
+          - { name: linux-gcc  vdev+libusb static,  os: ubuntu-24.04, cpp: g++,    vdev: ON,  libusb: ON,  shared: OFF }
+          - { name: linux-gcc  vdev shared,         os: ubuntu-24.04, cpp: g++,    vdev: ON,  libusb: OFF, shared: ON  }
+          - { name: linux-gcc  vdev static,         os: ubuntu-24.04, cpp: g++,    vdev: ON,  libusb: OFF, shared: OFF }
+          - { name: linux-gcc  libusb+shared,       os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: ON,  shared: ON  }
+          - { name: linux-gcc  libusb static,       os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
+          - { name: linux-gcc  shared only,         os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON  }
+          - { name: linux-gcc  static only,         os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
           # ======== macOS (clang) : VIRTUAL_DEVICE × LIBUSB × SHARED 全排列 (8) ========
           - { name: macos-clang  vdev+libusb+shared, os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: ON  }
           - { name: macos-clang  vdev+libusb static,  os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: OFF }

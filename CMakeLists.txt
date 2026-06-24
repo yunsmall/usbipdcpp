@@ -256,4 +256,18 @@ if (IS_TOP_LEVEL)
             "${CMAKE_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
             DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
     )
+
+    if(WIN32)
+        # 安装编译输出中所有 DLL（含 vcpkg 依赖）到 bin 目录
+        # 用双引号：CMAKE_INSTALL_BINDIR 在配置期展开，CMAKE_INSTALL_PREFIX 在安装期展开
+        install(CODE "
+            file(GLOB_RECURSE dlls \"${CMAKE_BINARY_DIR}/*.dll\")
+            if(dlls)
+                list(FILTER dlls EXCLUDE REGEX \"/usbipdcpp[^/]*\\\\.dll$\")
+                if(dlls)
+                    file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\" FILES \${dlls})
+                endif()
+            endif()
+        ")
+    endif()
 endif ()
