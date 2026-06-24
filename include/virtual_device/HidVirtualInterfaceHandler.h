@@ -84,15 +84,15 @@ public:
     /**
      * @brief 主机请求输入报告时回调
      *
-     * @warning 不推荐使用此函数！
-     *          每次主机轮询中断端点时都会调用此函数，如果返回非空数据，
-     *          主机会立即取走数据并再次轮询，导致 CPU 占用非常高。
-     *          推荐使用 send_input_report() 在有数据时主动推送。
+     * @warning 每次主机轮询中断端点时都会调用此函数。在函数内部
+     *          因没有获取任何锁可以直接调用send_input_report等函数。
+     *          如果每次调用都调用send_input_report()，主机会立即取走数据并再次轮询，
+     *          这会导致 CPU 占用非常高。非特殊情况请不要在这个函数中
+     *          每次都调用 send_input_report()。
      *
      * @param length 主机请求的数据长度
-     * @return 报告数据，返回空则挂起请求等待 send_input_report
      */
-    virtual data_type on_input_report_requested(std::uint16_t length);
+    virtual void on_input_report_requested(std::uint16_t length);
 
     /**
      * @brief 收到输出报告时回调
@@ -188,5 +188,10 @@ protected:
      * @brief 待发送的输入报告队列
      */
     std::deque<data_type> pending_input_reports_;
+
+    bool has_pending_input_reports() const {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        return !pending_input_reports_.empty();
+    }
 };
 } // namespace usbipdcpp

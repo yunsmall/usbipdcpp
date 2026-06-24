@@ -1,6 +1,6 @@
 # 多平台 CMake 编译 + 测试
 # 触发：push/PR 到 main，也可手动 workflow_dispatch
-# 矩阵：Linux(gcc) 8 种 × Windows(msvc) 4 种选项排列
+# 矩阵：Linux(gcc) 8 种 × macOS(clang) 8 种 × Windows(msvc) 4 种选项排列
 
 name: CMake on multiple platforms
 
@@ -29,7 +29,16 @@ jobs:
           - { name: linux-gcc  libusb static,       os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
           - { name: linux-gcc  shared only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON  }
           - { name: linux-gcc  static only,         os: ubuntu-latest, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
-          # ======== Windows (msvc) : libusb 不开（runner 无 libusb）(4) ========
+          # ======== macOS (clang) : VIRTUAL_DEVICE × LIBUSB × SHARED 全排列 (8) ========
+          - { name: macos-clang  vdev+libusb+shared, os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: ON  }
+          - { name: macos-clang  vdev+libusb static,  os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: OFF }
+          - { name: macos-clang  vdev shared,         os: macos-latest, cpp: clang++, vdev: ON,  libusb: OFF, shared: ON  }
+          - { name: macos-clang  vdev static,         os: macos-latest, cpp: clang++, vdev: ON,  libusb: OFF, shared: OFF }
+          - { name: macos-clang  libusb+shared,       os: macos-latest, cpp: clang++, vdev: OFF, libusb: ON,  shared: ON  }
+          - { name: macos-clang  libusb static,       os: macos-latest, cpp: clang++, vdev: OFF, libusb: ON,  shared: OFF }
+          - { name: macos-clang  shared only,         os: macos-latest, cpp: clang++, vdev: OFF, libusb: OFF, shared: ON  }
+          - { name: macos-clang  static only,         os: macos-latest, cpp: clang++, vdev: OFF, libusb: OFF, shared: OFF }
+          # ======== Windows (msvc) : VIRTUAL_DEVICE × SHARED (libusb 不开，runner 无 libusb) (4) ========
           - { name: win-msvc  vdev+shared,          os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: ON  }
           - { name: win-msvc  vdev static,          os: windows-latest, cpp: cl,    vdev: ON,  libusb: OFF, shared: OFF }
           - { name: win-msvc  shared only,          os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: ON  }
@@ -53,6 +62,11 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           vcpkg install asio spdlog gtest cxxopts --triplet x64-windows
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install asio spdlog libusb cxxopts googletest
 
       # ======== CMake 配置 ========
 
@@ -83,6 +97,21 @@ jobs:
             -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=${{ matrix.vdev }} `
             -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=${{ matrix.libusb }} `
             -DUSBIPDCPP_BUILD_SHARED_LIBS=${{ matrix.shared }} `
+            -S ${{ github.workspace }}
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=${{ matrix.vdev }} \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=${{ matrix.libusb }} \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=${{ matrix.shared }} \
             -S ${{ github.workspace }}
 
       # ======== 编译 + 测试 ========

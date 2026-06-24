@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Press Enter to exit...");
 
-    std::atomic<bool> running{true};
+    std::atomic_bool running{true};
     std::thread mouse_thread([&]() {
         if (circle_mode) {
             const double step = 5.0;

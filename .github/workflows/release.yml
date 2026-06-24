@@ -1,0 +1,122 @@
+# 发布预编译二进制到 GitHub Release
+# 触发：推送 v* 标签（如 v1.0.4）
+# 产出：linux-x64 / linux-aarch64 / macos-arm64 / win-x64 动态库 tar.gz 包
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,      os: ubuntu-latest      }
+          - { name: linux-aarch64,  os: ubuntu-24.04-arm    }
+          - { name: macos-arm64,    os: macos-latest       }
+          - { name: win-x64,        os: windows-latest     }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ======== 依赖 ========
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install asio spdlog libusb cxxopts
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          vcpkg install asio spdlog libusb cxxopts --triplet x64-windows
+
+      # ======== CMake 配置 ========
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=OFF \
+            -S ${{ github.workspace }}
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=OFF \
+            -S ${{ github.workspace }}
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON `
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON `
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON `
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON `
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON `
+            -DUSBIPDCPP_BUILD_TESTS=OFF `
+            -S ${{ github.workspace }}
+
+      # ======== 编译 + 安装到临时目录 ========
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Install to staging
+        run: cmake --install build --config Release --prefix staging
+
+      # ======== 打包 ========
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          DIRNAME="usbipdcpp-${VERSION}-${{ matrix.name }}"
+          mv staging "${DIRNAME}"
+          tar czf "${DIRNAME}.tar.gz" "${DIRNAME}"
+          echo "archive=${DIRNAME}.tar.gz" >> $GITHUB_ENV
+
+      # ======== 上传到 Release ========
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.archive }}
+          generate_release_notes: true

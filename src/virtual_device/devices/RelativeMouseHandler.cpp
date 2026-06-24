@@ -103,8 +103,12 @@ void RelativeMouseHandler::on_new_connection(Session &current_session, error_cod
             if (should_stop)
                 break;
 
-            send_report();
-            last = current;
+            // 这里只当状态变化了才去发送报告符
+            if (current != last) [[likely]] {
+                send_report();
+                current.relative_data.reset();
+                last = current;
+            }
         }
     });
 }
@@ -131,26 +135,29 @@ data_type RelativeMouseHandler::get_report_descriptor() {
 void RelativeMouseHandler::send_report() {
     std::array<std::uint8_t, 6> report{};
 
-    if (current.left)  report[0] |= 0x01;
-    if (current.right) report[0] |= 0x02;
-    if (current.middle) report[0] |= 0x04;
-    if (current.side)   report[0] |= 0x08;
-    if (current.extra)  report[0] |= 0x10;
+    const ButtonState &current_bs = current.button;
+    const RelativeDataState &current_rs = current.relative_data;
 
-    auto x = static_cast<std::uint16_t>(current.dx);
-    auto y = static_cast<std::uint16_t>(current.dy);
+    if (current_bs.left)
+        report[0] |= 0x01;
+    if (current_bs.right)
+        report[0] |= 0x02;
+    if (current_bs.middle)
+        report[0] |= 0x04;
+    if (current_bs.side)
+        report[0] |= 0x08;
+    if (current_bs.extra)
+        report[0] |= 0x10;
+
+    auto x = static_cast<std::uint16_t>(current_rs.dx);
+    auto y = static_cast<std::uint16_t>(current_rs.dy);
     report[1] = x & 0xFF;
     report[2] = (x >> 8) & 0xFF;
     report[3] = y & 0xFF;
     report[4] = (y >> 8) & 0xFF;
-    report[5] = static_cast<std::uint8_t>(current.wheel);
+    report[5] = static_cast<std::uint8_t>(current_rs.wheel);
 
     send_input_report(asio::buffer(report));
-
-    // 相对数据发送后归零，避免重复移动
-    current.dx = 0;
-    current.dy = 0;
-    current.wheel = 0;
 }
 
 void RelativeMouseHandler::notify() {
@@ -161,48 +168,48 @@ void RelativeMouseHandler::move(std::int16_t dx, std::int16_t dy) {
     std::lock_guard lock(state_mutex);
     // 累加钳位到 ±32767：int16 溢出会导致方向反向，
     // 钳位到 HID 描述符 16 位 Logical Min/Max 一致，保证饱和而非回绕
-    int new_dx = std::clamp(static_cast<int>(current.dx) + dx, -32767, 32767);
-    int new_dy = std::clamp(static_cast<int>(current.dy) + dy, -32767, 32767);
-    current.dx = static_cast<std::int16_t>(new_dx);
-    current.dy = static_cast<std::int16_t>(new_dy);
+    int new_dx = std::clamp(static_cast<int>(current.relative_data.dx) + dx, -32767, 32767);
+    int new_dy = std::clamp(static_cast<int>(current.relative_data.dy) + dy, -32767, 32767);
+    current.relative_data.dx = static_cast<std::int16_t>(new_dx);
+    current.relative_data.dy = static_cast<std::int16_t>(new_dy);
     notify();
 }
 
 void RelativeMouseHandler::set_wheel(std::int8_t delta) {
     std::lock_guard lock(state_mutex);
     // 同 move，累加钳位防止 int8 溢出回绕
-    int new_wheel = std::clamp(static_cast<int>(current.wheel) + delta, -127, 127);
-    current.wheel = static_cast<std::int8_t>(new_wheel);
+    int new_wheel = std::clamp(static_cast<int>(current.relative_data.wheel) + delta, -127, 127);
+    current.relative_data.wheel = static_cast<std::int8_t>(new_wheel);
     notify();
 }
 
 void RelativeMouseHandler::set_left_button(bool pressed) {
     std::lock_guard lock(state_mutex);
-    current.left = pressed;
+    current.button.left = pressed;
     notify();
 }
 
 void RelativeMouseHandler::set_right_button(bool pressed) {
     std::lock_guard lock(state_mutex);
-    current.right = pressed;
+    current.button.right = pressed;
     notify();
 }
 
 void RelativeMouseHandler::set_middle_button(bool pressed) {
     std::lock_guard lock(state_mutex);
-    current.middle = pressed;
+    current.button.middle = pressed;
     notify();
 }
 
 void RelativeMouseHandler::set_side_button(bool pressed) {
     std::lock_guard lock(state_mutex);
-    current.side = pressed;
+    current.button.side = pressed;
     notify();
 }
 
 void RelativeMouseHandler::set_extra_button(bool pressed) {
     std::lock_guard lock(state_mutex);
-    current.extra = pressed;
+    current.button.extra = pressed;
     notify();
 }
 
@@ -232,11 +239,12 @@ void RelativeMouseHandler::double_click(int delay_ms) {
 
 RelativeMouseHandler::ButtonState RelativeMouseHandler::get_button_state() const {
     std::lock_guard lock(state_mutex);
-    return ButtonState{.left = current.left,
-                       .right = current.right,
-                       .middle = current.middle,
-                       .side = current.side,
-                       .extra = current.extra};
+    return current.get_button_state();
+}
+
+RelativeMouseHandler::RelativeDataState RelativeMouseHandler::get_relative_data_state() const {
+    std::lock_guard lock(state_mutex);
+    return current.get_relative_data_state();
 }
 
 bool RelativeMouseHandler::wait_for_client(int timeout_ms) {

@@ -56,27 +56,51 @@ public:
         bool middle = false;
         bool side = false;
         bool extra = false;
+
+        bool operator==(const ButtonState &) const = default;
     };
     ButtonState get_button_state() const;
+
+    struct RelativeDataState {
+        std::int16_t dx = 0;
+        std::int16_t dy = 0;
+        std::int8_t wheel = 0;
+
+        bool operator==(const RelativeDataState &) const = default;
+
+        [[nodiscard]] bool all_zeros() const {
+            return dx == 0 && dy == 0 && wheel == 0;
+        }
+
+        void reset() {
+            dx = 0;
+            dy = 0;
+            wheel = 0;
+        }
+    };
+    RelativeDataState get_relative_data_state() const;
 
     /// 等待客户端连接
     bool wait_for_client(int timeout_ms = -1);
 
 private:
     struct State {
-        bool left = false;
-        bool right = false;
-        bool middle = false;
-        bool side = false;
-        bool extra = false;
-        std::int16_t dx = 0;
-        std::int16_t dy = 0;
-        std::int8_t wheel = 0;
+        ButtonState button;
+        RelativeDataState relative_data;
 
         bool operator==(const State &) const = default;
+
+        [[nodiscard]] const ButtonState &get_button_state() const {
+            return button;
+        }
+
+        [[nodiscard]] const RelativeDataState &get_relative_data_state() const {
+            return relative_data;
+        }
     };
 
     void notify();
+    // 不会更改按钮状态，纯发送
     void send_report();
 
     data_type report_descriptor;

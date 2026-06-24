@@ -56,6 +56,7 @@ option(USBIPDCPP_BUILD_LIBUSB_COMPONENTS "Build libusb component" ON)
 option(USBIPDCPP_BUILD_TESTS "Build tests" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 option(USBIPDCPP_BUILD_SHARED_LIBS "Build as shared library (recommended for LGPL compliance)" ON)
+option(USBIPDCPP_INSTALL_EXAMPLES "Install example executables" OFF)
 
 option(USBIPDCPP_FORCE_TRACK_PACKAGE "Force to track package even in Release build" OFF)
 option(USBIPDCPP_USE_PKGCONF_ASIO "Use pkgconf to find asio instead of find_package" OFF)

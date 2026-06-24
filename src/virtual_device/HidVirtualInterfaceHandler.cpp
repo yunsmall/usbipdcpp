@@ -14,6 +14,11 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(std::uint3
                                                                       TransferHandle transfer, std::error_code &ec) {
     if (ep.is_in()) {
         // 中断 IN：主机请求输入报告
+        // 先让子类现场生成报告（pull 模型），子类可调用 send_input_report()
+        // 将数据推入 pending_input_reports_，后续走正常 push 流程
+        on_input_report_requested(transfer_buffer_length);
+
+
         // 同时锁两个 mutex，避免竞态条件
         std::lock(input_mutex_, endpoint_requests_mutex_);
         std::lock_guard lock1(input_mutex_, std::adopt_lock);
@@ -31,7 +36,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(std::uint3
                     seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
         }
         else {
-            // 将请求加入队列
+            // 将请求加入队列，等待 send_input_report() 响应
             endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
         }
     }
@@ -80,9 +85,8 @@ void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer
 
 // ========== 回调默认实现 ==========
 
-usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::on_input_report_requested(std::uint16_t length) {
-    // 默认返回空，子类可重写
-    return {};
+void usbipdcpp::HidVirtualInterfaceHandler::on_input_report_requested(std::uint16_t length) {
+    // 默认空实现，子类可重写
 }
 
 void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::const_buffer data) {
