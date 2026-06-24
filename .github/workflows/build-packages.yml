@@ -29,17 +29,37 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev
+          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libgtest-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install asio spdlog libusb cxxopts
+          brew install asio spdlog libusb cxxopts ffmpeg googletest
+
+      - name: Setup FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
+          Write-Host "=== Downloading: $ffmpegUrl ==="
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip
+          Write-Host "=== Extracting ==="
+          Expand-Archive -Path ffmpeg.zip -DestinationPath .
+          $ffmpegDir = Get-ChildItem -Directory -Name "ffmpeg-*" | Select-Object -First 1
+          if (-not $ffmpegDir) { Write-Error "ffmpeg extraction failed"; exit 1 }
+          $ffmpegPath = (Resolve-Path $ffmpegDir).ToString().Replace('\', '/')
+          Write-Host "FFMPEG_DIR=$ffmpegPath"
+          Write-Host "=== Contents of lib/pkgconfig ==="
+          Get-ChildItem "$ffmpegDir/lib/pkgconfig/"
+          Write-Host "=== Setting env vars ==="
+          "FFMPEG_DIR=$ffmpegPath" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$ffmpegPath/lib/pkgconfig" >> $env:GITHUB_ENV
+          "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\pkgconf" >> $env:GITHUB_PATH
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          vcpkg install asio spdlog libusb cxxopts --triplet x64-windows
+          vcpkg install asio spdlog libusb cxxopts pkgconf gtest --triplet x64-windows
 
       # ======== CMake 配置 ========
 
@@ -54,7 +74,7 @@ jobs:
             -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
             -DUSBIPDCPP_BUILD_EXAMPLES=ON \
             -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
-            -DUSBIPDCPP_BUILD_TESTS=OFF \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
             -S ${{ github.workspace }}
 
       - name: Configure CMake (macOS)
@@ -69,8 +89,19 @@ jobs:
             -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
             -DUSBIPDCPP_BUILD_EXAMPLES=ON \
             -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
-            -DUSBIPDCPP_BUILD_TESTS=OFF \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
             -S ${{ github.workspace }}
+
+      - name: Debug pkg-config (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH"
+          Write-Host "pkgconf location:"
+          Get-Command pkgconf -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Get-Command pkg-config -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Write-Host "Testing libavcodec:"
+          pkgconf --modversion libavcodec 2>&1
 
       - name: Configure CMake (Windows)
         if: runner.os == 'Windows'
@@ -84,7 +115,7 @@ jobs:
             -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON `
             -DUSBIPDCPP_BUILD_EXAMPLES=ON `
             -DUSBIPDCPP_INSTALL_EXAMPLES=ON `
-            -DUSBIPDCPP_BUILD_TESTS=OFF `
+            -DUSBIPDCPP_BUILD_TESTS=ON `
             -S ${{ github.workspace }}
 
       # ======== 编译 + 安装到临时目录 ========
@@ -92,25 +123,23 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Install to staging
-        run: cmake --install build --config Release --prefix staging
+      - name: Test
+        working-directory: build
+        run: ctest --build-config Release
 
-      # ======== 打包（版本号从 CMakeLists.txt 提取 + commit hash） ========
-
-      - name: Package
+      - name: Install
         shell: bash
         run: |
-          VERSION=$(grep -oP 'project\(\w+ VERSION \K[0-9.]+' CMakeLists.txt)
           SHORT_SHA=$(git rev-parse --short HEAD)
-          DIRNAME="usbipdcpp-${VERSION}-${SHORT_SHA}-${{ matrix.name }}"
-          mv staging "${DIRNAME}"
-          tar czf "${DIRNAME}.tar.gz" "${DIRNAME}"
-          echo "archive=${DIRNAME}.tar.gz" >> $GITHUB_ENV
+          DIRNAME="usbipdcpp-${SHORT_SHA}-${{ matrix.name }}"
+          cmake --install build --config Release --prefix "out/${DIRNAME}"
+          # 复制 BtbN ffmpeg DLL 到安装目录（Windows）
+          [ -n "$FFMPEG_DIR" ] && cp "$FFMPEG_DIR"/bin/*.dll "out/${DIRNAME}/bin/"
+          echo "dirname=${DIRNAME}" >> $GITHUB_ENV
 
       # ======== 上传为 workflow artifact ========
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ env.archive }}
+          path: out
