@@ -7,8 +7,19 @@ name: CMake on multiple platforms
 on:
   push:
     branches: [ "main" ]
+    # 文档等非代码文件的改动不触发编译
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'
   workflow_dispatch:
 
 jobs:
