@@ -40,7 +40,6 @@ void UacAudioControlHandler::build_class_descriptor() {
     // AS interface 固定跟在 AC 之后（interface 1）
     std::uint8_t as_if_num = 1;
     auto fu_len = static_cast<std::uint8_t>(AC_FEATURE_UNIT_FIXED_LEN + config.channels + 1);
-    auto total_ac_size = AC_HEADER_LEN + AC_INPUT_TERMINAL_LEN + fu_len + AC_OUTPUT_TERMINAL_LEN;
 
     // Feature Unit bmaControls：按配置组合
     std::uint8_t bma_controls = 0;
@@ -51,35 +50,36 @@ void UacAudioControlHandler::build_class_descriptor() {
 
     data_type d;
 
-    // AC Header
-    append_descriptor(d, AcHeaderDesc{
-                                 AC_HEADER_LEN, CS_INTERFACE, AC_DESC_HEADER,
-                                 UAC_BCD_1_00, static_cast<std::uint16_t>(total_ac_size),
-                                 0x01, as_if_num});
+    // AC Header（wTotalLength 占位，构建完成后回填实际总长）
+    AcHeaderDesc{AC_HEADER_LEN, CS_INTERFACE, AC_DESC_HEADER,
+                 UAC_BCD_1_00, 0x00,
+                 0x01, as_if_num}
+            .append_to(d);
 
     // Input Terminal：类型来自配置（默认麦克风）
     auto channel_config = (config.channels == 2) ? CHANNEL_CONFIG_STEREO : CHANNEL_CONFIG_MONO;
-    append_descriptor(d, AcInputTerminalDesc{
-                                 AC_INPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_INPUT_TERMINAL,
-                                 UAC_ENTITY_INPUT_TERMINAL, config.input_terminal_type,
-                                 0x00, config.channels, channel_config,
-                                 0x00, 0x00});
+    AcInputTerminalDesc{AC_INPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_INPUT_TERMINAL,
+                        UAC_ENTITY_INPUT_TERMINAL, config.input_terminal_type,
+                        0x00, config.channels, channel_config,
+                        0x00, 0x00}
+            .append_to(d);
 
     // Feature Unit：bmaControls 数组含 ch+1 个元素（master + 每个逻辑通道），所有声道共享同一组控制
-    append_descriptor(d, AcFeatureUnitHead{
-                                 fu_len, CS_INTERFACE, AC_DESC_FEATURE_UNIT,
-                                 UAC_ENTITY_FEATURE_UNIT, UAC_ENTITY_INPUT_TERMINAL,
-                                 0x01});
-    for (int i = 0; i < config.channels + 1; ++i)
-        d.push_back(bma_controls);
-    d.push_back(0x00); // iFeature
+    AcFeatureUnitHead{fu_len, CS_INTERFACE, AC_DESC_FEATURE_UNIT,
+                      UAC_ENTITY_FEATURE_UNIT, UAC_ENTITY_INPUT_TERMINAL,
+                      0x01}
+            .append_to(d, bma_controls, config.channels);
 
     // Output Terminal: USB streaming
-    append_descriptor(d, AcOutputTerminalDesc{
-                                 AC_OUTPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_OUTPUT_TERMINAL,
-                                 UAC_ENTITY_OUTPUT_TERMINAL, TT_USB_STREAMING,
-                                 0x00, UAC_ENTITY_FEATURE_UNIT,
-                                 0x00});
+    AcOutputTerminalDesc{AC_OUTPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_OUTPUT_TERMINAL,
+                         UAC_ENTITY_OUTPUT_TERMINAL, TT_USB_STREAMING,
+                         0x00, UAC_ENTITY_FEATURE_UNIT,
+                         0x00}
+            .append_to(d);
+
+    // 回填 AC Header 的 wTotalLength（offset 5-6）为描述符实际总长
+    d[5] = static_cast<std::uint8_t>(d.size() & 0xFF);
+    d[6] = static_cast<std::uint8_t>((d.size() >> 8) & 0xFF);
 
     class_desc = std::move(d);
 }
@@ -300,25 +300,19 @@ void UacAudioStreamingHandler::build_class_descriptor() {
 
     data_type d;
     // AS General: bTerminalLink 指向 AC 的 Output Terminal（USB streaming）
-    append_descriptor(d, AsGeneralDesc{
-                                 AS_GENERAL_LEN, CS_INTERFACE, AS_DESC_GENERAL,
-                                 UAC_ENTITY_OUTPUT_TERMINAL, 0x01, AUDIO_FORMAT_PCM});
+    AsGeneralDesc{AS_GENERAL_LEN, CS_INTERFACE, AS_DESC_GENERAL,
+                  UAC_ENTITY_OUTPUT_TERMINAL, 0x01, AUDIO_FORMAT_PCM}
+            .append_to(d);
 
     // Format Type I: 16 位 PCM，采样率列表来自 source（UAC 1.0 允许最多 255 个）
-    append_descriptor(d, AsFormatTypeIHead{
-                                 static_cast<std::uint8_t>(AS_FORMAT_TYPE_I_BASE_LEN +
-                                                           rates.size() * AS_SAMFREQ_ENTRY_LEN),
-                                 CS_INTERFACE, AS_DESC_FORMAT_TYPE,
-                                 0x01, // bFormatType: FORMAT_TYPE_I
-                                 static_cast<std::uint8_t>(fmt.channels),
-                                 0x02, // bSubframeSize
-                                 static_cast<std::uint8_t>(fmt.bits_per_sample),
-                                 static_cast<std::uint8_t>(rates.size())});
-    for (auto rate: rates) {
-        d.insert(d.end(),
-                 {static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
-                  static_cast<std::uint8_t>((rate >> 16) & 0xFF)});
-    }
+    AsFormatTypeIHead{static_cast<std::uint8_t>(AS_FORMAT_TYPE_I_BASE_LEN + rates.size() * AS_SAMFREQ_ENTRY_LEN),
+                      CS_INTERFACE, AS_DESC_FORMAT_TYPE,
+                      0x01, // bFormatType: FORMAT_TYPE_I
+                      static_cast<std::uint8_t>(fmt.channels),
+                      0x02, // bSubframeSize
+                      static_cast<std::uint8_t>(fmt.bits_per_sample),
+                      static_cast<std::uint8_t>(rates.size())}
+            .append_to(d, rates);
 
     class_desc = std::move(d);
 }

@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+#include "usbipdcpp/type.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
+
 namespace usbipdcpp {
 // CDC ACM 类特定描述符子类型
 enum class CdcAcmDescriptorSubtype {
@@ -54,4 +57,65 @@ enum class CdcAcmSerialState : std::uint16_t {
     OverrunError = 0x40, // Overrun error
     CTS = 0x80, // Clear To Send
 };
+
+// ==================== 固定长度类特定描述符结构体 ====================
+// CDC 1.1 功能描述符长度由规范硬性规定，用 packed 结构体表示，
+// static_assert 校验 sizeof 防止字段增删导致长度偏离规范。
+// append_to 按字段序列化（多字节字段自动转小端），与平台字节序无关。
+
+#pragma pack(push, 1)
+/// CDC Header 功能描述符（CDC 1.1，固定 5 字节）
+struct CdcHeaderFunctionalDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint16_t bcdCDC;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bcdCDC);
+    }
+};
+static_assert(sizeof(CdcHeaderFunctionalDesc) == 5, "CDC Header 功能描述符必须为 5 字节");
+
+/// Call Management 功能描述符（CDC 1.1，固定 5 字节）
+struct CdcCallManagementDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bmCapabilities;
+    std::uint8_t bDataInterface;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bmCapabilities, bDataInterface);
+    }
+};
+static_assert(sizeof(CdcCallManagementDesc) == 5, "Call Management 功能描述符必须为 5 字节");
+
+/// ACM 功能描述符（CDC 1.1，固定 4 字节）
+struct CdcAcmFunctionalDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bmCapabilities;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bmCapabilities);
+    }
+};
+static_assert(sizeof(CdcAcmFunctionalDesc) == 4, "ACM 功能描述符必须为 4 字节");
+
+/// Union 功能描述符（CDC 1.1，固定 5 字节，单从属接口）
+struct CdcUnionFunctionalDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bMasterInterface;
+    std::uint8_t bSlaveInterface0;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bMasterInterface, bSlaveInterface0);
+    }
+};
+static_assert(sizeof(CdcUnionFunctionalDesc) == 5, "Union 功能描述符必须为 5 字节");
+#pragma pack(pop)
 } // namespace usbipdcpp

@@ -127,45 +127,52 @@ void UvcVideoControlHandler::build_class_descriptor() {
     static constexpr std::uint8_t cam_term_len = 18; // 15 + bControlSize(3)
     static constexpr std::uint8_t pu_len = 13;       // 10 + bControlSize(3) + bmVideoStandards(1)
     data_type d;
-    auto total_vc_size = VC_HEADER_1ITF_LEN + cam_term_len + pu_len + OUTPUT_TERM_LEN;
 
-    d.insert(d.end(),
-             {VC_HEADER_1ITF_LEN, 0x24, VC_DESC_HEADER, 0x50, 0x01, // bcdUVC 0x0150 (UVC 1.5)
-              static_cast<std::uint8_t>(total_vc_size & 0xFF), static_cast<std::uint8_t>((total_vc_size >> 8) & 0xFF),
-              0xC0, 0xFC, 0x9B, 0x01, // dwClockFrequency = 27000000 (27 MHz)
-              0x01, // bInCollection
-              vs_if_num});
+    // VC Header（wTotalLength 占位，构建完成后回填实际总长）
+    VcHeaderDesc{VC_HEADER_1ITF_LEN, CS_INTERFACE, VC_DESC_HEADER,
+                 UVC_BCD_1_50, // bcdUVC 0x0150 (UVC 1.5)
+                 0x00,
+                 0x019BFCC0, // dwClockFrequency = 27000000 (27 MHz)
+                 0x01, // bInCollection
+                 vs_if_num}
+            .append_to(d);
 
     // Camera Terminal: 18 bytes, bControlSize=3
-    d.insert(d.end(),
-             {cam_term_len, 0x24, VC_DESC_INPUT_TERMINAL,
-              0x01, // bTerminalID
-              static_cast<std::uint8_t>(ITT_CAMERA & 0xFF), static_cast<std::uint8_t>((ITT_CAMERA >> 8) & 0xFF),
-              0x00, // bAssocTerminal
-              0x00, // iTerminal
-              0x00, 0x00, // wObjectiveFocalLengthMin
-              0x00, 0x00, // wObjectiveFocalLengthMax
-              0x00, 0x00, // wOcularFocalLength
-              0x03, // bControlSize
-              0x00, 0x00, 0x00}); // bmControls[3]: no camera terminal controls
+    VcCameraTerminalDesc{cam_term_len, CS_INTERFACE, VC_DESC_INPUT_TERMINAL,
+                         0x01, // bTerminalID
+                         ITT_CAMERA,
+                         0x00, // bAssocTerminal
+                         0x00, // iTerminal
+                         0x00, // wObjectiveFocalLengthMin
+                         0x00, // wObjectiveFocalLengthMax
+                         0x00, // wOcularFocalLength
+                         0x03, // bControlSize
+                         {0x00, 0x00, 0x00}} // bmControls[3]: no camera terminal controls
+            .append_to(d);
 
     // Processing Unit: 13 bytes, bControlSize=3 + bmVideoStandards (UVC 1.5 Table 3-8)
-    d.insert(d.end(), {pu_len, 0x24, VC_DESC_PROCESSING_UNIT,
-                       0x02, // bUnitID
-                       0x01, // bSourceID → IT
-                       0x00, 0x00, // wMaxMultiplier
-                       0x03, // bControlSize = 3
-                       0x1F, 0x02, 0x00, // bmControls[3]: Brightness|Contrast|Hue|Saturation|Sharpness|Gain
-                       0x00, // iProcessing
-                       0x00}); // bmVideoStandards: no analog video
+    VcProcessingUnitDesc{pu_len, CS_INTERFACE, VC_DESC_PROCESSING_UNIT,
+                         0x02, // bUnitID
+                         0x01, // bSourceID → IT
+                         0x00, // wMaxMultiplier
+                         0x03, // bControlSize = 3
+                         {0x1F, 0x02, 0x00}, // bmControls[3]: Brightness|Contrast|Hue|Saturation|Sharpness|Gain
+                         0x00, // iProcessing
+                         0x00} // bmVideoStandards: no analog video
+            .append_to(d);
 
-    d.insert(d.end(),
-             {OUTPUT_TERM_LEN, 0x24, VC_DESC_OUTPUT_TERMINAL,
-              0x03, // bTerminalID
-              static_cast<std::uint8_t>(TT_STREAMING & 0xFF), static_cast<std::uint8_t>((TT_STREAMING >> 8) & 0xFF),
-              0x00, // bAssocTerminal
-              0x02, // bSourceID → PU
-              0x00}); // iTerminal
+    // Output Terminal
+    VcOutputTerminalDesc{OUTPUT_TERM_LEN, CS_INTERFACE, VC_DESC_OUTPUT_TERMINAL,
+                         0x03, // bTerminalID
+                         TT_STREAMING,
+                         0x00, // bAssocTerminal
+                         0x02, // bSourceID → PU
+                         0x00} // iTerminal
+            .append_to(d);
+
+    // 回填 VC Header 的 wTotalLength（offset 5-6）为描述符实际总长
+    d[5] = static_cast<std::uint8_t>(d.size() & 0xFF);
+    d[6] = static_cast<std::uint8_t>((d.size() >> 8) & 0xFF);
 
     class_desc_ = std::move(d);
 }
@@ -579,36 +586,37 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     bool has_color = (cat == UvcFormatCategory::Uncompressed || cat == UvcFormatCategory::Mjpeg);
     data_type color;
     if (has_color) {
-        color = {VS_COLOR_MATCHING_LEN,     0x24,
-                 VS_DESC_COLORFORMAT,       VIDEO_COLOR_PRIMARIES_BT709,
-                 VIDEO_COLOR_XFER_CH_BT709, VIDEO_COLOR_COEF_SMPTE170M};
+        VsColorMatchingDesc{VS_COLOR_MATCHING_LEN, CS_INTERFACE, VS_DESC_COLORFORMAT,
+                            VIDEO_COLOR_PRIMARIES_BT709, VIDEO_COLOR_XFER_CH_BT709, VIDEO_COLOR_COEF_SMPTE170M}
+                .append_to(color);
     }
 
-    // VS Input Header
+    // VS Input Header（wTotalLength 占位，拼接完成后回填实际总长）
     static constexpr std::uint8_t bControlSize = 1;
-    auto total_vs_len = static_cast<std::uint16_t>(
-            VS_INPUT_HEADER_LEN + format.size() + frame.size() + (has_color ? VS_COLOR_MATCHING_LEN : 0));
 
-    data_type header(VS_INPUT_HEADER_LEN, 0);
-    header[0] = VS_INPUT_HEADER_LEN;
-    header[1] = 0x24;
-    header[2] = VS_DESC_INPUT_HEADER;
-    header[3] = 0x01; // bNumFormats
-    header[4] = static_cast<std::uint8_t>(total_vs_len & 0xFF);
-    header[5] = static_cast<std::uint8_t>((total_vs_len >> 8) & 0xFF);
-    header[6] = ep_addr;
-    header[7] = 0x00; // bmInfo
-    header[8] = 0x03; // bTerminalLink → Output Terminal ID 3
-    header[9] = 0x00; // bStillCaptureMethod
-    header[10] = 0x00; // bTriggerSupport
-    header[11] = 0x00; // bTriggerUsage
-    header[12] = bControlSize;
+    data_type header;
+    VsInputHeaderDesc{VS_INPUT_HEADER_LEN, CS_INTERFACE, VS_DESC_INPUT_HEADER,
+                      0x01, // bNumFormats
+                      0x00,
+                      ep_addr,
+                      0x00, // bmInfo
+                      0x03, // bTerminalLink → Output Terminal ID 3
+                      0x00, // bStillCaptureMethod
+                      0x00, // bTriggerSupport
+                      0x00, // bTriggerUsage
+                      bControlSize,
+                      0x00} // bmaControls[0]
+            .append_to(header);
 
     data_type d;
     d.insert(d.end(), header.begin(), header.end());
     d.insert(d.end(), format.begin(), format.end());
     d.insert(d.end(), frame.begin(), frame.end());
     d.insert(d.end(), color.begin(), color.end());
+
+    // 回填 VS Input Header 的 wTotalLength（offset 4-5）为描述符实际总长
+    d[4] = static_cast<std::uint8_t>(d.size() & 0xFF);
+    d[5] = static_cast<std::uint8_t>((d.size() >> 8) & 0xFF);
 
     class_desc_ = std::move(d);
 }

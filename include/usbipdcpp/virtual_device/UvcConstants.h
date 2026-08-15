@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "usbipdcpp/type.h"
 // 通用类请求码（SET_CUR/GET_CUR 等）和类特定描述符类型（CS_INTERFACE 等）
 #include "usbipdcpp/virtual_device/UsbClassConstants.h"
 
@@ -137,6 +138,145 @@ constexpr std::uint8_t VS_COLOR_MATCHING_LEN = 6;
 // UVC Payload Header
 constexpr std::uint8_t UVC_PAYLOAD_HEADER_SIZE = 2;
 constexpr std::uint8_t UVC_PAYLOAD_HEADER_FID = 0x01; // Frame ID bit
+
+// ==================== 固定长度描述符结构体 ====================
+// UVC 1.5 描述符长度由规范硬性规定，用 packed 结构体表示，
+// static_assert 校验 sizeof 防止字段增删导致长度偏离规范。
+// append_to 按字段序列化（多字节字段自动转小端），与平台字节序无关。
+
+#pragma pack(push, 1)
+/// VC Header 描述符（UVC 1.5 Table 3-3，单 VS 接口固定 13 字节）
+struct VcHeaderDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint16_t bcdUVC;
+    std::uint16_t wTotalLength;
+    std::uint32_t dwClockFrequency;
+    std::uint8_t bInCollection;
+    std::uint8_t baInterfaceNr;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bcdUVC, wTotalLength, dwClockFrequency,
+                            bInCollection, baInterfaceNr);
+    }
+};
+static_assert(sizeof(VcHeaderDesc) == VC_HEADER_1ITF_LEN, "VC Header 描述符必须为 13 字节");
+
+/// Camera Terminal 描述符（UVC 1.5 Table 3-6，固定 18 字节，bControlSize=3）
+struct VcCameraTerminalDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bTerminalID;
+    std::uint16_t wTerminalType;
+    std::uint8_t bAssocTerminal;
+    std::uint8_t iTerminal;
+    std::uint16_t wObjectiveFocalLengthMin;
+    std::uint16_t wObjectiveFocalLengthMax;
+    std::uint16_t wOcularFocalLength;
+    std::uint8_t bControlSize;
+    array_data_type<3> bmControls;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bTerminalID, wTerminalType, bAssocTerminal,
+                            iTerminal, wObjectiveFocalLengthMin, wObjectiveFocalLengthMax, wOcularFocalLength,
+                            bControlSize, bmControls);
+    }
+};
+static_assert(sizeof(VcCameraTerminalDesc) == CAMERA_TERM_LEN, "Camera Terminal 描述符必须为 18 字节");
+
+/// Processing Unit 描述符（UVC 1.5 Table 3-8，固定 13 字节，bControlSize=3，含 bmVideoStandards）
+struct VcProcessingUnitDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bUnitID;
+    std::uint8_t bSourceID;
+    std::uint16_t wMaxMultiplier;
+    std::uint8_t bControlSize;
+    array_data_type<3> bmControls;
+    std::uint8_t iProcessing;
+    std::uint8_t bmVideoStandards;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bUnitID, bSourceID, wMaxMultiplier,
+                            bControlSize, bmControls, iProcessing, bmVideoStandards);
+    }
+};
+static_assert(sizeof(VcProcessingUnitDesc) == PU_LEN, "Processing Unit 描述符必须为 13 字节");
+
+/// VC Output Terminal 描述符（UVC 1.5 Table 3-5，固定 9 字节）
+struct VcOutputTerminalDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bTerminalID;
+    std::uint16_t wTerminalType;
+    std::uint8_t bAssocTerminal;
+    std::uint8_t bSourceID;
+    std::uint8_t iTerminal;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bTerminalID, wTerminalType, bAssocTerminal,
+                            bSourceID, iTerminal);
+    }
+};
+static_assert(sizeof(VcOutputTerminalDesc) == OUTPUT_TERM_LEN, "VC Output Terminal 描述符必须为 9 字节");
+
+/// VS Input Header 描述符（UVC 1.5 Table 3-14，固定 13+(p×n)，p=n=1 时 14 字节）
+struct VsInputHeaderDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bNumFormats;
+    std::uint16_t wTotalLength;
+    std::uint8_t bEndpointAddress;
+    std::uint8_t bmInfo;
+    std::uint8_t bTerminalLink;
+    std::uint8_t bStillCaptureMethod;
+    std::uint8_t bTriggerSupport;
+    std::uint8_t bTriggerUsage;
+    std::uint8_t bControlSize;
+    std::uint8_t bmaControls; // bControlSize=1
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bNumFormats, wTotalLength, bEndpointAddress,
+                            bmInfo, bTerminalLink, bStillCaptureMethod, bTriggerSupport, bTriggerUsage, bControlSize,
+                            bmaControls);
+    }
+};
+static_assert(sizeof(VsInputHeaderDesc) == VS_INPUT_HEADER_LEN, "VS Input Header 描述符必须为 14 字节");
+
+/// Color Matching 描述符（UVC 1.5 各 payload spec，固定 6 字节）
+struct VsColorMatchingDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint8_t bColorPrimaries;
+    std::uint8_t bTransferCharacteristics;
+    std::uint8_t bMatrixCoefficients;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bColorPrimaries, bTransferCharacteristics,
+                            bMatrixCoefficients);
+    }
+};
+static_assert(sizeof(VsColorMatchingDesc) == VS_COLOR_MATCHING_LEN, "Color Matching 描述符必须为 6 字节");
+
+/// VC 中断端点类特定描述符（UVC 1.5 Table 3-12，固定 5 字节）
+struct VcInterruptEndpointDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDescriptorSubtype;
+    std::uint16_t wMaxTransferSize;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, wMaxTransferSize);
+    }
+};
+static_assert(sizeof(VcInterruptEndpointDesc) == 5, "VC 中断端点类描述符必须为 5 字节");
+#pragma pack(pop)
 
 // FOURCC pixel format codes
 namespace UvcFourCC {

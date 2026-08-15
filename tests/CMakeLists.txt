@@ -31,3 +31,10 @@ add_test_file(test_transfer_handle)
 add_test_file(test_generic_transfer)
 add_test_file(test_reuse_map)
 add_test_file(test_reuse_set)
+add_test_file(test_descriptors)
+
+# 音频源在虚拟设备库中；AudioFileSource 相关用例由文件内 USBIPDCPP_USE_MINIAUDIO 宏条件编译
+if (TARGET usbipdcpp_virtual_device)
+    add_test_file(test_audio_sources)
+    target_link_libraries(test_audio_sources PRIVATE usbipdcpp_virtual_device)
+endif ()

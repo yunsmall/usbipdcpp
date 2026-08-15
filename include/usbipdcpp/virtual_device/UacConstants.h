@@ -74,11 +74,9 @@ constexpr std::uint8_t AS_FORMAT_TYPE_I_BASE_LEN = 8; // bLength..bSamFreqType �
 constexpr std::uint8_t AS_SAMFREQ_ENTRY_LEN = 3; // 每个采样率占 3 字节（tSamFreq）
 
 // ==================== 固定长度描述符结构体 ====================
-// UAC 1.0 描述符长度由规范硬性规定，用 packed 结构体直接映射线格式，
+// UAC 1.0 描述符长度由规范硬性规定，用 packed 结构体表示，
 // static_assert 校验 sizeof 防止字段增删导致长度偏离规范。
-// 仅小端平台可用（USB 线格式为小端，结构体直接按字节拷贝）。
-
-static_assert(std::endian::native == std::endian::little, "描述符结构体按小端字节序直接拷贝，仅支持小端平台");
+// append_to 按字段序列化（多字节字段自动转小端），与平台字节序无关。
 
 #pragma pack(push, 1)
 /// AC Header 描述符（UAC 1.0 Table 4-2，单 AS 接口固定 9 字节）
@@ -90,6 +88,11 @@ struct AcHeaderDesc {
     std::uint16_t wTotalLength;
     std::uint8_t bInCollection;
     std::uint8_t baInterfaceNr;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bcdADC, wTotalLength, bInCollection,
+                            baInterfaceNr);
+    }
 };
 static_assert(sizeof(AcHeaderDesc) == AC_HEADER_LEN, "AC Header 描述符必须为 9 字节");
 
@@ -105,6 +108,11 @@ struct AcInputTerminalDesc {
     std::uint16_t wChannelConfig;
     std::uint8_t iChannelNames;
     std::uint8_t iTerminal;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bTerminalID, wTerminalType, bAssocTerminal,
+                            bNrChannels, wChannelConfig, iChannelNames, iTerminal);
+    }
 };
 static_assert(sizeof(AcInputTerminalDesc) == AC_INPUT_TERMINAL_LEN, "Input Terminal 描述符必须为 12 字节");
 
@@ -118,11 +126,15 @@ struct AcOutputTerminalDesc {
     std::uint8_t bAssocTerminal;
     std::uint8_t bSourceID;
     std::uint8_t iTerminal;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bTerminalID, wTerminalType, bAssocTerminal,
+                            bSourceID, iTerminal);
+    }
 };
 static_assert(sizeof(AcOutputTerminalDesc) == AC_OUTPUT_TERMINAL_LEN, "Output Terminal 描述符必须为 9 字节");
 
 /// Feature Unit 描述符固定头部（UAC 1.0 Table 4-7，bLength..bControlSize 共 6 字节）
-/// 可变部分 bmaControls[ch+1] + iFeature 由构建代码拼接
 struct AcFeatureUnitHead {
     std::uint8_t bLength;
     std::uint8_t bDescriptorType;
@@ -130,6 +142,14 @@ struct AcFeatureUnitHead {
     std::uint8_t bUnitID;
     std::uint8_t bSourceID;
     std::uint8_t bControlSize;
+
+    /// 追加完整 Feature Unit 描述符：固定头 + bmaControls[ch+1]（所有声道共享同一组控制）+ iFeature
+    void append_to(data_type &d, std::uint8_t bma_controls, std::uint8_t channels) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bUnitID, bSourceID, bControlSize);
+        for (int i = 0; i < channels + 1; ++i)
+            d.push_back(bma_controls);
+        d.push_back(0x00); // iFeature
+    }
 };
 static_assert(sizeof(AcFeatureUnitHead) == 6, "Feature Unit 固定头部必须为 6 字节");
 
@@ -141,11 +161,14 @@ struct AsGeneralDesc {
     std::uint8_t bTerminalLink;
     std::uint8_t bDelay;
     std::uint16_t wFormatTag;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bTerminalLink, bDelay, wFormatTag);
+    }
 };
 static_assert(sizeof(AsGeneralDesc) == AS_GENERAL_LEN, "AS General 描述符必须为 7 字节");
 
 /// Format Type I 描述符固定头部（bLength..bSamFreqType 共 8 字节）
-/// 可变部分 tSamFreq[3×n] 由构建代码拼接
 struct AsFormatTypeIHead {
     std::uint8_t bLength;
     std::uint8_t bDescriptorType;
@@ -155,6 +178,18 @@ struct AsFormatTypeIHead {
     std::uint8_t bSubframeSize;
     std::uint8_t bBitResolution;
     std::uint8_t bSamFreqType;
+
+    /// 追加完整 Format Type I 描述符：固定头 + tSamFreq[3×n]（每项为 24 位小端）
+    void append_to(data_type &d, const std::vector<std::uint32_t> &rates) const {
+        // 一次 reserve 全部可变部分，避免循环内反复扩容
+        d.reserve(d.size() + sizeof(AsFormatTypeIHead) + rates.size() * AS_SAMFREQ_ENTRY_LEN);
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bFormatType, bNrChannels, bSubframeSize,
+                            bBitResolution, bSamFreqType);
+        for (auto rate: rates) {
+            vector_append_to_le(d, static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
+                                static_cast<std::uint8_t>((rate >> 16) & 0xFF));
+        }
+    }
 };
 static_assert(sizeof(AsFormatTypeIHead) == AS_FORMAT_TYPE_I_BASE_LEN, "Format Type I 固定头部必须为 8 字节");
 
@@ -166,16 +201,13 @@ struct AsEpGeneralDesc {
     std::uint8_t bmAttributes;
     std::uint8_t bLockDelayUnits;
     std::uint16_t wLockDelay;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDescriptorSubtype, bmAttributes, bLockDelayUnits, wLockDelay);
+    }
 };
 static_assert(sizeof(AsEpGeneralDesc) == AS_EP_DESC_GENERAL_LEN, "EP_GENERAL 端点描述符必须为 7 字节");
 #pragma pack(pop)
-
-/// 将 packed 描述符结构体按字节追加到 data_type（pack(1) 无填充，小端序与 USB 线格式一致）
-template <typename T>
-inline void append_descriptor(data_type &d, const T &desc) {
-    const auto *p = reinterpret_cast<const std::uint8_t *>(&desc);
-    d.insert(d.end(), p, p + sizeof(T));
-}
 
 // ==================== UAC 版本 ====================
 constexpr std::uint16_t UAC_BCD_1_00 = 0x0100;

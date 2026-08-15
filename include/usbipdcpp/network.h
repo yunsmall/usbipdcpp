@@ -10,15 +10,7 @@
 
 namespace usbipdcpp {
 
-constexpr bool is_little_endian() {
-    if consteval {
-        return std::endian::native == std::endian::little;
-    }
-    else {
-        std::uint16_t tmp = 0x1234u;
-        return *reinterpret_cast<std::uint8_t *>(&tmp) != 0x12u;
-    }
-}
+// is_little_endian 定义在 type.h 中，htole 亦同（USB 线格式小端序列化）
 
 template<std::unsigned_integral T>
 constexpr T ntoh(T num) {

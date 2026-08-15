@@ -126,40 +126,27 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(std::uint32_
 
 data_type CdcAcmCommunicationInterfaceHandler::get_class_specific_descriptor() {
     // CDC ACM 类特定描述符
+    data_type descriptor;
+
     // Header Functional Descriptor
-    data_type descriptor = {
-            0x05, // bLength
-            0x24, // bDescriptorType: CS_INTERFACE
-            0x00, // bDescriptorSubtype: Header
-            0x10, 0x01 // bcdCDC: 1.10
-    };
+    CdcHeaderFunctionalDesc{0x05, CS_INTERFACE, 0x00, 0x0110 /* bcdCDC: 1.10 */}.append_to(descriptor);
 
     // Call Management Functional Descriptor
-    descriptor.insert(descriptor.end(), {
-                                                0x05, // bLength
-                                                0x24, // bDescriptorType: CS_INTERFACE
-                                                0x01, // bDescriptorSubtype: Call Management
-                                                0x00, // bmCapabilities
-                                                0x01 // bDataInterface: Interface 1
-                                        });
+    CdcCallManagementDesc{0x05, CS_INTERFACE, 0x01,
+                          0x00, // bmCapabilities
+                          0x01} // bDataInterface: Interface 1
+            .append_to(descriptor);
 
     // ACM Functional Descriptor
-    descriptor.insert(descriptor.end(),
-                      {
-                              0x04, // bLength
-                              0x24, // bDescriptorType: CS_INTERFACE
-                              0x02, // bDescriptorSubtype: ACM
-                              0x02 // bmCapabilities: support Set_Line_Coding, Set_Control_Line_State, Send_Break
-                      });
+    CdcAcmFunctionalDesc{0x04, CS_INTERFACE, 0x02,
+                         0x02} // bmCapabilities: support Set_Line_Coding, Set_Control_Line_State, Send_Break
+            .append_to(descriptor);
 
     // Union Functional Descriptor
-    descriptor.insert(descriptor.end(), {
-                                                0x05, // bLength
-                                                0x24, // bDescriptorType: CS_INTERFACE
-                                                0x06, // bDescriptorSubtype: Union
-                                                0x00, // bMasterInterface: Interface 0
-                                                0x01 // bSlaveInterface0: Interface 1
-                                        });
+    CdcUnionFunctionalDesc{0x05, CS_INTERFACE, 0x06,
+                           0x00, // bMasterInterface: Interface 0
+                           0x01} // bSlaveInterface0: Interface 1
+            .append_to(descriptor);
 
     return descriptor;
 }

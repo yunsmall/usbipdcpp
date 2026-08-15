@@ -43,6 +43,7 @@ There are multiple CMake options to control which parts are compiled:
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |
+| `USBIPDCPP_USE_MINIAUDIO` | ON | Audio file playback (`AudioFileSource`, WAV/MP3/FLAC/OGG); automatically disabled when the miniaudio header is not found |
 
 See `CMakeLists.txt` for more options and details.
 
@@ -65,6 +66,9 @@ sudo apt install libgtest-dev
 # If building libusb components (USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON by default)
 sudo apt install libusb-1.0-0-dev
 
+# If building audio file playback (USBIPDCPP_USE_MINIAUDIO=ON by default, universe repository)
+sudo apt install libminiaudio-dev
+
 # Build
 cmake -B build -DUSBIPDCPP_USE_PKGCONF_ASIO=ON
 cmake --build build
@@ -75,6 +79,11 @@ Skip the corresponding apt packages when disabling features:
 - `-DUSBIPDCPP_BUILD_EXAMPLES=OFF` → skip `libcxxopts-dev`
 - `-DUSBIPDCPP_BUILD_TESTS=OFF` → skip `libgtest-dev`
 - `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → skip `libusb-1.0-0-dev`
+- `-DUSBIPDCPP_USE_MINIAUDIO=OFF` → skip `libminiaudio-dev`
+
+If `libminiaudio-dev` is not available in your repository, either download `miniaudio.h` from
+[miniaudio](https://miniaudio.app/) and put it on the include path, or disable the option —
+`AudioFileSource` is excluded automatically when the header is not found.
 
 #### Termux (Android)
 
@@ -111,6 +120,7 @@ Notes:
 - `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON` is required: Termux's libasio is built with autotools and only ships `asio.pc`, no CMake config.
 - Installing cxxopts is optional — without it all examples are skipped (with a configure-time warning). You can also build just the libraries with `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF`.
 - `libevdev_mouse` and `mock_uvc_ffmpeg` depend on libevdev / FFmpeg, which have no dev packages in Termux. They are skipped automatically during configure — no extra options needed.
+- miniaudio is not available in the Termux repositories. `AudioFileSource` is disabled automatically (the `--audio` option of `mock_audio` is unavailable); install the header manually or set `-DUSBIPDCPP_USE_MINIAUDIO=OFF` to silence the notice.
 - To build the `termux_libusb_server` example, add `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`. Running it via `termux-usb` requires `pkg install termux-api`.
 
 #### Use vcpkg as the package manager:
@@ -119,6 +129,10 @@ Please install asio libusb libevdev spdlog in advance.
 To build examples, also install cxxopts:
 ```bash
 ./vcpkg install asio libusb libevdev spdlog cxxopts
+```
+To build audio file playback (`AudioFileSource`), also install miniaudio:
+```bash
+./vcpkg install miniaudio
 ```
 
 ```bash
@@ -327,11 +341,17 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
 12. mock_audio
 
-   A virtual USB microphone (UAC 1.0) playing a sine wave test tone. Demonstrates the
+   A virtual USB microphone (UAC 1.0). Demonstrates the
    `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` combination
    (Feature Unit mute/volume control, sampling rate negotiation, ISO PCM streaming).
 
-   Usage: `mock_audio --freq 440 --rate 48000` (sample rate must be a multiple of 8000)
+   Three audio sources are available:
+   - Sine wave test tone (default): `--freq 440 --amp 50`
+   - Fourier series synthesis: `--harmonics "440:50,880:25"` (frequency Hz : amplitude % [: phase in radians])
+   - Audio file playback: `--audio music.mp3` (WAV/MP3/FLAC/OGG via miniaudio, loops by default;
+     requires `USBIPDCPP_USE_MINIAUDIO=ON`)
+
+   Usage: `mock_audio --rates 48000,16000,8000` (sample rates must be multiples of 8000, the first is the initial rate)
 
 13. termux_libusb_server
 
@@ -388,6 +408,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | libevdev | Optional (Linux) | For evdev-based input device forwarding |
 | cxxopts | Optional | For building example applications |
 | GTest | Optional | For building tests |
+| miniaudio | Optional | For audio file playback in the virtual microphone (header-only) |
 
 ### Platform Support
 
@@ -447,6 +468,8 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `UacAudioStreamingHandler` | UAC AudioStreaming interface (ISO PCM streaming) |
 | `AudioSource` | Abstract PCM audio source interface for UAC devices |
 | `SineWaveSource` | Sine wave test tone audio source |
+| `FourierSource` | Fourier series synthesis audio source (multiple harmonics with per-harmonic phase) |
+| `AudioFileSource` | Audio file source (WAV/MP3/FLAC/OGG via miniaudio, resampling, looping) |
 
 ### Class Hierarchy
 

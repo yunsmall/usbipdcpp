@@ -114,6 +114,23 @@ file(GLOB VIRTUAL_DEVICE_DEVICES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/
 file(GLOB VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/storage_backends/*.cpp)
 file(GLOB VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/video_sources/*.cpp)
 file(GLOB VIRTUAL_DEVICE_AUDIO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/audio_sources/*.cpp)
+
+# AudioFileSource 依赖 miniaudio（单头文件库，可选）。
+# 未找到时从构建中排除 AudioFileSource.cpp，并定义宏供使用方条件编译。
+# 可用性用独立的 MINIAUDIO_AVAILABLE 记录，不改写 option（保留用户显式传入的意图）
+option(USBIPDCPP_USE_MINIAUDIO "Use miniaudio for audio file source (WAV/MP3/FLAC/OGG)" ON)
+set(MINIAUDIO_AVAILABLE OFF)
+if (USBIPDCPP_USE_MINIAUDIO)
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h)
+    if (MINIAUDIO_INCLUDE_DIR)
+        set(MINIAUDIO_AVAILABLE ON)
+    else ()
+        message(STATUS "miniaudio 头文件未找到，AudioFileSource 禁用")
+    endif ()
+endif ()
+if (NOT MINIAUDIO_AVAILABLE)
+    list(FILTER VIRTUAL_DEVICE_AUDIO_SOURCES_SRC_FILES EXCLUDE REGEX "AudioFileSource")
+endif ()
 file(GLOB LIBUSB_SRC_FILES CONFIGURE_DEPENDS src/LibusbHandler/*.cpp)
 
 # 控制编译动态库还是静态库
@@ -165,6 +182,11 @@ if (USBIPDCPP_BUILD_VIRTUAL_DEVICE)
     set_target_properties(${PROJECT_NAME}_virtual_device PROPERTIES EXPORT_NAME virtual_device)
     target_link_libraries(${PROJECT_NAME}_virtual_device PUBLIC ${PROJECT_NAME})
     target_include_directories(${PROJECT_NAME}_virtual_device PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+    if (MINIAUDIO_AVAILABLE)
+        # 头文件仅 AudioFileSource.cpp 需要（公开头用 void* 隐藏 decoder），不暴露给使用方
+        target_include_directories(${PROJECT_NAME}_virtual_device PRIVATE ${MINIAUDIO_INCLUDE_DIR})
+        target_compile_definitions(${PROJECT_NAME}_virtual_device PUBLIC USBIPDCPP_USE_MINIAUDIO)
+    endif ()
 endif ()
 
 if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)

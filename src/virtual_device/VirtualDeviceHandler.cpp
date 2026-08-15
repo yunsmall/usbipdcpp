@@ -650,25 +650,15 @@ void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting
 data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                       std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
-    std::uint16_t version_bcd = usb_version;
-    data_type desc = {0x12, // bLength
-                      static_cast<std::uint8_t>(DescriptorType::Device), // bDescriptorType: Device
-                      static_cast<std::uint8_t>(version_bcd), // bcdUSB: USB 2.0
-                      static_cast<std::uint8_t>(version_bcd >> 8),
-                      handle_device.device_class, // bDeviceClass
-                      handle_device.device_subclass, // bDeviceSubClass
-                      handle_device.device_protocol, // bDeviceProtocol
-                      static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0
-                      static_cast<std::uint8_t>(handle_device.vendor_id), // idVendor
-                      static_cast<std::uint8_t>(handle_device.vendor_id >> 8),
-                      static_cast<std::uint8_t>(handle_device.product_id), // idProduct
-                      static_cast<std::uint8_t>(handle_device.product_id >> 8),
-                      handle_device.device_bcd.minor, // bcdDevice
-                      handle_device.device_bcd.major,
-                      string_manufacturer_value, // iManufacturer
-                      string_product_value, // iProduct
-                      string_serial_value, // iSerial
-                      handle_device.num_configurations};
+    data_type desc;
+    DeviceDesc{0x12, static_cast<std::uint8_t>(DescriptorType::Device),
+               usb_version, // bcdUSB
+               handle_device.device_class, handle_device.device_subclass, handle_device.device_protocol,
+               static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size), // bMaxPacketSize0
+               handle_device.vendor_id, handle_device.product_id,
+               static_cast<std::uint16_t>(handle_device.device_bcd.minor | (handle_device.device_bcd.major << 8)),
+               string_manufacturer_value, string_product_value, string_serial_value, handle_device.num_configurations}
+            .append_to(desc);
 
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
@@ -680,16 +670,17 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
                                                    std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     // BOS header (5) + USB 2.0 Extension Device Capability (7) = 12 bytes
-    data_type desc = {
-            0x05, // bLength
-            static_cast<std::uint8_t>(DescriptorType::BOS), 0x0C, 0x00, // wTotalLength = 12
-            0x01, // bNumCapabilities = 1
-            // USB 2.0 Extension Device Capability
-            0x07, // bLength
-            0x10, // bDescriptorType: DEVICE CAPABILITY
-            0x02, // bDevCapabilityType: USB 2.0 EXTENSION
-            0x00, 0x00, 0x00, 0x00, // bmAttributes: no LPM
-    };
+    data_type desc;
+    BosHeaderDesc{0x05, static_cast<std::uint8_t>(DescriptorType::BOS),
+                  0x0C, // wTotalLength = 12
+                  0x01}
+            .append_to(desc);
+    BosUsb20ExtCapDesc{0x07,
+                       0x10, // bDescriptorType: DEVICE CAPABILITY
+                       0x02, // bDevCapabilityType: USB 2.0 EXTENSION
+                       0x00} // bmAttributes: no LPM
+            .append_to(desc);
+
     if (descriptor_length < desc.size()) {
         desc.resize(descriptor_length);
     }
@@ -699,33 +690,29 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
 data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                              std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
-    data_type desc = {
-            0x09, // bLength
-            static_cast<std::uint8_t>(DescriptorType::Configuration), // bDescriptorType: Configuration
-            0x00,
-            0x00, // wTotalLength: to be filled below
-            static_cast<std::uint8_t>(handle_device.interfaces.size()), // bNumInterfaces
-            handle_device.configuration_value, // bConfigurationValue
-            string_configuration_value, // iConfiguration
-            0x80, // bmAttributes Bus Powered
-            0xFA, // bMaxPower 500mA
-    };
+    data_type desc;
+    ConfigHeaderDesc{0x09, static_cast<std::uint8_t>(DescriptorType::Configuration),
+                     0x00, // wTotalLength: 循环拼接完成后回填
+                     static_cast<std::uint8_t>(handle_device.interfaces.size()), // bNumInterfaces
+                     handle_device.configuration_value, // bConfigurationValue
+                     string_configuration_value, // iConfiguration
+                     0x80, // bmAttributes Bus Powered
+                     0xFA} // bMaxPower 500mA
+            .append_to(desc);
     // IAD: Windows 要求多接口 UVC 设备在配置描述符里包含 IAD
     // UVC 1.5 Table 3-1: iFunction 必须等于 VC interface 的 iInterface
     if (handle_device.device_class == 0xEF) {
         auto iFunc = handle_device.interfaces[0].handler
                              ? handle_device.interfaces[0].handler->get_string_interface_value()
                              : std::uint8_t{0};
-        desc.insert(desc.end(), {
-                                        0x08, // bLength
-                                        0x0B, // bDescriptorType: IAD
-                                        0x00, // bFirstInterface
-                                        static_cast<std::uint8_t>(handle_device.interfaces.size()), // bInterfaceCount
-                                        handle_device.interfaces[0].interface_class, // bFunctionClass
-                                        0x03, // bFunctionSubClass: SC_VIDEO_INTERFACE_COLLECTION
-                                        0x00, // bFunctionProtocol (PC_PROTOCOL_UNDEFINED)
-                                        iFunc, // iFunction: must equal VC iInterface per spec
-                                });
+        IadDesc{0x08, static_cast<std::uint8_t>(DescriptorType::InterfaceAssociation),
+                0x00, // bFirstInterface
+                static_cast<std::uint8_t>(handle_device.interfaces.size()), // bInterfaceCount
+                handle_device.interfaces[0].interface_class, // bFunctionClass
+                0x03, // bFunctionSubClass: SC_VIDEO_INTERFACE_COLLECTION
+                0x00, // bFunctionProtocol (PC_PROTOCOL_UNDEFINED)
+                iFunc} // iFunction: must equal VC iInterface per spec
+                .append_to(desc);
     }
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
@@ -737,17 +724,16 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
 
         for (std::size_t alt = 0; alt < num_alts; alt++) {
             auto &alt_endpoints = (alt < intf.endpoints.size()) ? intf.endpoints[alt] : intf.endpoints[0];
-            data_type intf_desc = {
-                    0x09, // bLength
-                    static_cast<std::uint8_t>(DescriptorType::Interface), // bDescriptorType: Interface
-                    static_cast<std::uint8_t>(i), // bInterfaceNum
-                    static_cast<std::uint8_t>(alt), // bAlternateSettings
-                    static_cast<std::uint8_t>(alt_endpoints.size()), // bNumEndpoints
-                    intf.interface_class, // bInterfaceClass
-                    intf.interface_subclass, // bInterfaceSubClass
-                    intf.interface_protocol, // bInterfaceProtocol
-                    intf.handler->get_string_interface_value(), // iInterface
-            };
+            data_type intf_desc;
+            InterfaceDesc{0x09, static_cast<std::uint8_t>(DescriptorType::Interface),
+                          static_cast<std::uint8_t>(i), // bInterfaceNumber
+                          static_cast<std::uint8_t>(alt), // bAlternateSetting
+                          static_cast<std::uint8_t>(alt_endpoints.size()), // bNumEndpoints
+                          intf.interface_class, // bInterfaceClass
+                          intf.interface_subclass, // bInterfaceSubClass
+                          intf.interface_protocol, // bInterfaceProtocol
+                          intf.handler->get_string_interface_value()} // iInterface
+                    .append_to(intf_desc);
             // class-specific 描述符默认只放 alt 0（TinyUSB 做法），alt>0 只放端点。
             // 若放所有 alt，UVC 的 config descriptor 会被撑到超过 255 字节导致 Windows 截断解析失败。
             // UAC 的 AS 接口描述符很小且 alt 1 必须有格式描述符，通过 put_class_specific_descriptor_in_all_alts 放行
@@ -756,39 +742,28 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                 intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
             }
             for (auto &endpoint: alt_endpoints) {
-                data_type ep_desc = {0x07, // bLength
-                                     static_cast<std::uint8_t>(DescriptorType::Endpoint),
-                                     endpoint.address,
-                                     endpoint.attributes,
-                                     static_cast<std::uint8_t>(endpoint.max_packet_size),
-                                     static_cast<std::uint8_t>(endpoint.max_packet_size >> 8),
-                                     endpoint.interval};
-                intf_desc.insert(intf_desc.end(), ep_desc.begin(), ep_desc.end());
+                EndpointDesc{0x07, static_cast<std::uint8_t>(DescriptorType::Endpoint),
+                             endpoint.address, endpoint.attributes, endpoint.max_packet_size, endpoint.interval}
+                        .append_to(intf_desc);
 
                 // UVC 1.5 Table 3-12: VC interrupt endpoint requires class-specific endpoint descriptor
                 if (intf.interface_class == CC_VIDEO && intf.interface_subclass == SC_VIDEOCONTROL &&
                     (endpoint.attributes & 0x03) == 0x03) {
-                    data_type cs_ep = {
-                            0x05, // bLength
-                            CS_ENDPOINT, // bDescriptorType
-                            EP_INTERRUPT, // bDescriptorSubType
-                            static_cast<std::uint8_t>(endpoint.max_packet_size), // wMaxTransferSize low
-                            static_cast<std::uint8_t>(endpoint.max_packet_size >> 8), // wMaxTransferSize high
-                    };
-                    intf_desc.insert(intf_desc.end(), cs_ep.begin(), cs_ep.end());
+                    VcInterruptEndpointDesc{0x05, CS_ENDPOINT, EP_INTERRUPT, endpoint.max_packet_size}.append_to(
+                            intf_desc);
                 }
                 // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
                 // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
                 // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
                 if (intf.interface_class == CC_AUDIO && intf.interface_subclass == SC_AUDIOSTREAMING &&
                     (endpoint.attributes & 0x03) == 0x01) {
-                    append_descriptor(intf_desc, AsEpGeneralDesc{
-                                                         AS_EP_DESC_GENERAL_LEN,
-                                                         CS_ENDPOINT,
-                                                         AS_EP_DESC_GENERAL,
-                                                         AS_EP_ATTR_SAMPLING_FREQ,
-                                                         0x00, // bLockDelayUnits
-                                                         0x00}); // wLockDelay
+                    AsEpGeneralDesc{AS_EP_DESC_GENERAL_LEN,
+                                    CS_ENDPOINT,
+                                    AS_EP_DESC_GENERAL,
+                                    AS_EP_ATTR_SAMPLING_FREQ,
+                                    0x00, // bLockDelayUnits
+                                    0x00} // wLockDelay
+                            .append_to(intf_desc);
                 }
             }
             desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());

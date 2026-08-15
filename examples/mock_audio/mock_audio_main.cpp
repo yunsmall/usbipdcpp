@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iostream>
+#include <memory>
 #include <sstream>
 
 #include "../example_utils.h"
@@ -8,7 +9,11 @@
 #include "usbipdcpp/usbipdcpp_core.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/audio_sources/FourierSource.h"
 #include "usbipdcpp/virtual_device/audio_sources/SineWaveSource.h"
+#ifdef USBIPDCPP_USE_MINIAUDIO
+#include "usbipdcpp/virtual_device/audio_sources/AudioFileSource.h"
+#endif
 
 using namespace usbipdcpp;
 
@@ -26,6 +31,46 @@ static std::vector<std::uint32_t> parse_sample_rates(const std::string &str) {
     return rates;
 }
 
+/// 解析谐波列表，如 "440:50,880:25:1.5708"（频率Hz:幅度百分比[:相位弧度]，相位可省略默认 0）
+static std::vector<FourierHarmonic> parse_harmonics(const std::string &str) {
+    std::vector<FourierHarmonic> result;
+    std::stringstream ss(str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        std::stringstream is(item);
+        std::string freq_str, amp_str, phase_str;
+        if (!std::getline(is, freq_str, ':') || !std::getline(is, amp_str, ':')) {
+            continue;
+        }
+        FourierHarmonic h;
+        h.frequency = static_cast<std::uint32_t>(std::stoul(freq_str));
+        h.amplitude = std::stod(amp_str) / 100.0;
+        if (std::getline(is, phase_str)) {
+            h.phase = std::stod(phase_str);
+        }
+        result.push_back(h);
+    }
+    return result;
+}
+
+/// 创建音频源：--audio 文件源（文件打不开时软失败输出静音，同 FfmpegSource 做法）、
+/// --harmonics 傅里叶级数合成、否则正弦波
+static std::unique_ptr<AudioSource> create_source(const cxxopts::ParseResult &result,
+                                                  const std::vector<std::uint32_t> &rates,
+                                                  const std::vector<FourierHarmonic> &harmonics,
+                                                  int channels, int freq, int amp) {
+#ifdef USBIPDCPP_USE_MINIAUDIO
+    if (result.count("audio") > 0) {
+        return std::make_unique<AudioFileSource>(result["audio"].as<std::string>(), rates);
+    }
+#endif
+    if (!harmonics.empty()) {
+        return std::make_unique<FourierSource>(harmonics, rates, static_cast<std::uint16_t>(channels));
+    }
+    return std::make_unique<SineWaveSource>(static_cast<std::uint32_t>(freq), rates,
+                                            static_cast<std::uint16_t>(channels), amp / 100.0);
+}
+
 int main(int argc, char **argv) {
     auto opts = make_example_options("mock_audio", "USB/IP virtual UAC microphone");
     opts.add_options()
@@ -33,14 +78,31 @@ int main(int argc, char **argv) {
         ("rates", "Comma-separated sample rate list in Hz (multiples of 8000, first is initial)",
          cxxopts::value<std::string>()->default_value("48000"))
         ("channels", "Channel count (1 or 2)", cxxopts::value<int>()->default_value("1"))
-        ("amp", "Amplitude 0-100 (percent of full scale)", cxxopts::value<int>()->default_value("50"));
+        ("amp", "Amplitude 0-100 (percent of full scale)", cxxopts::value<int>()->default_value("50"))
+        ("harmonics", "Fourier series harmonics \"freq:amp[:phase],...\" (amp in percent, phase in radians, "
+         "overrides sine)", cxxopts::value<std::string>())
+        ("audio", "Audio file to play instead of sine (WAV/MP3/FLAC/OGG)", cxxopts::value<std::string>());
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
     auto freq = result["freq"].as<int>();
-    auto rates = parse_sample_rates(result["rates"].as<std::string>());
     auto channels = result["channels"].as<int>();
     auto amp = result["amp"].as<int>();
+    auto has_audio = result.count("audio") > 0;
+    auto has_harmonics = result.count("harmonics") > 0;
+
+    // 列表参数解析（stoul/stod 对非法输入抛异常，转成友好报错退出）
+    std::vector<std::uint32_t> rates;
+    std::vector<FourierHarmonic> harmonics;
+    try {
+        rates = parse_sample_rates(result["rates"].as<std::string>());
+        if (has_harmonics) {
+            harmonics = parse_harmonics(result["harmonics"].as<std::string>());
+        }
+    } catch (const std::exception &e) {
+        std::cerr << "Failed to parse rates/harmonics: " << e.what() << std::endl;
+        return 1;
+    }
 
     if (rates.empty()) {
         std::cerr << "Sample rate list must contain at least one positive multiple of 8000" << std::endl;
@@ -50,13 +112,36 @@ int main(int argc, char **argv) {
         std::cerr << "Channel count must be 1 or 2" << std::endl;
         return 1;
     }
+    if (has_harmonics && harmonics.empty()) {
+        std::cerr << "Harmonics list is empty or malformed, use \"freq:amp[:phase],...\"" << std::endl;
+        return 1;
+    }
+#ifndef USBIPDCPP_USE_MINIAUDIO
+    if (has_audio) {
+        std::cerr << "This build was compiled without miniaudio, --audio is unavailable" << std::endl;
+        return 1;
+    }
+#endif
 
     spdlog::set_level(spdlog::level::trace);
 
     StringPool string_pool;
 
-    // 高速等时端点：每 microframe 一个包，端点大小按最高采样率计算 = max_rate*2*ch/8000
-    auto max_rate = *std::max_element(rates.begin(), rates.end());
+    // 音频源：--audio 提供时用文件音源（声道数由文件决定，--channels 忽略）；
+    // --harmonics 提供时用傅里叶级数合成；否则正弦波。
+    // 文件打不开时 AudioFileSource 软失败（日志报错 + 输出静音），设备仍可枚举（同 FfmpegSource 做法）
+    auto source = create_source(result, rates, harmonics, channels, freq, amp);
+    // 声道数以音源实际为准
+    channels = source->current_format().channels;
+
+    // 高速等时端点：每 microframe 一个包，端点大小按最高采样率计算 = max_rate*2*ch/8000。
+    // 必须用音源实际支持格式的最大采样率：软失败降级格式（48000）可能不在命令行 rates 里，
+    // 端点按命令行算会偏小，等时数据被截断
+    auto fmts = source->supported_formats();
+    auto max_rate = std::max_element(fmts.begin(), fmts.end(),
+                                     [](const AudioFormatInfo &a, const AudioFormatInfo &b) {
+                                         return a.sample_rate < b.sample_rate;
+                                     })->sample_rate;
     auto iso_packet_size = static_cast<std::uint16_t>(max_rate * 2 * channels / 8000);
 
     std::vector<UsbInterface> interfaces = {
@@ -103,8 +188,6 @@ int main(int argc, char **argv) {
     });
 
     // UacDeviceHelper 创建 AC/AS handler 并注册 + 设置描述符
-    auto source = std::make_unique<SineWaveSource>(static_cast<std::uint32_t>(freq), rates,
-                                                   static_cast<std::uint16_t>(channels), amp / 100.0);
     UacDeviceHelper::setup(device, string_pool, std::move(source));
 
     Server server;
@@ -117,7 +200,10 @@ int main(int argc, char **argv) {
     std::string rates_str;
     for (auto r: rates)
         rates_str += std::to_string(r) + " ";
-    SPDLOG_INFO("Mock UAC microphone started on port {}, busid {}, {}Hz sine, {}ch, rates [{}]", port, busid, freq,
+    auto mode_str = has_audio ? std::string("audio file")
+                              : (has_harmonics ? std::string("fourier harmonics")
+                                               : std::to_string(freq) + "Hz sine");
+    SPDLOG_INFO("Mock UAC microphone started on port {}, busid {}, {}, {}ch, rates [{}]", port, busid, mode_str,
                 channels, rates_str);
     SPDLOG_INFO("Connect: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Press Enter to stop...");
