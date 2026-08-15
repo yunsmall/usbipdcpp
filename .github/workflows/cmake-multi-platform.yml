@@ -133,3 +133,40 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --build-config Release
+
+  # Termux (Android) 编译验证。
+  # Termux rootfs 无 glibc，actions 的 node 程序（含 actions/checkout）无法在容器内运行，
+  # 因此在 host 上 checkout 后挂载进 termux-docker 镜像编译。
+  # cxxopts 不在 Termux 仓库，按 README 指南手动安装；miniaudio 也没有，
+  # 正好验证 AudioFileSource 自动禁用路径；libevdev_mouse / mock_uvc_ffmpeg
+  # 依赖同样缺失，configure 时自动跳过。
+  termux-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test in Termux container
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" \
+            --entrypoint /system/bin/sh \
+            termux/termux-docker:latest \
+            -c "set -e
+                pkg update -y
+                pkg install -y git clang cmake ninja pkg-config libasio libspdlog googletest libusb
+                git clone --depth 1 https://github.com/jarro2783/cxxopts.git
+                cd cxxopts
+                cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=\$PREFIX/opt/cxxopts
+                cmake --build build
+                cmake --install build
+                cd /src
+                cmake -B build-termux -G Ninja \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+                  -Dcxxopts_DIR=\$PREFIX/opt/cxxopts/share/cmake/cxxopts \
+                  -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+                  -DUSBIPDCPP_BUILD_TESTS=ON \
+                  -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+                  -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON
+                cmake --build build-termux
+                cd build-termux && ctest"
