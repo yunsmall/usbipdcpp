@@ -18,6 +18,12 @@
 #define USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE (16 * 1024 * 1024) // 16MB
 #endif
 
+// 最大等时传输包数量（用于防止恶意大内存分配）
+// 现实设备的单个 URB 等时包数量最多几十到几百，1024 上限足够宽裕
+#ifndef USBIPDCPP_MAX_ISO_PACKETS
+#define USBIPDCPP_MAX_ISO_PACKETS 1024
+#endif
+
 namespace usbipdcpp {
 constexpr std::uint16_t USBIP_VERSION = 0x0111;
 

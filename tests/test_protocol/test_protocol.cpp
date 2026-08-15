@@ -157,6 +157,118 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
     // mock_handler 和 test_device 在这里析构
 }
 
+namespace {
+// 模拟客户端发送一个 IN 方向的 CMD_SUBMIT（无数据阶段），
+// 用 get_cmd_from_socket 接收。handler 必须由调用方持有，
+// 且活得比 out 里的 transfer 久（transfer 析构时要用到 handler 的 operator）。
+void send_cmd_submit_with_packets(std::uint32_t number_of_packets, AbstDeviceHandler &handler,
+                                  UsbIpCommand::CmdVariant &out, usbipdcpp::error_code &out_ec) {
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context);
+    auto server_endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0);
+    acceptor.open(server_endpoint.protocol());
+    acceptor.bind(server_endpoint);
+    acceptor.listen();
+    auto server_port = acceptor.local_endpoint().port();
+
+    std::thread sender([&]() {
+        auto sock = acceptor.accept();
+        usbipdcpp::data_type buffer;
+        // get_cmd_from_socket 先读 4 字节 command
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(USBIP_CMD_SUBMIT));
+        // header 字段（不含 command）：seqnum, devid, direction, ep
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x1234));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(UsbIpDirection::In));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x80));
+        // transfer 参数：transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(64));
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        usbipdcpp::vector_append_to_net(buffer, number_of_packets);
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
+        // setup packet（8 字节）
+        buffer.insert(buffer.end(), {0, 0, 0, 0, 0, 0, 0, 0});
+
+        sock.send(asio::buffer(buffer));
+    });
+
+    asio::ip::tcp::socket server_socket(io_context);
+    asio::error_code connect_ec;
+    server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), connect_ec);
+    if (connect_ec) {
+        sender.join();
+        out_ec = connect_ec;
+        return;
+    }
+
+    out = UsbIpCommand::get_cmd_from_socket(server_socket, &handler, out_ec);
+    server_socket.close();
+    sender.join();
+}
+} // namespace
+
+TEST(TestProtocol, UsbIpCmdSubmitRejectsTooManyIsoPackets) {
+    // 恶意客户端发送超限 number_of_packets：应返回错误断开本会话，而不是异常崩溃
+    auto test_device = UsbDevice{
+        .path = "/test",
+        .busid = "1-1",
+        .bus_num = 1,
+        .dev_num = 1,
+        .speed = 0,
+        .vendor_id = 0,
+        .product_id = 0,
+        .device_bcd = 0,
+        .device_class = 0,
+        .device_subclass = 0,
+        .device_protocol = 0,
+        .configuration_value = 1,
+        .num_configurations = 1,
+        .interfaces = {},
+        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
+    };
+    MockDeviceHandlerForTest mock_handler(test_device);
+    UsbIpCommand::CmdVariant ret;
+    usbipdcpp::error_code ec;
+    send_cmd_submit_with_packets(USBIPDCPP_MAX_ISO_PACKETS + 1, mock_handler, ret, ec);
+
+    EXPECT_TRUE(ec);
+    EXPECT_EQ(ec.value(), static_cast<int>(ErrorType::SOCKET_ERR));
+    // ret 在 mock_handler 之前析构，transfer 释放时 operator 仍有效
+}
+
+TEST(TestProtocol, UsbIpCmdSubmitAcceptsAllOnesPacketsPlaceholder) {
+    // 0xFFFFFFFF 是协议中非等时传输的占位值，必须放行，不能误判为超限
+    auto test_device = UsbDevice{
+        .path = "/test",
+        .busid = "1-1",
+        .bus_num = 1,
+        .dev_num = 1,
+        .speed = 0,
+        .vendor_id = 0,
+        .product_id = 0,
+        .device_bcd = 0,
+        .device_class = 0,
+        .device_subclass = 0,
+        .device_protocol = 0,
+        .configuration_value = 1,
+        .num_configurations = 1,
+        .interfaces = {},
+        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
+    };
+    MockDeviceHandlerForTest mock_handler(test_device);
+    UsbIpCommand::CmdVariant ret;
+    usbipdcpp::error_code ec;
+    send_cmd_submit_with_packets(0xFFFFFFFF, mock_handler, ret, ec);
+
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(std::holds_alternative<UsbIpCommand::UsbIpCmdSubmit>(ret));
+    EXPECT_EQ(std::get<UsbIpCommand::UsbIpCmdSubmit>(ret).number_of_packets, 0xFFFFFFFFu);
+    // ret 在 mock_handler 之前析构，transfer 释放时 operator 仍有效
+}
+
 TEST(TestProtocol, UsbIpCmdUnlinkReadSocket) {
 
     UsbIpCommand::UsbIpCmdUnlink origin{

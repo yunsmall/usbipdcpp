@@ -397,6 +397,12 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
     }
 
+    // 检查等时包数量，防止恶意巨大分配（如 0x7FFFFFFF 导致 libusb_alloc_transfer
+    // 分配失败返回 null）。0xFFFFFFFF 是协议中非等时传输的占位值，必须放行
+    if (number_of_packets != 0xFFFFFFFF && number_of_packets > USBIPDCPP_MAX_ISO_PACKETS) [[unlikely]] {
+        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "number_of_packets too large");
+    }
+
     // 从路由 op 拿到对应端点的 leaf op，用它创建 transfer_handle
     // header.ep 是 USB/IP 线格式（不带方向位），需还原真实端点地址再查表
     int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
@@ -406,6 +412,11 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
         real_ep |= 0x80;
     auto *leaf_op = routing_op->get_operator_for_ep(real_ep);
     auto *raw_handle = leaf_op->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
+    if (!raw_handle) [[unlikely]] {
+        // 分配失败（内存耗尽等），抛 std::system_error 由 get_cmd_from_socket 捕获后
+        // 优雅断开本会话，而不是空指针解引用崩溃整个进程
+        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "alloc_transfer_handle failed");
+    }
     // 将 handle 绑定到 leaf op，后续 I/O 操作直接走 leaf op，无需 map 查找
     transfer.set_handle(raw_handle, leaf_op);
 
