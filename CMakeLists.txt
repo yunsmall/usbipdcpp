@@ -114,10 +114,13 @@ file(GLOB VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES CONFIGURE_DEPENDS src/virtua
 file(GLOB VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/video_sources/*.cpp)
 file(GLOB LIBUSB_SRC_FILES CONFIGURE_DEPENDS src/LibusbHandler/*.cpp)
 
-# 核心库（不含虚拟设备）
+# 控制编译动态库还是静态库
 set(LIB_TYPE STATIC)
 if (USBIPDCPP_BUILD_SHARED_LIBS)
     set(LIB_TYPE SHARED)
+    # 表明这是动态库，add_compile_definitions 定义的宏不会传播到使用者
+    add_compile_definitions(USBIPDCPP_EXPORTS)
+
     set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
     if (APPLE)
         set(CMAKE_BUILD_RPATH "@loader_path;${CMAKE_INSTALL_FULL_LIBDIR}")
@@ -126,13 +129,16 @@ if (USBIPDCPP_BUILD_SHARED_LIBS)
         set(CMAKE_BUILD_RPATH "$ORIGIN;${CMAKE_INSTALL_FULL_LIBDIR}")
         set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../${CMAKE_INSTALL_LIBDIR};${CMAKE_INSTALL_FULL_LIBDIR}")
     endif ()
-    add_compile_definitions(USBIPDCPP_EXPORTS)
+
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         set(CMAKE_CXX_VISIBILITY_PRESET hidden)
         set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
     endif ()
 endif ()
+
+# 核心库（不含虚拟设备）
 add_library(${PROJECT_NAME} ${LIB_TYPE} ${BASE_SRC_FILES} ${UTILS_SRC_FILES} ${DEVICE_HANDLER_SRC_FILES} ${INTERFACE_HANDLER_SRC_FILES})
+# 链接依赖库
 if (USBIPDCPP_USE_PKGCONF_ASIO)
     target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::asio)
 else ()
@@ -140,10 +146,16 @@ else ()
 endif ()
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
 target_include_directories(${PROJECT_NAME} PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+
+# 设置是否强制延时追踪
 if (USBIPDCPP_FORCE_TRACK_PACKAGE)
     message(STATUS "USBIPDCPP: Force tracking package")
     target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_FORCE_TRACK_PACKAGE)
 endif ()
+# 在创建目标后定义 USBIPDCPP_STATIC 宏，设为 PUBLIC 能传播到使用者使用时
+if (NOT USBIPDCPP_BUILD_SHARED_LIBS)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_STATIC)
+endif()
 
 # 虚拟设备库
 if (USBIPDCPP_BUILD_VIRTUAL_DEVICE)
