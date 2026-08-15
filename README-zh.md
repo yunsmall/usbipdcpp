@@ -424,6 +424,43 @@ cmake --install build
 - `-DUSBIPDCPP_BUILD_TESTS=OFF` → 可不装 `libgtest-dev`
 - `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → 可不装 `libusb-1.0-0-dev`
 
+#### Termux (Android)
+
+Termux 使用 clang 编译，不受上文 gcc13 版本限制。
+
+安装依赖：
+
+```bash
+pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb
+```
+
+Termux 仓库中没有 `cxxopts`。如需编译示例，请手动安装（以下以安装到 `$PREFIX/opt/cxxopts` 为例）：
+
+```bash
+git clone https://github.com/jarro2783/cxxopts.git
+cd cxxopts
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PREFIX/opt/cxxopts
+cmake --build build
+cmake --install build
+```
+
+配置并编译：
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -GNinja \
+    -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+    -Dcxxopts_DIR=$PREFIX/opt/cxxopts/share/cmake/cxxopts
+cmake --build build
+cmake --install build --prefix $PREFIX
+```
+
+注意事项：
+
+- 必须开启 `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON`：Termux 的 libasio 是 autotools 构建，只提供 `asio.pc`，没有 CMake config。
+- 不装 cxxopts 也可以，examples 会被整块跳过（configure 时会有 WARNING）；也可通过 `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF` 只编译库。
+- `libevdev_mouse` 和 `mock_uvc_ffmpeg` 依赖的 libevdev / FFmpeg 在 Termux 没有 dev 包，configure 时自动跳过，无需额外选项。
+- 如需编译 termux_libusb_server 示例，添加 `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`；运行它需要 `pkg install termux-api`（提供 termux-usb 命令）。
+
 #### 使用vcpkg包管理器
 请提前装好asio libusb libevdev spdlog等库。
 如需编译示例，还需安装 cxxopts：

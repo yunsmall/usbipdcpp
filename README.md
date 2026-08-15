@@ -421,6 +421,43 @@ Skip the corresponding apt packages when disabling features:
 - `-DUSBIPDCPP_BUILD_TESTS=OFF` → skip `libgtest-dev`
 - `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → skip `libusb-1.0-0-dev`
 
+#### Termux (Android)
+
+Termux uses clang, so the gcc13 minimum version requirement above does not apply.
+
+Install the dependencies:
+
+```bash
+pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb
+```
+
+`cxxopts` is not available in the Termux repositories. To build the examples, install it manually (here it is installed to `$PREFIX/opt/cxxopts`):
+
+```bash
+git clone https://github.com/jarro2783/cxxopts.git
+cd cxxopts
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PREFIX/opt/cxxopts
+cmake --build build
+cmake --install build
+```
+
+Configure and build:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -GNinja \
+    -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+    -Dcxxopts_DIR=$PREFIX/opt/cxxopts/share/cmake/cxxopts
+cmake --build build
+cmake --install build --prefix $PREFIX
+```
+
+Notes:
+
+- `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON` is required: Termux's libasio is built with autotools and only ships `asio.pc`, no CMake config.
+- Installing cxxopts is optional — without it all examples are skipped (with a configure-time warning). You can also build just the libraries with `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF`.
+- `libevdev_mouse` and `mock_uvc_ffmpeg` depend on libevdev / FFmpeg, which have no dev packages in Termux. They are skipped automatically during configure — no extra options needed.
+- To build the `termux_libusb_server` example, add `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`. Running it via `termux-usb` requires `pkg install termux-api`.
+
 #### Use vcpkg as the package manager:
 
 Please install asio libusb libevdev spdlog in advance.
