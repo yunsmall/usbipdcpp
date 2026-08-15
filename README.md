@@ -498,6 +498,17 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ---
 
+## Contributing
+
+This project uses a single-`main`-branch workflow:
+
+- Bug fixes and small changes go directly to `main`
+- Larger or experimental work is done on a separate branch and merged back to `main` when ready
+- External contributors: fork this repository and open a PR against `main`
+- Releases: bump the version in `CMakeLists.txt`, commit and push, then push a `v*` tag — CI builds and publishes the packages automatically
+
+---
+
 ## License
 
 This project is licensed under [LGPLv3](LICENSE).

@@ -11,3 +11,12 @@
 push前先提交代码，push和提交请分别执行不要放在一起
 
 有新版本tag的时候别忘记更新CMakeLists.txt里的版本号
+
+## git 工作流
+
+单 main 分支模型（develop 已删除）：
+
+- 日常提交直接进 main
+- 大的实验性功能：开临时 feature 分支开发，完成后合并回 main 并删除
+- 外部贡献者：fork + PR 到 main
+- 发版本：先更新 CMakeLists.txt 里的版本号并提交推送，再打 v* tag 推送，CI 自动构建发布包

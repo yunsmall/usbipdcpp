@@ -499,6 +499,17 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ---
 
+## 贡献指南
+
+本项目采用单 main 分支工作流：
+
+- 修复和小改动直接提交到 main
+- 较大的或实验性改动在独立分支开发，完成后合并回 main
+- 外部贡献者：fork 本仓库并针对 main 提交 PR
+- 发布版本：更新 CMakeLists.txt 中的版本号并提交推送，然后推送 v* tag，CI 自动构建并发布包
+
+---
+
 ## 许可证
 
 本项目使用 [LGPLv3](LICENSE) 许可证。
