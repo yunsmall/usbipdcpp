@@ -3,6 +3,7 @@
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
@@ -747,9 +748,11 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                     intf.interface_protocol, // bInterfaceProtocol
                     intf.handler->get_string_interface_value(), // iInterface
             };
-            // class-specific 描述符只放 alt 0（TinyUSB 做法），alt>0 只放端点
-            // 若放所有 alt，config descriptor 会被撑到超过 255 字节导致 Windows 截断解析失败
-            if (alt == 0 && !class_specific_descriptor.empty()) {
+            // class-specific 描述符默认只放 alt 0（TinyUSB 做法），alt>0 只放端点。
+            // 若放所有 alt，UVC 的 config descriptor 会被撑到超过 255 字节导致 Windows 截断解析失败。
+            // UAC 的 AS 接口描述符很小且 alt 1 必须有格式描述符，通过 put_class_specific_descriptor_in_all_alts 放行
+            bool all_alts = intf.handler->put_class_specific_descriptor_in_all_alts();
+            if ((alt == 0 || all_alts) && !class_specific_descriptor.empty()) {
                 intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
             }
             for (auto &endpoint: alt_endpoints) {
@@ -773,6 +776,19 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                             static_cast<std::uint8_t>(endpoint.max_packet_size >> 8), // wMaxTransferSize high
                     };
                     intf_desc.insert(intf_desc.end(), cs_ep.begin(), cs_ep.end());
+                }
+                // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
+                // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
+                // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
+                if (intf.interface_class == CC_AUDIO && intf.interface_subclass == SC_AUDIOSTREAMING &&
+                    (endpoint.attributes & 0x03) == 0x01) {
+                    append_descriptor(intf_desc, AsEpGeneralDesc{
+                                                         AS_EP_DESC_GENERAL_LEN,
+                                                         CS_ENDPOINT,
+                                                         AS_EP_DESC_GENERAL,
+                                                         AS_EP_ATTR_SAMPLING_FREQ,
+                                                         0x00, // bLockDelayUnits
+                                                         0x00}); // wLockDelay
                 }
             }
             desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());

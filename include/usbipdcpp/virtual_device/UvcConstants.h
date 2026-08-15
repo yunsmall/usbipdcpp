@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+// 通用类请求码（SET_CUR/GET_CUR 等）和类特定描述符类型（CS_INTERFACE 等）
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
+
 namespace usbipdcpp {
 
 // USB Video Class codes
@@ -41,18 +44,6 @@ constexpr std::uint16_t TT_STREAMING = 0x0101;
 constexpr std::uint16_t ITT_VENDOR_SPECIFIC = 0x0200;
 constexpr std::uint16_t ITT_CAMERA = 0x0201;
 constexpr std::uint16_t ITT_MEDIA_TRANSPORT_INPUT = 0x0202;
-
-// VideoControl Requests
-constexpr std::uint8_t RC_UNDEFINED = 0x00;
-constexpr std::uint8_t SET_CUR = 0x01;
-constexpr std::uint8_t SET_CUR_ALL = 0x11;
-constexpr std::uint8_t GET_CUR = 0x81;
-constexpr std::uint8_t GET_MIN = 0x82;
-constexpr std::uint8_t GET_MAX = 0x83;
-constexpr std::uint8_t GET_RES = 0x84;
-constexpr std::uint8_t GET_LEN = 0x85;
-constexpr std::uint8_t GET_INFO = 0x86;
-constexpr std::uint8_t GET_DEF = 0x87;
 
 // VC Control Selectors
 constexpr std::uint8_t VC_CONTROL_UNDEFINED = 0x00;
@@ -111,10 +102,6 @@ constexpr std::uint8_t VS_COMMIT_CONTROL = 0x02;
 constexpr std::uint8_t VS_STILL_PROBE_CONTROL = 0x03;
 constexpr std::uint8_t VS_STILL_COMMIT_CONTROL = 0x04;
 constexpr std::uint8_t VS_STREAM_ERROR_CODE_CONTROL = 0x06;
-
-// USB class-specific descriptor types
-constexpr std::uint8_t CS_INTERFACE = 0x24;
-constexpr std::uint8_t CS_ENDPOINT = 0x25;
 
 // Video Class-Specific Endpoint Descriptor Subtypes (Table A-7)
 constexpr std::uint8_t EP_UNDEFINED = 0x00;

@@ -220,6 +220,17 @@ public:
 
     [[nodiscard]] virtual data_type get_class_specific_descriptor() = 0;
 
+    /**
+     * @brief class-specific 描述符是否放在所有 alternate setting 之后
+     *
+     * 默认 false：仅放 alt 0（UVC 等描述符较大的类，放所有 alt 会撑爆
+     * 配置描述符 255 字节上限导致 Windows 截断解析失败）。
+     * UAC 的 AS 接口描述符很小，且 alt 1 必须有格式描述符供驱动解析，需返回 true。
+     */
+    [[nodiscard]] virtual bool put_class_specific_descriptor_in_all_alts() const {
+        return false;
+    }
+
     // ========== TransferOperator ==========
 
     TransferOperator *get_transfer_operator() {

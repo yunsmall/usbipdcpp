@@ -6,7 +6,7 @@ A C++ library for creating usbip servers
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port) — no libusb dependency
+> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), UVC (camera), UAC (microphone) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -325,7 +325,15 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    Requires FFmpeg libraries (libavformat, libavcodec, libswscale, libavutil).
 
-12. termux_libusb_server
+12. mock_audio
+
+   A virtual USB microphone (UAC 1.0) playing a sine wave test tone. Demonstrates the
+   `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` combination
+   (Feature Unit mute/volume control, sampling rate negotiation, ISO PCM streaming).
+
+   Usage: `mock_audio --freq 440 --rate 48000` (sample rate must be a multiple of 8000)
+
+13. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
@@ -335,12 +343,12 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    For the usage of termux-usb, you can refer to the relevant documentation on the official Termux website.
 
-13. multi_interface_hid
+14. multi_interface_hid
 
    A demonstration of a composite USB device combining **two HID interfaces** (mouse + keyboard) on a single device.
    Shows how to create multi-interface virtual devices using `SimpleVirtualDeviceHandler`.
 
-14. libusb_windows_service
+15. libusb_windows_service
 
    A **Windows Service** wrapper for the libusb server (Windows only). Uses the Windows SCM API to run
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
@@ -435,6 +443,10 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `UvcVideoStreamingHandler` | UVC VideoStreaming interface (PROBE/COMMIT, ISO video streaming) |
 | `VideoSource` | Abstract video source interface for UVC devices |
 | `ColorBarSource` | Test pattern video source (color bars) |
+| `UacAudioControlHandler` | UAC AudioControl interface (Feature Unit mute/volume control) |
+| `UacAudioStreamingHandler` | UAC AudioStreaming interface (ISO PCM streaming) |
+| `AudioSource` | Abstract PCM audio source interface for UAC devices |
+| `SineWaveSource` | Sine wave test tone audio source |
 
 ### Class Hierarchy
 

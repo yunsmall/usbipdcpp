@@ -47,6 +47,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_GAMEPAD "Build example mock gamepad applicat
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MSC "Build example mock MSC (virtual USB flash drive) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC "Build example mock UVC (virtual USB camera) applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_AUDIO "Build example mock UAC (virtual USB microphone) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MULTI_DEVICES "Build example multi devices applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_ABSOLUTE_MOUSE "Build example absolute mouse applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC_FFMPEG "Build example mock UVC applications with FFmpeg" ${IS_TOP_LEVEL})
@@ -112,6 +113,7 @@ file(GLOB VIRTUAL_DEVICE_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/*.cpp)
 file(GLOB VIRTUAL_DEVICE_DEVICES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/devices/*.cpp)
 file(GLOB VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/storage_backends/*.cpp)
 file(GLOB VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/video_sources/*.cpp)
+file(GLOB VIRTUAL_DEVICE_AUDIO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/audio_sources/*.cpp)
 file(GLOB LIBUSB_SRC_FILES CONFIGURE_DEPENDS src/LibusbHandler/*.cpp)
 
 # 控制编译动态库还是静态库
@@ -159,7 +161,7 @@ endif()
 
 # 虚拟设备库
 if (USBIPDCPP_BUILD_VIRTUAL_DEVICE)
-    add_library(${PROJECT_NAME}_virtual_device ${LIB_TYPE} ${VIRTUAL_DEVICE_SRC_FILES} ${VIRTUAL_DEVICE_DEVICES_SRC_FILES} ${VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES} ${VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES})
+    add_library(${PROJECT_NAME}_virtual_device ${LIB_TYPE} ${VIRTUAL_DEVICE_SRC_FILES} ${VIRTUAL_DEVICE_DEVICES_SRC_FILES} ${VIRTUAL_DEVICE_STORAGE_BACKENDS_SRC_FILES} ${VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES} ${VIRTUAL_DEVICE_AUDIO_SOURCES_SRC_FILES})
     set_target_properties(${PROJECT_NAME}_virtual_device PROPERTIES EXPORT_NAME virtual_device)
     target_link_libraries(${PROJECT_NAME}_virtual_device PUBLIC ${PROJECT_NAME})
     target_include_directories(${PROJECT_NAME}_virtual_device PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")

@@ -8,7 +8,7 @@
 
 - ✅ **USBIP 服务器**: 基于 libusb 实现，支持所有 libusb 兼容平台
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
-- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）—— 无需 libusb
+- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、UVC（摄像头）、UAC（麦克风）—— 无需 libusb
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
 - 🚀 **异步架构**: 使用 C++20 协程和 asio 实现高效 I/O
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
@@ -321,7 +321,15 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    需要 FFmpeg 库（libavformat、libavcodec、libswscale、libavutil）。
 
-12. termux_libusb_server
+12. mock_audio
+
+   虚拟 USB 麦克风（UAC 1.0），播放正弦波测试音。演示
+   `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` 组合
+   （Feature Unit 静音/音量控制、采样率协商、ISO PCM 推流）。
+
+   使用：`mock_audio --freq 440 --rate 48000`（采样率需为 8000 的整数倍）
+
+13. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
@@ -331,12 +339,12 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    termux-usb的使用可查看termux官方的相关文档
 
-13. multi_interface_hid
+14. multi_interface_hid
 
    复合 USB 设备示例，在单个设备上同时实现**两个 HID 接口**（鼠标 + 键盘）。
    展示如何使用 `SimpleVirtualDeviceHandler` 创建多接口虚拟设备。
 
-14. libusb_windows_service
+15. libusb_windows_service
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或
@@ -430,6 +438,10 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 | `UvcVideoStreamingHandler` | UVC VideoStreaming 接口（PROBE/COMMIT、ISO 视频流） |
 | `VideoSource` | UVC 虚拟摄像头视频源抽象接口 |
 | `ColorBarSource` | 彩条测试图视频源 |
+| `UacAudioControlHandler` | UAC AudioControl 接口（Feature Unit 静音/音量控制） |
+| `UacAudioStreamingHandler` | UAC AudioStreaming 接口（ISO PCM 推流） |
+| `AudioSource` | UAC 虚拟麦克风 PCM 音频源抽象接口 |
+| `SineWaveSource` | 正弦波测试音源 |
 
 ### 类继承关系
 
