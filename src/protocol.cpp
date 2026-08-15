@@ -514,6 +514,17 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
         else {
             ec = make_error_code(ErrorType::SOCKET_ERR);
         }
+    } catch (const std::system_error &e) {
+        // UsbIpCmdSubmit::from_socket 会抛纯 std::system_error（如 transfer_buffer_length
+        // 超限、OUT 数据阶段读失败），必须在此拦截，否则异常逃出线程函数导致
+        // std::terminate 崩溃整个服务器进程
+        SPDLOG_DEBUG("协议错误：{}", e.what());
+        if (e.code() == asio::error::eof) {
+            ec = make_error_code(ErrorType::SOCKET_EOF);
+        }
+        else {
+            ec = make_error_code(ErrorType::SOCKET_ERR);
+        }
     }
     return UsbIpCommand::CmdVariant{};
 }
