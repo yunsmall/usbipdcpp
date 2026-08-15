@@ -85,6 +85,30 @@ If `libminiaudio-dev` is not available in your repository, either download `mini
 [miniaudio](https://miniaudio.app/) and put it on the include path, or disable the option —
 `AudioFileSource` is excluded automatically when the header is not found.
 
+#### Windows — vcpkg
+
+Install [Visual Studio](https://visualstudio.microsoft.com/) with the "Desktop development with C++" workload, plus [vcpkg](https://github.com/microsoft/vcpkg).
+
+Install dependencies:
+
+```bash
+./vcpkg install asio libusb spdlog cxxopts gtest miniaudio
+```
+
+Configure and build — no generator specified, so the Visual Studio generator with MSVC is used:
+
+```bash
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+cmake --install build
+```
+
+Notes:
+
+- The Visual Studio generator is multi-config: `cmake --build` and `ctest` need `--config Release` (or Debug).
+- Dependencies are DLLs on Windows; `cmake --install` copies them next to the executables automatically.
+- Skip the corresponding vcpkg packages when disabling features: tests → `gtest`, examples → `cxxopts`, libusb components → `libusb`, audio file playback → `miniaudio`.
+
 #### Termux (Android)
 
 Termux uses clang, so the gcc13 minimum version requirement above does not apply.
@@ -129,6 +153,10 @@ Please install asio libusb libevdev spdlog in advance.
 To build examples, also install cxxopts:
 ```bash
 ./vcpkg install asio libusb libevdev spdlog cxxopts
+```
+To build tests, also install gtest:
+```bash
+./vcpkg install gtest
 ```
 To build audio file playback (`AudioFileSource`), also install miniaudio:
 ```bash

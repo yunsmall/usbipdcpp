@@ -88,6 +88,30 @@ cmake --install build
 如果你的软件源里没有 `libminiaudio-dev`，可以从 [miniaudio](https://miniaudio.app/) 官网
 下载 `miniaudio.h` 放到 include 路径，或直接禁用该选项——找不到头文件时 `AudioFileSource` 会自动从构建中排除。
 
+#### Windows — vcpkg
+
+安装 [Visual Studio](https://visualstudio.microsoft.com/)（勾选"使用 C++ 的桌面开发"工作负载）和 [vcpkg](https://github.com/microsoft/vcpkg)。
+
+安装依赖：
+
+```bash
+./vcpkg install asio libusb spdlog cxxopts gtest miniaudio
+```
+
+配置并编译（不指定生成器，默认使用 Visual Studio 生成器和 MSVC）：
+
+```bash
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+cmake --install build
+```
+
+注意事项：
+
+- Visual Studio 生成器是多配置的：`cmake --build` 和 `ctest` 需要加 `--config Release`（或 Debug）。
+- Windows 下依赖库是 DLL，`cmake --install` 会自动把依赖 DLL 拷贝到可执行文件旁。
+- 禁用对应功能时可跳过相应的 vcpkg 包：测试 → `gtest`、示例 → `cxxopts`、libusb 组件 → `libusb`、音频文件播放 → `miniaudio`。
+
 #### Termux (Android)
 
 Termux 使用 clang 编译，不受上文 gcc13 版本限制。
@@ -131,6 +155,10 @@ cmake --install build --prefix $PREFIX
 如需编译示例，还需安装 cxxopts：
 ```bash
 ./vcpkg install asio libusb libevdev spdlog cxxopts
+```
+如需编译测试，还需安装 gtest：
+```bash
+./vcpkg install gtest
 ```
 如需音频文件播放（`AudioFileSource`），还需安装 miniaudio：
 ```bash
