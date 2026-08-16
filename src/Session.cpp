@@ -70,21 +70,24 @@ void usbipdcpp::Session::run() {
                 SPDLOG_ERROR("session线程未捕获未知异常");
             }
 
-            // 处理结束后自动往服务器中删除自身并触发退出回调
+            // 处理结束后自动往服务器中删除自身并触发退出回调。
+            // 活跃计数递减和唤醒已挪进 remove_session（同一把锁内）：
+            // 若在这里（锁外）递减 + notify，stop() 可能恰好在检查计数非 0
+            // 之后、进入条件变量睡眠之前错过本线程的 notify（lost wakeup），
+            // 之后无人再唤醒它，stop() 永久卡在 alive 计数等待上
             self->server.remove_session(self.get());
             // 必须 detach：本线程函数持有 Session 的最后一份 shared_ptr，
             // 函数结束时 ~Session 会在这个线程内执行，若 run_thread 仍 joinable，
             // std::thread 析构会直接 terminate。而线程无法 join 自己（死锁），
             // 所以只能 detach 自己
             self->run_thread.detach();
-            // 计数递减放在对 Server 的最后一次访问之后：stop() 看到计数归零
-            // 时，本线程保证不会再碰 Server 的任何成员
-            self->server.alive_session_threads.fetch_sub(1, std::memory_order_release);
-            self->server.all_sessions_closed_cv.notify_one();
         });
     } catch (...) {
-        // 线程创建失败时回滚计数，否则 stop() 会永久等待
+        // 线程创建失败时回滚计数，否则 stop() 会永久等待。
+        // 本函数在网络线程执行，stop() 等待前会先 join 网络线程，两者无并发，
+        // notify 只是保险（无等待者时无害）
         server.alive_session_threads.fetch_sub(1, std::memory_order_release);
+        server.all_sessions_closed_cv.notify_one();
         throw;
     }
     if (server.after_thread_create_callback) {
@@ -222,16 +225,20 @@ void usbipdcpp::Session::immediately_stop() {
     should_immediately_stop = true;
 
     std::error_code ignore_ec;
-    // shutdown 和 close 缺一不可，两个平台对挂起读的打断方式相反：
-    // - Linux：shutdown 唤醒挂起的 recv（返回 0），close 不会唤醒阻塞中的 recv
-    // - Windows：shutdown（裸 ::shutdown）不取消 IOCP 挂起的读写，只有 close
-    //   才取消挂起操作（CancelIoEx）
-    // 只调其中一个会导致另一个平台 stop() 卡在 alive 计数等待上
+    // shutdown 和 cancel 缺一不可，两个平台打断挂起同步读的机制互补
+    // （本地纯 asio 实测）：
+    // - Linux/macOS：shutdown 唤醒挂起的 poll，读立即以 EOF 返回；cancel 无效
+    // - Windows：shutdown 不唤醒挂起的 WSAPoll（实测 15 秒以上仍卡住，实际要
+    //   等 TcpTimedWaitDelay 240 秒连接超时才返回）；cancel 内部调用
+    //   WSACancelBlockingCall 立即打断同步读
+    // 两者在对方平台都无效但无害。不用 close：asio 文档明确 close 不线程安全
+    // （socket 共享对象只有 send/receive/connect/shutdown 相互之间线程安全），
+    // 跨线程 close 与读并发曾导致 CI 上 Linux/macOS 卡死
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
-    socket.close(ignore_ec);
+    socket.cancel(ignore_ec);
     // 唤醒 sender 线程，否则它卡在 data_available_cv.wait() 上直到 receiver 退出。
     data_available_cv.notify_one();
-    SPDLOG_INFO("成功关闭socket");
+    SPDLOG_INFO("成功调用shutdown");
 }
 
 void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
@@ -446,12 +453,11 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         if (sending_ec) {
             // TCP 写入失败，立即关闭 session 双向通信。
             // 仅 break 退出 sender 会让 receiver 继续运行直到 keepalive 超时。
-            // shutdown + close 都要调：Linux 靠 shutdown 唤醒挂起的 recv，
-            // Windows 靠 close 取消 IOCP 挂起的读（见 immediately_stop 注释）
+            // shutdown + cancel 跨平台打断 receiver 的挂起同步读（见 immediately_stop 注释）
             should_immediately_stop = true;
             std::error_code ignore_ec;
             socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
-            socket.close(ignore_ec);
+            socket.cancel(ignore_ec);
             // ec = sending_ec;
             break;
         }

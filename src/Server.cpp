@@ -215,9 +215,13 @@ void usbipdcpp::Server::remove_session(Session *session) {
             it = sessions.erase(it);
         }
     }
-    if (sessions.empty()) {
-        all_sessions_closed_cv.notify_one();
-    }
+    // 活跃计数递减和唤醒必须在本锁内完成：stop() 的 cv.wait(lock, 谓词) 与
+    // 这里共用同一把锁，锁保证「谓词检查失败」与「进入睡眠」之间不会插入
+    // 本线程的递减 + notify，否则丢失唤醒（lost wakeup）会让 stop() 在
+    // 计数归零后仍永久睡眠。
+    // 递减放在回调之前：回调抛异常也不会让 stop() 永久等待
+    alive_session_threads.fetch_sub(1, std::memory_order_release);
+    all_sessions_closed_cv.notify_one();
     // 调用回调
     for (auto &callback: session_exit_callbacks) {
         callback();
