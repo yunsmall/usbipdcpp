@@ -1,11 +1,57 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
 #include "test_utils.h"
 
+#include "usbipdcpp/Server.h"
 #include "usbipdcpp/network.h"
 
 using namespace usbipdcpp;
 using namespace usbipdcpp::test;
+
+TEST(TestNetwork, ServerCanRestartAfterStop) {
+    // stop() 必须关闭 acceptor 释放端口，否则再次 start() 时 bind 同一端口失败，
+    // 网络线程异常处理会直接 std::exit(1) 结束整个测试进程
+    asio::io_context io;
+
+    // 探测一个空闲端口，固定端口才能验证两次 start 的监听不冲突
+    std::uint16_t port;
+    {
+        asio::ip::tcp::acceptor probe(io);
+        probe.open(asio::ip::tcp::v4());
+        probe.bind(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0));
+        port = probe.local_endpoint().port();
+    }
+
+    usbipdcpp::Server server;
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    for (int round = 0; round < 2; round++) {
+        server.start(ep);
+
+        // start 的 bind 在网络线程中异步执行，轮询连接直到监听就绪
+        asio::ip::tcp::socket probe_sock(io);
+        bool connected = false;
+        for (int i = 0; i < 100; i++) {
+            std::error_code ec;
+            probe_sock.connect(ep, ec);
+            if (!ec) {
+                connected = true;
+                break;
+            }
+            probe_sock.close();
+            probe_sock = asio::ip::tcp::socket(io);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(connected);
+        // 主动断开，让服务器侧的 session 快速退出
+        probe_sock.close();
+
+        server.stop();
+    }
+}
 
 
 TEST(TestNetwork, ntoh_hton) {

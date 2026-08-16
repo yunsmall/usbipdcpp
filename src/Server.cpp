@@ -37,16 +37,17 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     }
     network_io_thread = std::thread([this, ep]() {
         try {
-            asio::ip::tcp::acceptor acceptor(asio_io_context);
-            acceptor.open(ep.protocol());
-            acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+            // acceptor 作为成员保存，stop() 时关闭以释放端口，保证可以再次 start()
+            acceptor.emplace(asio_io_context);
+            acceptor->open(ep.protocol());
+            acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true));
 
-            acceptor.bind(ep);
-            acceptor.listen();
+            acceptor->bind(ep);
+            acceptor->listen();
             spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
             asio::co_spawn(
                     asio_io_context,
-                    do_accept(acceptor),
+                    do_accept(),
                     asio::detached);
             asio_io_context.run();
         } catch (const std::exception &e) {
@@ -76,6 +77,15 @@ void usbipdcpp::Server::stop() {
     spdlog::info("All sessions were successfully closed");
 
     // spdlog::info("Successfully shut down transmissions for all devices");
+
+    // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
+    // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
+    // close 后挂起的 async_accept 会以 operation_aborted 完成，协程正常退出
+    if (acceptor) {
+        std::error_code ignore_ec;
+        acceptor->close(ignore_ec);
+        acceptor.reset();
+    }
 
     asio_io_context.stop();
     SPDLOG_TRACE("Successfully stop io_context");
@@ -194,7 +204,7 @@ void usbipdcpp::Server::remove_session(Session *session) {
 }
 
 
-asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acceptor) {
+asio::awaitable<void> usbipdcpp::Server::do_accept() {
     while (true) {
         spdlog::info("Waiting for a new connection...");
 
@@ -203,7 +213,7 @@ asio::awaitable<void> usbipdcpp::Server::do_accept(asio::ip::tcp::acceptor &acce
 
         asio::error_code ec;
         //服务器io_context接收到socket后将其转移到session内部专有的io_context
-        co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
+        co_await acceptor->async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
 
         if (!ec) {
             // 设置 socket 选项

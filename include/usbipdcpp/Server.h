@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
+#include <optional>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -166,7 +167,7 @@ public:
     ~Server();
 
 protected:
-    asio::awaitable<void> do_accept(asio::ip::tcp::acceptor &acceptor);
+    asio::awaitable<void> do_accept();
 
     bool is_device_using(const std::string &busid);
 
@@ -197,6 +198,9 @@ protected:
 
     //网络通信请异步使用这个io_context
     asio::io_context asio_io_context;
+    //监听 acceptor 作为成员保存，stop() 时显式关闭释放端口，
+    //否则 stop 后再次 start() 会与旧协程中的 acceptor 冲突导致 bind 失败
+    std::optional<asio::ip::tcp::acceptor> acceptor;
     //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
     std::thread network_io_thread;
 
