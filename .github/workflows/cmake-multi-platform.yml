@@ -147,7 +147,7 @@ jobs:
         shell: bash
         working-directory: build
         run: |
-          ctest --build-config Release --repeat until-fail:50 --output-on-failure \
+          ctest --build-config Release --repeat until-fail:50 --timeout 120 --output-on-failure \
             -R "TestNetwork\.(ServerCanRestartAfterStop|ManyQuickConnections|StopWithMultipleClients|StopDuringClientConnectRace)"
 
       - name: Stress test (TestNetworkVdev)
@@ -155,7 +155,7 @@ jobs:
         shell: bash
         working-directory: build
         run: |
-          ctest --build-config Release --repeat until-fail:50 --output-on-failure \
+          ctest --build-config Release --repeat until-fail:50 --timeout 120 --output-on-failure \
             -R "TestNetworkVdev\.(ServerCanStopWithImportedDevice|ClientDisconnectsDuringUrbTransfer)"
 
   # Termux (Android) 编译验证。

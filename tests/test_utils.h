@@ -3,6 +3,8 @@
 #include <asio.hpp>
 #include <gtest/gtest.h>
 
+#include "crash_handler.h"
+
 #include <chrono>
 #include <thread>
 
