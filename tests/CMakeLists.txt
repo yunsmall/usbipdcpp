@@ -32,9 +32,17 @@ add_test_file(test_generic_transfer)
 add_test_file(test_reuse_map)
 add_test_file(test_reuse_set)
 add_test_file(test_descriptors)
+add_test_file(test_ring_buffer)
 
 # 音频源在虚拟设备库中；AudioFileSource 相关用例由文件内 USBIPDCPP_USE_MINIAUDIO 宏条件编译
 if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_audio_sources)
     target_link_libraries(test_audio_sources PRIVATE usbipdcpp_virtual_device)
+
+    # 虚拟设备处理器的纯逻辑测试，每种设备一个文件
+    add_test_file(test_hid_handler)
+    target_link_libraries(test_hid_handler PRIVATE usbipdcpp_virtual_device)
+
+    add_test_file(test_cdc_acm_handler)
+    target_link_libraries(test_cdc_acm_handler PRIVATE usbipdcpp_virtual_device)
 endif ()
