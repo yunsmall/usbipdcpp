@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <vector>
 #include <cstddef>
@@ -152,8 +153,10 @@ public:
     void resize(size_type new_size) {
         if (new_size <= N) {
             if (on_heap_) {
-                // 从堆迁移回栈
-                for (size_type i = 0; i < new_size; ++i) {
+                // 从堆迁移回栈。只迁移现有元素：若 new_size 大于 size_，
+                // 扩容部分与栈路径的 resize 行为一致（不额外初始化），
+                // 否则读取 heap_storage_[size_..new_size) 会越界
+                for (size_type i = 0; i < std::min(new_size, size_); ++i) {
                     stack_storage_[i] = std::move(heap_storage_[i]);
                 }
                 heap_storage_.clear();

@@ -120,6 +120,33 @@ TEST(SmallVector, Resize) {
     EXPECT_EQ(vec.size(), 2u);
 }
 
+TEST(SmallVector, ResizeFromHeapToStackWithGrow) {
+    // 堆上元素数小于 N 时 resize 扩容并迁回栈：只迁移现有元素，
+    // 不能读取堆存储越界部分（回归测试）
+    SmallVector<int, 4> vec;
+    for (int i = 0; i < 6; i++) {
+        vec.push_back(i); // 6 个元素，在堆上
+    }
+    EXPECT_TRUE(vec.on_heap());
+    vec.pop_back();
+    vec.pop_back();
+    vec.pop_back();
+    EXPECT_EQ(vec.size(), 3u);
+    EXPECT_TRUE(vec.on_heap());
+
+    vec.resize(4); // 扩容且迁回栈：旧代码读 heap_storage_[3] 越界
+    EXPECT_FALSE(vec.on_heap());
+    EXPECT_EQ(vec.size(), 4u);
+    EXPECT_EQ(vec[0], 0);
+    EXPECT_EQ(vec[1], 1);
+    EXPECT_EQ(vec[2], 2);
+
+    // 迁移后可以继续正常使用
+    vec.push_back(100);
+    EXPECT_EQ(vec.size(), 5u);
+    EXPECT_EQ(vec[4], 100);
+}
+
 TEST(SmallVector, Iterators) {
     SmallVector<int, 4> vec;
     vec.push_back(1);
