@@ -72,7 +72,12 @@ void usbipdcpp::Server::stop() {
     {
         spdlog::info("等待所有session关闭");
         std::unique_lock lock(session_list_mutex);
-        all_sessions_closed_cv.wait(lock, [this] { return sessions.empty(); });
+        // 等 session 线程完全结束（而不仅是 sessions 列表清空）：remove_session
+        // 之后线程还有 detach 与自身析构，若 stop() 提前返回，调用方随后析构
+        // Server 或退出进程时，detach 的线程可能仍在访问 spdlog 等已析构的全局对象
+        all_sessions_closed_cv.wait(lock, [this] {
+            return alive_session_threads.load(std::memory_order_acquire) == 0;
+        });
     }
     spdlog::info("All sessions were successfully closed");
 

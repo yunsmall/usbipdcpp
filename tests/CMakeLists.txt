@@ -7,7 +7,9 @@ function(add_test_file name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE usbipdcpp GTest::gtest GTest::gtest_main)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    gtest_discover_tests(${name})
+    # PRE_TEST：测试发现移到 ctest 运行时，避免并行构建下多个测试可执行文件
+    # 在构建期并发启动（偶发加载动态库失败导致 JSON 解析错误，CI 上出现过）
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
 endfunction()
 
 function(add_test_dir name)
@@ -15,7 +17,7 @@ function(add_test_dir name)
     add_executable(${name} ${src})
     target_link_libraries(${name} PRIVATE usbipdcpp GTest::gtest GTest::gtest_main)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    gtest_discover_tests(${name})
+    gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
 endfunction()
 
 add_test_dir(test_protocol)

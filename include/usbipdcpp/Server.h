@@ -7,6 +7,7 @@
 #include <list>
 #include <thread>
 #include <condition_variable>
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -195,6 +196,9 @@ protected:
     std::list<std::weak_ptr<Session>> sessions;
     mutable std::shared_mutex session_list_mutex;
     std::condition_variable_any all_sessions_closed_cv;
+    // 仍在运行的 session 线程数。stop() 等其归零（蕴含 sessions 已清空）才返回，
+    // 保证返回时所有 session 线程已结束，之后析构 Server 或退出进程都安全
+    std::atomic<std::size_t> alive_session_threads{0};
 
     //网络通信请异步使用这个io_context
     asio::io_context asio_io_context;

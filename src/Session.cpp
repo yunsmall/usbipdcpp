@@ -42,7 +42,9 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
 }
 
 usbipdcpp::Session::~Session() {
-    SPDLOG_TRACE("Session析构");
+    // 注意：不能在析构中打日志。本线程是 detach 的，stop() 只等线程函数退出，
+    // 若进程随后退出（如测试 main 返回），spdlog 的全局 registry 可能已随静态析构
+    // 销毁，此时打日志会访问已析构对象导致段错误
 }
 
 void usbipdcpp::Session::run() {
@@ -52,12 +54,26 @@ void usbipdcpp::Session::run() {
         server.before_thread_create_callback(ThreadPurpose::SessionMain);
     }
     run_thread = std::thread([self = std::move(self)]() {
-        self->parse_op();
+        // 活跃线程计数：stop() 等其归零才返回，保证之后析构 Server 或退出
+        // 进程时本线程已完全结束，不会访问任何已析构的全局对象
+        self->server.alive_session_threads.fetch_add(1, std::memory_order_release);
+
+        try {
+            self->parse_op();
+        } catch (const std::exception &e) {
+            // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程），
+            // 也不能跳过下面的计数递减（否则 stop() 永久等待）
+            SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
+        } catch (...) {
+            SPDLOG_ERROR("session线程未捕获未知异常");
+        }
 
         // 处理结束后自动往服务器中删除自身并触发退出回调
         self->server.remove_session(self.get());
         // 把当前这个线程detach了，防止线程内部析构自己导致报错
         self->run_thread.detach();
+        self->server.alive_session_threads.fetch_sub(1, std::memory_order_release);
+        self->server.all_sessions_closed_cv.notify_one();
     });
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionMain, run_thread);
