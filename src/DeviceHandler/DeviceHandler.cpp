@@ -12,10 +12,6 @@
 
 using namespace usbipdcpp;
 
-AbstDeviceHandler::AbstDeviceHandler(AbstDeviceHandler &&other) noexcept :
-    handle_device(other.handle_device) {
-}
-
 void AbstDeviceHandler::trigger_session_stop() {
     std::lock_guard lock(session_mutex_);
     if (session)[[likely]] {

@@ -29,7 +29,10 @@ public:
         handle_device(handle_device), transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
     }
 
-    AbstDeviceHandler(AbstDeviceHandler &&other) noexcept;
+    // 禁止移动：handle_device 是引用成员无法重新绑定，transfer_op_ 与 session
+    // 若按默认移动则丢失子类替换的 operator 和会话指针，静默产生错误行为。
+    // 当前无任何调用方，直接删除以杜绝未来误用
+    AbstDeviceHandler(AbstDeviceHandler &&other) = delete;
 
     /**
      * @brief 处理 URB 请求的统一入口
