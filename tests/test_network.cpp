@@ -261,13 +261,14 @@ TEST(TestNetwork, ServerCanRestartAfterAcceptError) {
     ASSERT_GE(pid, 0);
     if (pid == 0) {
         // 子进程：关闭从父进程继承的所有 fd（stdin/out/err 之外），恢复自己的
-        // fd 限额，否则 connect 同样 EMFILE。只做原始 socket 操作，不碰 asio 和
-        // gtest（fork 后这些库的锁状态不安全），结果通过退出码回传
-#ifdef __APPLE__
-        closefrom(3);
-#else
-        close_range(3, ~0U, 0);
-#endif
+        // fd 限额，否则 connect 同样 EMFILE。closefrom 在 macOS 默认 feature
+        // 宏下不声明、close_range 是 Linux 专属，统一用可移植的循环。
+        // 只做原始 socket 操作，不碰 asio 和 gtest（fork 后这些库的锁状态
+        // 不安全），结果通过退出码回传
+        long max_fd = sysconf(_SC_OPEN_MAX);
+        for (long fd = 3; fd < max_fd; ++fd) {
+            ::close(static_cast<int>(fd));
+        }
         int s = ::socket(AF_INET, SOCK_STREAM, 0);
         if (s < 0) {
             _exit(1);
