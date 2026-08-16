@@ -31,10 +31,11 @@ TEST(TestNetwork, ServerCanRestartAfterStop) {
     for (int round = 0; round < 2; round++) {
         server.start(ep);
 
-        // start 的 bind 在网络线程中异步执行，轮询连接直到监听就绪
+        // start 的 bind 在网络线程中异步执行，轮询连接直到监听就绪。
+        // 超时给 4 秒：覆盖率插桩等慢速构建下服务器启动可能超过 1 秒
         asio::ip::tcp::socket probe_sock(io);
         bool connected = false;
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 200; i++) {
             std::error_code ec;
             probe_sock.connect(ep, ec);
             if (!ec) {
@@ -43,7 +44,7 @@ TEST(TestNetwork, ServerCanRestartAfterStop) {
             }
             probe_sock.close();
             probe_sock = asio::ip::tcp::socket(io);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         ASSERT_TRUE(connected);
         // 主动断开，让服务器侧的 session 快速退出
