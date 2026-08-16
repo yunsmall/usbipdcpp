@@ -55,7 +55,8 @@ void usbipdcpp::Session::run() {
     }
     // 活跃线程计数必须在创建线程之前递增：若在线程函数体内递增，stop() 可能在
     // 新线程执行到递增之前检查到计数为 0 而提前返回，调用方随即析构 Server，
-    // 线程醒来后访问已析构的 Server 导致段错误
+    // 线程醒来后访问已析构的 Server 导致段错误。
+    // 放在 before 回调之后执行：回调抛异常时计数尚未递增，不会泄漏
     server.alive_session_threads.fetch_add(1, std::memory_order_release);
     try {
         run_thread = std::thread([self = std::move(self)]() {
@@ -71,8 +72,13 @@ void usbipdcpp::Session::run() {
 
             // 处理结束后自动往服务器中删除自身并触发退出回调
             self->server.remove_session(self.get());
-            // 把当前这个线程detach了，防止线程内部析构自己导致报错
+            // 必须 detach：本线程函数持有 Session 的最后一份 shared_ptr，
+            // 函数结束时 ~Session 会在这个线程内执行，若 run_thread 仍 joinable，
+            // std::thread 析构会直接 terminate。而线程无法 join 自己（死锁），
+            // 所以只能 detach 自己
             self->run_thread.detach();
+            // 计数递减放在对 Server 的最后一次访问之后：stop() 看到计数归零
+            // 时，本线程保证不会再碰 Server 的任何成员
             self->server.alive_session_threads.fetch_sub(1, std::memory_order_release);
             self->server.all_sessions_closed_cv.notify_one();
         });
@@ -216,10 +222,16 @@ void usbipdcpp::Session::immediately_stop() {
     should_immediately_stop = true;
 
     std::error_code ignore_ec;
+    // shutdown 和 close 缺一不可，两个平台对挂起读的打断方式相反：
+    // - Linux：shutdown 唤醒挂起的 recv（返回 0），close 不会唤醒阻塞中的 recv
+    // - Windows：shutdown（裸 ::shutdown）不取消 IOCP 挂起的读写，只有 close
+    //   才取消挂起操作（CancelIoEx）
+    // 只调其中一个会导致另一个平台 stop() 卡在 alive 计数等待上
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+    socket.close(ignore_ec);
     // 唤醒 sender 线程，否则它卡在 data_available_cv.wait() 上直到 receiver 退出。
     data_available_cv.notify_one();
-    SPDLOG_INFO("成功调用shutdown");
+    SPDLOG_INFO("成功关闭socket");
 }
 
 void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
@@ -434,9 +446,12 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         if (sending_ec) {
             // TCP 写入失败，立即关闭 session 双向通信。
             // 仅 break 退出 sender 会让 receiver 继续运行直到 keepalive 超时。
+            // shutdown + close 都要调：Linux 靠 shutdown 唤醒挂起的 recv，
+            // Windows 靠 close 取消 IOCP 挂起的读（见 immediately_stop 注释）
             should_immediately_stop = true;
             std::error_code ignore_ec;
             socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+            socket.close(ignore_ec);
             // ec = sending_ec;
             break;
         }
