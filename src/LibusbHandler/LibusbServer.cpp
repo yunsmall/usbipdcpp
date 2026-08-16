@@ -705,7 +705,10 @@ void LibusbServer::bind_existing_devices() {
             default: break;
         }
     }
-    libusb_free_device_list(devs, 0); // bind_host_device 已接管或释放各设备引用
+    // 第二个参数传 1：列表本身为每个设备持有一个引用，必须释放。
+    // bind 成功的设备另有 libusb_ref_device 的引用由 handler 接管（析构时 unref），互不冲突。
+    // 传 0 会导致每个设备泄漏一个引用，libusb_device 永不销毁
+    libusb_free_device_list(devs, 1);
     SPDLOG_INFO("扫描绑定完成: {} 个绑定, {} 个 hub 跳过", bound, skipped);
 }
 
