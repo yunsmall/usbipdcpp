@@ -248,6 +248,8 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     if (device_removed) [[unlikely]]
+        // 设备已物理拔出，连接即将断开，vhci 端会强制结束所有 URB。
+        // 有意不回复 RET_UNLINK：缺失对即将断开的连接无实际影响
         return;
 
     {
@@ -543,6 +545,9 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
     {
         auto *handler = callback_arg.handler;
         std::unique_lock lock(handler->transfers_mutex_);
+        // 约定：erase、检查 unlinking、入队响应必须在同一 unique_lock 内完成。
+        // handle_unlink_seqnum 的 else 分支依赖「find 不到 ⇒ RET_SUBMIT 已入队」，
+        // 若把入队挪出锁外，RET_SUBMIT 与 RET_UNLINK 的发送顺序将无法保证
         unlinking = callback_arg.unlinking;
         unlink_cmd_seqnum = callback_arg.unlink_cmd_seqnum;
         handler->transfers_.erase(callback_arg.seqnum);
