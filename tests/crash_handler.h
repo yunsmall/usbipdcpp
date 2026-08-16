@@ -33,9 +33,13 @@ inline int install_crash_handler() {
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#if __has_include(<execinfo.h>)
 #include <execinfo.h>
 #include <unistd.h>
+#define USBIPDCPP_TEST_HAS_BACKTRACE 1
+#endif
 
+#if defined(USBIPDCPP_TEST_HAS_BACKTRACE)
 inline void crash_signal_handler(int sig) {
     std::fprintf(stderr, "\n=== CRASH: signal %d ===\n", sig);
     void *stack[64];
@@ -51,6 +55,12 @@ inline int install_crash_handler() {
     std::signal(SIGBUS, crash_signal_handler);
     return 0;
 }
+#else
+// Android/Termux 等无 execinfo.h 的平台：退化为不注册，崩溃仍由 gtest/系统处理
+inline int install_crash_handler() {
+    return 0;
+}
+#endif
 #endif
 
 // 静态初始化阶段注册（C++17 inline 变量，每个进程执行一次）

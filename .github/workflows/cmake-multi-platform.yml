@@ -132,7 +132,7 @@ jobs:
 
       - name: Test
         working-directory: build
-        run: ctest --build-config Release
+        run: ctest --build-config Release --output-on-failure
 
       # ======== 高频稳定性测试 ========
       # 线程竞争、停止流程等偶发 bug 单次运行无法暴露（本地曾出现第 1303 次
