@@ -3,6 +3,10 @@
 #include <asio.hpp>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
+#include "usbipdcpp/Server.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
 #include "usbipdcpp/utils/utils.h"
@@ -30,6 +34,49 @@ inline void expect_cmd_unlink_equal(const UsbIpCommand::UsbIpCmdUnlink &actual,
     {
         std::forward<T>(t).header;
     };
+
+// ---- 网络测试公共工具 ----
+
+// 探测一个空闲端口。固定端口才能验证多次 start 的监听不冲突
+inline std::uint16_t probe_free_port(asio::io_context &io) {
+    asio::ip::tcp::acceptor probe(io);
+    probe.open(asio::ip::tcp::v4());
+    probe.bind(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0));
+    return probe.local_endpoint().port();
+}
+
+// 连接服务器，轮询等待监听就绪。失败时重建 socket 重试，返回是否连接成功
+inline bool connect_with_retry(asio::ip::tcp::socket &client, const asio::ip::tcp::endpoint &ep) {
+    for (int i = 0; i < 200; i++) {
+        std::error_code ec;
+        client.connect(ep, ec);
+        if (!ec) {
+            return true;
+        }
+        client.close();
+        client = asio::ip::tcp::socket(client.get_executor());
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+// 以 RST 方式断开连接（linger=0 时不发送 FIN）：模拟客户端异常掉线，
+// 服务器侧读到的是连接重置错误而不是 EOF，走不同的错误分支
+inline void rst_disconnect(asio::ip::tcp::socket &client) {
+    std::error_code ec;
+    client.set_option(asio::socket_base::linger(true, 0), ec);
+    client.close();
+}
+
+// 轮询等待服务器上所有 session 退出（客户端断连后 session 线程在退出前
+// 自行从列表中移除自身），超时返回 false
+inline bool wait_sessions_gone(Server &server, std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (server.get_session_count() != 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return server.get_session_count() == 0;
+}
 
     template<usbipdcpp::Serializable T>
     T reread_from_socket_with_command(const T &origin, std::uint16_t cmd) {

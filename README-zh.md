@@ -10,7 +10,6 @@
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
 - ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、UVC（摄像头）、UAC（麦克风）—— 无需 libusb
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
-- 🚀 **异步架构**: 使用 C++20 协程和 asio 实现高效 I/O
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
 
 欢迎贡献代码！🚀
@@ -45,6 +44,8 @@
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | 编译基于libusb的服务器组件 |
+| `USBIPDCPP_BUILD_VIRTUAL_DEVICE` | ON | 编译虚拟设备组件 |
+| `USBIPDCPP_BUILD_SHARED_LIBS` | ON | 编译为动态库（符合 LGPL 合规要求，推荐）；设为 OFF 编译静态库 |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (顶级项目) | 编译所有示例程序 |
 | `USBIPDCPP_BUILD_TESTS` | ON (顶级项目) | 编译测试套件 |
 | `USBIPDCPP_USE_MINIAUDIO` | ON | 音频文件播放（`AudioFileSource`，WAV/MP3/FLAC/OGG）；找不到 miniaudio 头文件时自动禁用 |
@@ -180,6 +181,20 @@ cmake --build build/Release
 cmake --install build/Release
 ```
 
+### 运行测试
+
+开启测试编译（顶级项目默认开启）后运行：
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+网络测试套件覆盖：
+
+- 服务器重启循环（`start` → `stop` → `start`），包括 100 轮循环和 stop 与连接并发竞争
+- 客户端在各个协议阶段的断连：空闲期（未发数据）、请求收到一半、垃圾数据、import 后立即断连、URB 传输中断连——优雅断开（FIN）和异常断开（RST）两种方式
+- 设备生命周期：反复 import/释放、多客户端抢占同一设备、import 不存在的设备
+
 ### Python 绑定
 
 Python 绑定使用 pybind11，需要先安装 `pybind11`（vcpkg 或 pip 均可）。
@@ -208,6 +223,7 @@ python examples/python/test_absolute_mouse.py
 - `send_input_report()` 接收 `bytes`：`handler.send_input_report(b'\x01\x00\x00\x00')`
 - Python 可继承 `HidVirtualInterfaceHandler` 实现自定义 HID 设备（参考 `examples/python/flip_left_button.py`）
 - `start()` 和 `stop()` 会释放 Python GIL，可在主线程安全调用
+- Python 可调用 `Session.immediately_stop()`；正常情况下该接口仅供服务器停止流程内部使用
 
 ### Python 绑定开发状态 🚧
 
@@ -401,14 +417,15 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
 ## 架构设计
 
-USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步架构：
+USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合如下：
 
-- 使用 asio 异步通信
-- 使用 libusb 异步接口处理 USB 通信
+- 使用 **asio** 处理网络 I/O——连接接收为异步（网络线程上由协程驱动的 accept 循环）
+- 每个 session 线程内使用**同步阻塞 socket I/O**——编写简单、易于推理
+- 使用 libusb 异步接口处理 USB 通信（物理设备）
 
-### 为什么不用 C++20 协程
+### 为什么 Session I/O 采用同步
 
-早期版本曾使用 C++20 协程，但后来移除了，原因如下：
+早期版本曾使用 C++20 协程处理 session 数据，但后来改成了同步阻塞 socket I/O，原因如下：
 
 1. **架构不匹配**：本项目采用"每连接一线程"模型，每个客户端连接有独立的线程和 `io_context`。协程的核心优势是"单线程处理多任务"，在这种架构下无法发挥。
 
@@ -417,6 +434,8 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目采用全异步�
 3. **编译开销**：协程相关的模板实例化会显著增加编译时间。
 
 4. **ESP32 考量**：对于嵌入式平台，更推荐使用 FreeRTOS 原生任务而非协程，或者改用单线程事件循环架构。
+
+网络线程上的 accept 循环（`Server::do_accept`）仍保留单个协程——它足够简单、自成一体，上述问题都不适用于它。
 
 如果未来需要支持大量并发连接（数百/数千），可以考虑重构为单 `io_context` + 协程模型，届时协程优势才能真正体现。
 
@@ -504,24 +523,25 @@ AbstDeviceHandler
 
 ### 线程模型
 
-系统包含三个核心线程：
+一个服务器实例使用到的线程：
 
-1. **网络 I/O 线程**: 运行 `asio::io_context::run()`等待客户端连接
-2. **USB 传输线程**: 处理 `libusb_handle_events()`
-3. **主线程**: 控制服务器的行为，以及用于启动服务器
+1. **网络 I/O 线程**：每个 `Server` 一个——运行 `asio::io_context::run()` 和 accept 协程，等待客户端连接
+2. **Session 线程**：每个连接一个——同步阻塞 socket I/O 和设备处理器调用
+3. **Sender 线程**：每次传输一个——从响应队列取数据写入 socket
+4. **libusb 事件线程**：运行 `libusb_handle_events()` 循环，仅 libusb 后端（`LibusbServer`）使用
+5. **主线程**：调用 `start()` / `stop()`，控制服务器
 
-每个连接会启动一个单独线程，防止某些设备的一些特殊同步操作阻塞所有设备。
+每个连接使用独立线程，保证一个连接上的阻塞操作（如设备同步）不会卡住其他连接。
 
-如果此时又启动一个线程会感觉多此一举。
-鉴于本身单个服务器的usb设备不会特别多，这种设计也是可行的。
+`start()` / `stop()` 可以反复调用以重启服务器。`stop()` 会关闭监听、打断所有活跃 session，并在返回前 join 所有 session 线程——返回后可以安全析构 `Server`。
 
 数据传输流程：
 
 ```
-网络线程 → libusb_submit_transfer → USB线程 → 回调 → 网络线程
+客户端 → session 线程（读取 URB）→ 设备处理器 → sender 线程（写响应）→ 客户端
 ```
 
-该架构通过最小化线程竞争实现高 CPU 效率
+该架构通过最小化线程竞争实现高 CPU 效率。
 
 ### 虚拟设备实现
 

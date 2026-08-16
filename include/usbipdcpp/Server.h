@@ -6,8 +6,6 @@
 #include <memory>
 #include <list>
 #include <thread>
-#include <condition_variable>
-#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -63,7 +61,7 @@ public:
     Server(const Server &) = delete;
     Server(Server &&) = delete;
     /**
-     * @brief 不阻塞地启动一个服务器，内部启动了一个获取socket的线程。
+     * @brief 不阻塞地启动一个服务器，内部启动网络线程运行 io_context 事件循环（含 accept 协程）。
      * 在start前后调用add_device都可以。
      * @param ep 监听地址
      *
@@ -71,10 +69,12 @@ public:
      */
     void start(asio::ip::tcp::endpoint &ep);
     /**
-     * @brief 内部先关闭每一个session的socket，再关闭io_context。
-     * 效果相当于每个客户端都调用了detach
+     * @brief 关闭监听并等待所有会话线程结束，调用后所有 Session 均已停止，
+     *        可安全再次 start() 或销毁 Server。
+     *        顺序：关闭 acceptor 退出网络线程 → 对所有 session 发停止请求
+     *        （shutdown+cancel 打断阻塞读）→ 逐个 join 等待线程结束 → 清空会话列表
      *
-     * @thread_safety 不可并发调用。必须在 start() 之后、析构之前调用，至多一次。
+     * @thread_safety 不可并发调用。每次 start() 之后调用一次；支持 start→stop→start 循环。
      */
     void stop();
 
@@ -184,8 +184,6 @@ protected:
 
     void print_devices();
 
-    std::atomic_bool should_stop = false;
-
     ServerNetworkConfig network_config;
 
     // 线程创建前回调
@@ -195,10 +193,6 @@ protected:
 
     std::list<std::weak_ptr<Session>> sessions;
     mutable std::shared_mutex session_list_mutex;
-    std::condition_variable_any all_sessions_closed_cv;
-    // 仍在运行的 session 线程数。stop() 等其归零（蕴含 sessions 已清空）才返回，
-    // 保证返回时所有 session 线程已结束，之后析构 Server 或退出进程都安全
-    std::atomic<std::size_t> alive_session_threads{0};
 
     //网络通信请异步使用这个io_context
     asio::io_context asio_io_context;
@@ -212,7 +206,6 @@ private:
     void on_session_exit();
 
     std::list<std::function<void()>> session_exit_callbacks;
-    mutable std::shared_mutex exit_callbacks_mutex;
 
     //可供导入的设备
     std::vector<std::shared_ptr<UsbDevice>> available_devices;

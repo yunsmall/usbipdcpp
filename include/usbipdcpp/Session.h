@@ -8,6 +8,7 @@
 #include <thread>
 #include <condition_variable>
 #include <deque>
+#include <mutex>
 
 #include <asio/ip/tcp.hpp>
 
@@ -21,8 +22,13 @@ class Server;
 class AbstDeviceHandler;
 
 /**
- * @brief 自行处理生命周期，一个连接创建一个Session，创建完服务器就对Session脱离管控了。
- * 请确保Session存活的时候Server未被析构，不然是未定义行为
+ * @brief 一个连接创建一个 Session，生命周期由 shared_ptr 管理：session 线程自身
+ * 持有 self 保证运行期间不被析构；Server 的会话列表是 weak_ptr 不持有，
+ * stop()/~Server 通过快照临时持有以便 join。
+ * Session 线程句柄遵循 joinable + join 的标准停止协议：Server::stop() 逐个 join，
+ * 客户端主动断开时线程在退出前自行 detach（常规路径唯一的 detach 点，
+ * ~Session 的兜底分支除外）。
+ * 请确保 Session 存活的时候 Server 未被析构，不然是未定义行为。
  */
 class USBIPDCPP_API Session final : public std::enable_shared_from_this<Session> {
     friend class Server;
@@ -33,14 +39,16 @@ public:
     Session(Session &&) = delete;
 
     /**
-     * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
+     * @brief 该函数异步，不阻塞。把响应包入队 write_buffer 并唤醒 sender 线程，
+     *        实际网络写入由 sender 线程完成。内部加锁，任意线程安全。
      * 请确保每个urb都需要提交返回的包
      * @param unlink
      */
     void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);
 
     /**
-     * @brief 该函数异步，不阻塞。内部直接向asio context提交任务，因此不用加锁。内部线程安全。
+     * @brief 该函数异步，不阻塞。把响应包入队 write_buffer 并唤醒 sender 线程，
+     *        实际网络写入由 sender 线程完成。内部加锁，任意线程安全。
      * 请确保每个urb都需要提交返回的包
      * @param submit
      */
@@ -60,7 +68,8 @@ public:
     void wakeup_sender();
 
     /**
-     * @brief 置停止标志位，并且关闭socket。只能由Server和AbstDeviceHandler::trigger_session_stop调用。
+     * @brief 置停止标志位，shutdown + cancel 打断挂起的阻塞读，并唤醒 sender 线程。
+     * 仅供 Server 停止流程、AbstDeviceHandler::trigger_session_stop 和语言绑定调用。
      * 内部不会关闭线程，只会通知线程关闭
      */
     void immediately_stop();
@@ -74,6 +83,12 @@ private:
      * @brief 新建Session时由Server调用
      */
     void run();
+
+    /**
+     * @brief 等待本 session 线程结束（阻塞）。由 Server::stop() 和 ~Server 兜底调用。
+     * 若线程已因客户端断开而自行 detach（句柄已被取走），则立即返回。
+     */
+    void join();
 
     // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
     // 交换时短暂加锁，大幅减少锁竞争
@@ -113,7 +128,11 @@ private:
     asio::ip::tcp::socket socket;
 
 
-    //这个线程结束后自动析构this
+    // session 主线程。停止协议（joinable + join）：
+    // - Server::stop() 通过 join() 等待本线程结束
+    // - 客户端主动断开时，本线程在退出前自行 detach
+    // 锁内取出句柄、锁外 join/detach，避免两个路径并发操作 std::thread 对象
     std::thread run_thread;
+    std::mutex run_thread_mutex;
 };
 }

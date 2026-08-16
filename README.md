@@ -41,6 +41,8 @@ There are multiple CMake options to control which parts are compiled:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `USBIPDCPP_BUILD_LIBUSB_COMPONENTS` | ON | Build libusb-based server components |
+| `USBIPDCPP_BUILD_VIRTUAL_DEVICE` | ON | Build virtual device component |
+| `USBIPDCPP_BUILD_SHARED_LIBS` | ON | Build as shared library (recommended for LGPL compliance); OFF builds static libraries |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |
 | `USBIPDCPP_USE_MINIAUDIO` | ON | Audio file playback (`AudioFileSource`, WAV/MP3/FLAC/OGG); automatically disabled when the miniaudio header is not found |
@@ -179,6 +181,20 @@ cmake --build build/Release
 cmake --install build/Release
 ```
 
+### Running Tests
+
+Build with tests enabled (default at top level) and run:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+The network test suite covers:
+
+- Server restart cycles (`start` → `stop` → `start`), including 100-round loops and stop/connect races
+- Client disconnects at every protocol phase: idle (before any data), half-received requests, garbage data, right after import, during URB transfer — both graceful (FIN) and abrupt (RST)
+- Device lifecycle: repeated import/release, device contention between clients, nonexistent device requests
+
 ### Python Bindings
 
 Python bindings use pybind11 and require `pybind11` installed via vcpkg or pip.
@@ -207,6 +223,7 @@ python examples/python/test_absolute_mouse.py
 - `send_input_report()` takes `bytes`: `handler.send_input_report(b'\x01\x00\x00\x00')`
 - Python can inherit from `HidVirtualInterfaceHandler` for custom HID devices (see `examples/python/flip_left_button.py`)
 - `start()` and `stop()` release the Python GIL, safe to call from main thread
+- `Session.immediately_stop()` is exposed to Python; normally it is only used internally by the server stop flow
 
 ### Python Bindings Status 🚧
 
@@ -406,15 +423,15 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
 ## Architecture Overview
 
-USB communication and network I/O are both resource-intensive operations. This project implements a fully asynchronous
-architecture using:
+USB communication and network I/O are both resource-intensive operations. The architecture combines:
 
-- **asio** for asynchronous I/O
+- **asio** for network I/O — connection acceptance is asynchronous (a coroutine-driven accept loop on the network thread)
+- **synchronous blocking socket I/O** inside each session thread — simple to write and easy to reason about
 - **libusb**'s async API for USB communications (physical devices)
 
-### Why not C++20 Coroutines
+### Why Session I/O Is Synchronous
 
-An earlier version used C++20 coroutines, but they were later removed for the following reasons:
+An earlier version used C++20 coroutines for session data processing, but they were later replaced with synchronous blocking socket I/O for the following reasons:
 
 1. **Architecture mismatch**: This project uses a "per-connection-one-thread" model, where each client connection has its own thread and `io_context`. The core advantage of coroutines is "single-threaded multi-tasking", which cannot be leveraged in this architecture.
 
@@ -423,6 +440,8 @@ An earlier version used C++20 coroutines, but they were later removed for the fo
 3. **Compilation overhead**: Coroutine-related template instantiation significantly increased compilation time.
 
 4. **ESP32 considerations**: For embedded platforms, FreeRTOS native tasks are preferred over coroutines, or a single-threaded event loop architecture should be used instead.
+
+The accept loop on the network thread (`Server::do_accept`) still uses a single coroutine — it is simple and self-contained, so none of the concerns above apply to it.
 
 If future requirements demand supporting hundreds or thousands of concurrent connections, refactoring to a single `io_context` + coroutine model could be considered, where coroutine benefits would truly shine.
 
@@ -510,22 +529,24 @@ AbstDeviceHandler
 
 ### Threading Model
 
-Three dedicated threads ensure optimal performance:
+Threads used by a server instance:
 
-1. **Network I/O thread**: Runs `asio::io_context::run()` waiting for client connection
-2. **USB transfer thread**: Handles `libusb_handle_events()`
-3. **Main thread**: Control the behavior of usbip server, start the server
+1. **Network I/O thread**: One per `Server` — runs `asio::io_context::run()` with the accept coroutine, waiting for client connections
+2. **Session thread**: One per connection — synchronous blocking socket I/O and device handler calls
+3. **Sender thread**: One per active transfer — drains the response queue and writes to the socket
+4. **libusb event thread**: `libusb_handle_events()` loop, only for the libusb backend (`LibusbServer`)
+5. **Main thread**: Calls `start()` / `stop()` and controls the server
 
-Each connection starts a separate thread to prevent special synchronization operations on some devices from blocking all
-devices.
+Each connection has its own thread so that blocking operations on one connection (e.g. device synchronization) never stall
+other connections.
 
-Starting another thread at this point would feel like a chore. This is also possible given that a single server does not
-have a large number of usb devices.
+`start()` / `stop()` can be called repeatedly to restart the server. `stop()` closes the listener, interrupts every
+active session, and joins all session threads before returning — safe to destroy the `Server` afterwards.
 
 Data flows through the system without blocking:
 
 ```
-Network thread → libusb_submit_transfer → USB thread → Callback → Network thread
+Client → session thread (read URB) → device handler → sender thread (write response) → Client
 ```
 
 This architecture achieves high CPU efficiency by minimizing thread contention.

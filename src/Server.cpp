@@ -27,7 +27,6 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig 
 }
 
 void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
-    should_stop = false;
     if (asio_io_context.stopped()) {
         asio_io_context.restart();
     }
@@ -65,11 +64,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 
 void usbipdcpp::Server::stop() {
     // 先关闭 acceptor 并退出网络线程，之后再做会话清理。join 之后 do_accept
-    // 协程已结束，不会再产生新的 session，且所有已创建 session 的活跃计数
-    // 都已登记（计数在创建线程之前递增，见 Session::run），此时遍历会话列表、
-    // 等待计数归零才没有竞态：若先等计数，等待期间网络线程仍可能 accept
-    // 新连接并创建新 session 线程，计数可能在检查为 0 之后跳回非 0，stop()
-    // 错误地提前返回，Server 析构后新线程访问已析构对象导致段错误。
+    // 协程已结束，不会再产生新的 session。
     //
     // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
     // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
@@ -83,7 +78,6 @@ void usbipdcpp::Server::stop() {
         std::error_code ignore_ec;
         acceptor->close(ignore_ec);
     }
-    should_stop = true;
     // joinable 检查：stop() 可能在 start() 之前被调用（线程尚未创建），
     // 此时 join 会抛 std::system_error
     if (network_io_thread.joinable()) {
@@ -93,23 +87,32 @@ void usbipdcpp::Server::stop() {
     // 网络线程已退出，acceptor 可安全销毁（join 前销毁会与协程并发解引用竞态）
     acceptor.reset();
 
+    // 取快照：join 期间 session 线程会调用 remove_session 修改列表，
+    // 不能在持有锁或遍历列表的同时 join
+    std::vector<std::shared_ptr<Session>> snapshot;
     {
         std::shared_lock lock(session_list_mutex);
         for (auto &session: sessions) {
             if (auto shared_session = session.lock()) {
-                shared_session->immediately_stop();
+                snapshot.emplace_back(std::move(shared_session));
             }
         }
     }
+
+    // 先对所有 session 发出停止请求（让它们并行退出），再逐个 join 等死透。
+    // join 本身就是"线程已结束"的证明，不需要任何计数观察
+    for (auto &session: snapshot) {
+        session->immediately_stop();
+    }
+    spdlog::info("等待所有session关闭");
+    for (auto &session: snapshot) {
+        session->join();
+    }
+
+    // 清理列表：线程们已在退出路径移除自己，这里清掉剩余的失效 weak_ptr
     {
-        spdlog::info("等待所有session关闭");
-        std::unique_lock lock(session_list_mutex);
-        // 等 session 线程完全结束（而不仅是 sessions 列表清空）：remove_session
-        // 之后线程还有 detach 与自身析构，若 stop() 提前返回，调用方随后析构
-        // Server 或退出进程时，detach 的线程可能仍在访问 spdlog 等已析构的全局对象
-        all_sessions_closed_cv.wait(lock, [this] {
-            return alive_session_threads.load(std::memory_order_acquire) == 0;
-        });
+        std::lock_guard lock(session_list_mutex);
+        sessions.clear();
     }
     spdlog::info("All sessions were successfully closed");
 }
@@ -180,13 +183,42 @@ void usbipdcpp::Server::register_session_exit_callback(std::function<void()> &&c
 // }
 
 usbipdcpp::Server::~Server() {
+    // 停止兜底：调用方忘记调 stop() 时，这里保证所有线程在 Server 成员
+    // 析构之前结束。不调 stop()（避免多余的 info 日志），只做与 stop()
+    // 相同的收尾。注意 immediately_stop 内部会打 info 日志：兜底路径
+    // 通常在显式 stop() 之后（sessions 已空，快照为空不触发）；若真在
+    // 进程退出阶段还有活跃 session 走到这里，日志可能访问已析构的 spdlog，
+    // 但此时本来就有未停干净的线程问题，可接受
+    if (acceptor) {
+        std::error_code ignore_ec;
+        acceptor->close(ignore_ec);
+    }
+    if (network_io_thread.joinable()) {
+        network_io_thread.join();
+    }
+    acceptor.reset();
+
+    std::vector<std::shared_ptr<Session>> snapshot;
+    {
+        std::shared_lock lock(session_list_mutex);
+        for (auto &session: sessions) {
+            if (auto shared_session = session.lock()) {
+                snapshot.emplace_back(std::move(shared_session));
+            }
+        }
+    }
+    for (auto &session: snapshot) {
+        session->immediately_stop();
+    }
+    for (auto &session: snapshot) {
+        session->join();
+    }
 
     {
         std::lock_guard lock(devices_mutex);
         available_devices.clear();
         using_devices.clear();
     }
-
 }
 
 
@@ -215,13 +247,6 @@ void usbipdcpp::Server::remove_session(Session *session) {
             it = sessions.erase(it);
         }
     }
-    // 活跃计数递减和唤醒必须在本锁内完成：stop() 的 cv.wait(lock, 谓词) 与
-    // 这里共用同一把锁，锁保证「谓词检查失败」与「进入睡眠」之间不会插入
-    // 本线程的递减 + notify，否则丢失唤醒（lost wakeup）会让 stop() 在
-    // 计数归零后仍永久睡眠。
-    // 递减放在回调之前：回调抛异常也不会让 stop() 永久等待
-    alive_session_threads.fetch_sub(1, std::memory_order_release);
-    all_sessions_closed_cv.notify_one();
     // 调用回调
     for (auto &callback: session_exit_callbacks) {
         callback();
@@ -266,14 +291,26 @@ asio::awaitable<void> usbipdcpp::Server::do_accept() {
                 }
             }
 
+            // 用 ec 版获取对端地址：客户端可能在 accept 完成后、本协程继续执行
+            // 之前就已断开（尤其 RST），此时 remote_endpoint() 会抛异常。
+            // 本协程是 detached 的，异常被 asio 吞掉后 accept 循环就此终止，
+            // 后续连接无人 accept；且 session 已入列表但线程未启动，永远
+            // 不会 remove_session。因此这里不能抛异常（用 ec 版），连接已死
+            // 时直接丢弃 session 继续循环
+            asio::error_code remote_ec;
+            auto remote_endpoint = session->socket.remote_endpoint(remote_ec);
+            if (remote_ec) {
+                SPDLOG_DEBUG("连接在 accept 后立即断开：{}", remote_ec.message());
+                continue;
+            }
+            auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
+                                                    remote_endpoint.port());
+            spdlog::info("A new connection from {}", remote_endpoint_name);
+
             {
                 std::lock_guard lock(session_list_mutex);
                 sessions.emplace_back(session);
             }
-            auto remote_endpoint = session->socket.remote_endpoint();
-            auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
-                                                    remote_endpoint.port());
-            spdlog::info("A new connection from {}", remote_endpoint_name);
 
             //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。

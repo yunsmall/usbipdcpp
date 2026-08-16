@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 #include "test_utils.h"
 
@@ -30,8 +33,8 @@ TEST(TestNetwork, ServerCanRestartAfterStop) {
     for (int round = 0; round < 2; round++) {
         server.start(ep);
 
-        // start 的 bind 在网络线程中异步执行，轮询连接直到监听就绪。
-        // 超时给 4 秒：覆盖率插桩等慢速构建下服务器启动可能超过 1 秒
+        // acceptor 在 start() 内同步 bind，返回时监听已就绪，轮询仅为防御性
+        // 等待。超时给 4 秒：覆盖率插桩等慢速构建下服务器启动可能超过 1 秒
         asio::ip::tcp::socket probe_sock(io);
         bool connected = false;
         for (int i = 0; i < 200; i++) {
@@ -162,4 +165,157 @@ TEST(TestNetwork, to_network) {
         vec==data_type{ 0x01u, 0x03u, 0x04u, 0x05u, 0x15u, 0x17u, 0x01u, 0x02u, 0x05u, 0x09u, 0x11u,0x10u, 0x21u,
         0x34u, 0x57u, 0x01u, 0x15u,0x99u,0x99u,0x98u,0x97u,0x96u,0x95u,0x94u,0x93u,0x92u }
     ));
+}
+
+// ---------------------------------------------------------------------------
+// 以下为 start/stop 循环（合法用法）下的刁钻场景
+// ---------------------------------------------------------------------------
+
+TEST(TestNetwork, ManyStartStopCycles) {
+    // 无客户端情况下 100 轮 start/stop：acceptor 每轮都要干净释放端口，
+    // 网络线程每轮都要干净退出，不能累积残留
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    for (int round = 0; round < 100; round++) {
+        server.start(ep);
+        server.stop();
+    }
+}
+
+TEST(TestNetwork, StopWithSilentClient) {
+    // 客户端连接后不发任何数据静默挂着（session 挂在 parse_op 的阻塞读上），
+    // 此时 stop()：immediately_stop 要打断挂起的读，session 干净退出。
+    // 与导入设备后的传输态打断（ServerCanStopWithImportedDevice）互补
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    server.start(ep);
+    asio::ip::tcp::socket client(io);
+    ASSERT_TRUE(connect_with_retry(client, ep));
+
+    server.stop(); // 客户端还静默挂着，直接 stop
+
+    client.close();
+}
+
+TEST(TestNetwork, StopWithMultipleClients) {
+    // 多个客户端同时挂着（多个 session 同时被打断），stop() 要并发打断并
+    // join 所有 session 线程，任何一个都不能卡住
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    server.start(ep);
+
+    std::vector<asio::ip::tcp::socket> clients;
+    for (int i = 0; i < 10; i++) {
+        clients.emplace_back(io);
+        ASSERT_TRUE(connect_with_retry(clients.back(), ep));
+    }
+
+    server.stop(); // 10 个 session 同时被打断
+
+    for (auto &client: clients) {
+        client.close();
+    }
+}
+
+TEST(TestNetwork, DisconnectRightAfterDevlistRequest) {
+    // 客户端发出 devlist 请求后不等回复立即断开：服务器可能正在收集设备
+    // 列表或写回复时发现连接已断，session 要干净退出，不崩
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    server.start(ep);
+
+    for (int i = 0; i < 5; i++) {
+        asio::ip::tcp::socket client(io);
+        ASSERT_TRUE(connect_with_retry(client, ep));
+        usbipdcpp::error_code send_ec;
+        asio::write(client, asio::buffer(UsbIpCommand::OpReqDevlist{}.to_bytes()), send_ec);
+        ASSERT_FALSE(send_ec);
+        if (i % 2 == 0) {
+            rst_disconnect(client); // 不读回复直接 RST
+        }
+        else {
+            client.close(); // 不读回复直接 FIN
+        }
+    }
+    ASSERT_TRUE(wait_sessions_gone(server));
+    server.stop();
+}
+
+TEST(TestNetwork, StopDuringClientConnectRace) {
+    // stop() 与客户端并发连接竞争：客户端线程反复尝试连接（server 停止期间
+    // 连接会失败），主线程反复 start/stop。stop 时可能恰有连接刚被 accept、
+    // session 刚创建，任何一轮都不能崩或卡死
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    std::atomic_bool stop_flag = false;
+
+    std::thread client_thread([&]() {
+        while (!stop_flag) {
+            asio::ip::tcp::socket client(io);
+            std::error_code ec;
+            client.connect(ep, ec);
+            if (!ec) {
+                client.close(); // 连上就断，模拟短暂的连接
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    for (int round = 0; round < 50; round++) {
+        server.start(ep);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        server.stop();
+    }
+
+    stop_flag = true;
+    client_thread.join();
+}
+
+TEST(TestNetwork, ManyQuickConnections) {
+    // 客户端以各种方式快速连接并断开：优雅断开（FIN）、RST 重置、发垃圾
+    // 数据后断开。服务器要全部处理干净（session 各自退出），之后 stop() 正常
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    server.start(ep);
+
+    for (int i = 0; i < 50; i++) {
+        asio::ip::tcp::socket client(io);
+        ASSERT_TRUE(connect_with_retry(client, ep));
+        switch (i % 3) {
+            case 0:
+                client.close(); // 优雅断开（FIN）
+                break;
+            case 1:
+                rst_disconnect(client); // 异常掉线（RST）
+                break;
+            case 2: {
+                // 发一段垃圾数据再断开：服务器要么解析失败，要么读中断
+                const std::array<std::uint8_t, 8> garbage = {0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01};
+                asio::write(client, asio::buffer(garbage));
+                client.close();
+                break;
+            }
+        }
+    }
+
+    ASSERT_TRUE(wait_sessions_gone(server));
+    server.stop();
 }

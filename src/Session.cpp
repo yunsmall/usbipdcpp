@@ -42,9 +42,25 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
 }
 
 usbipdcpp::Session::~Session() {
-    // 注意：不能在析构中打日志。本线程是 detach 的，stop() 只等线程函数退出，
-    // 若进程随后退出（如测试 main 返回），spdlog 的全局 registry 可能已随静态析构
-    // 销毁，此时打日志会访问已析构对象导致段错误
+    // 正常路径下 run_thread 已被取空（stop() 的 join 或线程末尾的 detach），
+    // 这里只是兜底：万一仍持有 joinable 句柄，避免 std::thread 析构直接 terminate
+    std::thread finished;
+    {
+        std::lock_guard lock(run_thread_mutex);
+        if (run_thread.joinable()) {
+            finished = std::move(run_thread);
+        }
+    }
+    if (finished.joinable()) {
+        if (finished.get_id() == std::this_thread::get_id()) {
+            finished.detach(); // 本线程内析构自己：不能 join 自己（死锁）
+        }
+        else {
+            finished.join();
+        }
+    }
+    // 注意：不能在析构中打日志。若进程正在退出（如测试 main 返回），spdlog 的
+    // 全局 registry 可能已随静态析构销毁，此时打日志会访问已析构对象导致段错误
 }
 
 void usbipdcpp::Session::run() {
@@ -53,45 +69,55 @@ void usbipdcpp::Session::run() {
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionMain);
     }
-    // 活跃线程计数必须在创建线程之前递增：若在线程函数体内递增，stop() 可能在
-    // 新线程执行到递增之前检查到计数为 0 而提前返回，调用方随即析构 Server，
-    // 线程醒来后访问已析构的 Server 导致段错误。
-    // 放在 before 回调之后执行：回调抛异常时计数尚未递增，不会泄漏
-    server.alive_session_threads.fetch_add(1, std::memory_order_release);
-    try {
-        run_thread = std::thread([self = std::move(self)]() {
-            try {
-                self->parse_op();
-            } catch (const std::exception &e) {
-                // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程），
-                // 也不能跳过下面的计数递减（否则 stop() 永久等待）
-                SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
-            } catch (...) {
-                SPDLOG_ERROR("session线程未捕获未知异常");
-            }
+    run_thread = std::thread([self = std::move(self)]() {
+        try {
+            self->parse_op();
+        } catch (const std::exception &e) {
+            // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程）
+            SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
+        } catch (...) {
+            SPDLOG_ERROR("session线程未捕获未知异常");
+        }
 
-            // 处理结束后自动往服务器中删除自身并触发退出回调。
-            // 活跃计数递减和唤醒已挪进 remove_session（同一把锁内）：
-            // 若在这里（锁外）递减 + notify，stop() 可能恰好在检查计数非 0
-            // 之后、进入条件变量睡眠之前错过本线程的 notify（lost wakeup），
-            // 之后无人再唤醒它，stop() 永久卡在 alive 计数等待上
-            self->server.remove_session(self.get());
-            // 必须 detach：本线程函数持有 Session 的最后一份 shared_ptr，
-            // 函数结束时 ~Session 会在这个线程内执行，若 run_thread 仍 joinable，
-            // std::thread 析构会直接 terminate。而线程无法 join 自己（死锁），
-            // 所以只能 detach 自己
-            self->run_thread.detach();
-        });
-    } catch (...) {
-        // 线程创建失败时回滚计数，否则 stop() 会永久等待。
-        // 本函数在网络线程执行，stop() 等待前会先 join 网络线程，两者无并发，
-        // notify 只是保险（无等待者时无害）
-        server.alive_session_threads.fetch_sub(1, std::memory_order_release);
-        server.all_sessions_closed_cv.notify_one();
-        throw;
-    }
+        // 处理结束后自动往服务器中删除自身并触发退出回调
+        self->server.remove_session(self.get());
+
+        // 线程句柄收尾：锁内取出句柄（成员置空），锁外 detach。
+        // 与 Server::stop() 的 join() 互斥（都先拿 run_thread_mutex 再取句柄），
+        // 不会出现两个线程并发操作 std::thread 对象。
+        // - 客户端主动断开路径：stop() 还没来，这里取出并 detach 自己
+        //   （线程无法 join 自己；detach 后本函数返回，self 释放，~Session
+        //   在本线程内执行时 run_thread 已空，析构安全）
+        // - stop() 路径：stop() 已把句柄取走并 join 中，这里取出的是空，无事
+        std::thread finished;
+        {
+            std::lock_guard lock(self->run_thread_mutex);
+            if (self->run_thread.joinable()) {
+                finished = std::move(self->run_thread);
+            }
+        }
+        if (finished.joinable()) {
+            finished.detach();
+        }
+    });
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionMain, run_thread);
+    }
+}
+
+void usbipdcpp::Session::join() {
+    // 锁内取出句柄（成员置空），锁外 join：join 期间不持锁，线程退出路径
+    // 拿锁取句柄时不会死锁。取出后成员非 joinable，线程末尾/~Session 无需
+    // 再做任何线程句柄操作
+    std::thread finished;
+    {
+        std::lock_guard lock(run_thread_mutex);
+        if (run_thread.joinable()) {
+            finished = std::move(run_thread);
+        }
+    }
+    if (finished.joinable()) {
+        finished.join();
     }
 }
 
@@ -217,8 +243,13 @@ void usbipdcpp::Session::parse_op() {
 close_socket:
     std::error_code ignore_ec;
     SPDLOG_INFO("尝试关闭socket");
+    // 只 shutdown（优雅断开）不 close：这里 close 会与 Server::stop() 的
+    // immediately_stop 里的 cancel 并发操作同一 socket（asio 禁止共享对象并发，
+    // close 不在线程安全白名单内），reactive 后端中 close 的
+    // cleanup_descriptor_data 与 cancel 的 cancel_ops 操作同一 op_queue，
+    // 偶发数据竞态导致挂起（本地循环第 1303 次复现）。
+    // socket 最终由 Session 析构时成员自动关闭（无并发）
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
-    socket.close(ignore_ec);
 }
 
 void usbipdcpp::Session::immediately_stop() {
