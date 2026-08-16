@@ -27,23 +27,25 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig 
 }
 
 void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
-    if (asio_io_context.stopped()) {
-        asio_io_context.restart();
-    }
+    // 网络栈整代重建：每次 start() 创建全新的 io_context + acceptor。旧代
+    // （挂起的协程、残留任务）在 stop() 时已随 io_context 析构销毁，新代
+    // 干净无残留，因此这里不需要 restart()（新对象从不 stopped）
+    asio_io_context.emplace();
 
-    // acceptor 作为成员保存，stop() 时关闭以释放端口，保证可以再次 start()。
-    // 在 start() 所在线程同步构造：保证 stop() 时 acceptor 要么已就绪可关闭，
-    // 要么尚未构造。若放在网络线程里构造，stop() 可能恰好在 open/bind 到一半
-    // 时调用——close 之后网络线程继续 listen 会失败并 exit(1)；或者 stop()
-    // 检查 optional 与网络线程的 emplace 并发访问，构成数据竞态。
+    // acceptor 作为成员保存，stop() 时随整代销毁关闭以释放端口，保证可以
+    // 再次 start()。在 start() 所在线程同步构造：保证 stop() 时 acceptor
+    // 要么已就绪可关闭，要么尚未构造。若放在网络线程里构造，stop() 可能
+    // 恰好在 open/bind 到一半时调用——close 之后网络线程继续 listen 会失败
+    // 并 exit(1)；或者 stop() 检查 optional 与网络线程的 emplace 并发访问，
+    // 构成数据竞态。
     // bind 失败直接抛给调用者处理，而不是在网络线程里静默退出整个进程。
-    acceptor.emplace(asio_io_context);
+    acceptor.emplace(*asio_io_context);
     acceptor->open(ep.protocol());
     acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true));
     acceptor->bind(ep);
     acceptor->listen();
     spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
-    asio::co_spawn(asio_io_context, do_accept(), asio::detached);
+    asio::co_spawn(*asio_io_context, do_accept(), asio::detached);
 
     if (before_thread_create_callback) {
         before_thread_create_callback(ThreadPurpose::NetworkIO);
@@ -51,7 +53,7 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
     // 网络线程只负责跑 io_context 事件循环
     network_io_thread = std::thread([this]() {
         try {
-            asio_io_context.run();
+            asio_io_context->run();
         } catch (const std::exception &e) {
             SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
             std::exit(1);
@@ -63,29 +65,19 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 }
 
 void usbipdcpp::Server::stop() {
-    // 先关闭 acceptor 并退出网络线程，之后再做会话清理。join 之后 do_accept
-    // 协程已结束，不会再产生新的 session。
+    // 整代重建的停止协议：io_context.stop() 打断网络线程 → join → 销毁
+    // acceptor 和 io_context。之后再做会话清理。join 之后 do_accept 协程已
+    // 结束（或挂起在 io_context 上待析构），不会再产生新的 session。
     //
-    // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
-    // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
-    // close 后挂起的 async_accept 会以 operation_aborted 或 bad_descriptor
-    // 完成（取决于平台），协程 break 退出，io_context 没有剩余工作后
-    // 网络线程自然结束。
-    // 这里不能调用 io_context.stop()：那会丢弃 operation_aborted 的完成回调，
-    // 旧协程残留到下一次 start()，与新协程并发操作同一个 acceptor
-    // （表现为 Bad file descriptor 甚至崩溃）
-    //
-    // close 必须 post 到网络线程执行：acceptor 是 asio 共享对象，跨线程
-    // close 与协程的 async_accept 并发操作 reactor 的 fd→state 映射
-    // （close 销毁 descriptor_state，start_op 仍在解引用），数据竞态导致
-    // 野指针崩溃（CI 高负载下复现，本地低负载几千次不触发）。post 后
-    // close 与协程在同一个线程串行执行，协程挂起在 await 点时被关闭，
-    // 无并发访问
-    if (acceptor) {
-        asio::post(asio_io_context, [this]() {
-            std::error_code ignore_ec;
-            acceptor->close(ignore_ec);
-        });
+    // io_context.stop() 是 asio 明令线程安全的操作，可在主线程跨线程打断
+    // 网络线程：挂起的 async_accept 完成回调被丢弃、协程 frame 残留在
+    // io_context 上，由下面整代 reset 析构一并销毁（已用 ASAN 实测无泄漏）。
+    // 这取代了旧方案里"post close 到网络线程"的做法——旧方案因为 io_context
+    // 是长命成员，残留协程会污染下一次 start()（与新协程并发操作同一个
+    // acceptor），才不能用 stop()，只能 post + 代际标记防御；整代重建后
+    // 旧代整个消失，stop() 回归最简单形式。
+    if (asio_io_context) {
+        asio_io_context->stop();
     }
     // joinable 检查：stop() 可能在 start() 之前被调用（线程尚未创建），
     // 此时 join 会抛 std::system_error
@@ -93,8 +85,12 @@ void usbipdcpp::Server::stop() {
         network_io_thread.join();
     }
 
-    // 网络线程已退出，acceptor 可安全销毁（join 前销毁会与协程并发解引用竞态）
+    // 网络线程已退出，acceptor 和 io_context 可安全销毁（join 前销毁会与
+    // 协程并发解引用竞态）。reset acceptor 触发 reactor 清理挂起的 accept
+    // 操作并释放监听端口（网络线程已死，单线程安全）；reset io_context
+    // 销毁残留的协程 frame 和任务
     acceptor.reset();
+    asio_io_context.reset();
 
     // 取快照：join 期间 session 线程会调用 remove_session 修改列表，
     // 不能在持有锁或遍历列表的同时 join
@@ -198,17 +194,14 @@ usbipdcpp::Server::~Server() {
     // 通常在显式 stop() 之后（sessions 已空，快照为空不触发）；若真在
     // 进程退出阶段还有活跃 session 走到这里，日志可能访问已析构的 spdlog，
     // 但此时本来就有未停干净的线程问题，可接受
-    if (acceptor) {
-        // 与 stop() 同理，close 必须 post 到网络线程避免与协程并发
-        asio::post(asio_io_context, [this]() {
-            std::error_code ignore_ec;
-            acceptor->close(ignore_ec);
-        });
+    if (asio_io_context) {
+        asio_io_context->stop();
     }
     if (network_io_thread.joinable()) {
         network_io_thread.join();
     }
     acceptor.reset();
+    asio_io_context.reset();
 
     std::vector<std::shared_ptr<Session>> snapshot;
     {
@@ -338,7 +331,11 @@ asio::awaitable<void> usbipdcpp::Server::do_accept() {
         }
         else {
             SPDLOG_ERROR("Connection error：{}", ec.message());
-            // acceptor 已无法继续接收连接，继续循环只会反复出错
+            // acceptor 已无法继续接收连接，继续循环只会反复出错。
+            // 同线程 close 立即释放监听端口：协程即将结束、网络线程随后退出，
+            // 无需等 stop() 的整代销毁才释放
+            std::error_code close_ec;
+            acceptor->close(close_ec);
             break;
         }
     }

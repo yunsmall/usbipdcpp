@@ -6,6 +6,17 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include "test_utils.h"
 
 #include "usbipdcpp/Server.h"
@@ -183,6 +194,139 @@ TEST(TestNetwork, ManyStartStopCycles) {
         server.start(ep);
         server.stop();
     }
+}
+
+TEST(TestNetwork, ServerCanRestartAfterAcceptError) {
+#ifdef _WIN32
+    // Windows 上无法通过占满 fd 制造 accept 错误（对应 WSAEMFILE 不可控），跳过
+    GTEST_SKIP() << "Windows 上无法通过占满 fd 制造 accept 错误";
+#else
+    // 回归两个 bug：fd 耗尽时 do_accept 走错误分支退出后——
+    // - 错误分支必须 close acceptor 释放监听端口（否则端口占用到 stop()）
+    // - stop() 的 close 任务因网络线程已死而残留，由 stop() 的 poll() 兜底
+    //   消费；若残留到下一代 run() 会误关新 acceptor，服务器静默失效
+    asio::io_context io;
+    const std::uint16_t port = probe_free_port(io);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    usbipdcpp::Server server;
+    server.start(ep);
+
+    // RAII 包装占用的 fd：ASSERT 失败会直接 return 退出测试函数，vector<int>
+    // 析构不会 close fd，若中途失败未释放，后续所有测试都将在 fd 紧张的
+    // 状态下运行（socket 创建失败、accept 报 EMFILE），连环失败难以排查。
+    // move 必须把源置空：vector 扩容走 move，若两边都持 fd 会在析构时
+    // double close，可能关掉后续测试新开 socket 复用的 fd 号
+    struct ScopedFd {
+        int fd = -1;
+        ScopedFd() = default;
+        explicit ScopedFd(int f) : fd(f) {
+        }
+        ScopedFd(const ScopedFd &) = delete;
+        ScopedFd &operator=(const ScopedFd &) = delete;
+        ScopedFd(ScopedFd &&other) noexcept : fd(other.fd) {
+            other.fd = -1;
+        }
+        ScopedFd &operator=(ScopedFd &&other) noexcept {
+            if (this != &other) {
+                if (fd >= 0) {
+                    ::close(fd);
+                }
+                fd = other.fd;
+                other.fd = -1;
+            }
+            return *this;
+        }
+        ~ScopedFd() {
+            if (fd >= 0) {
+                ::close(fd);
+            }
+        }
+    };
+
+    // 占满进程 fd：占满后服务器的 accept4 将报 EMFILE。本进程不能再发起
+    // connect（WSL 实测 connect 也要分配 fd，占满时直接 EMFILE），因此用 fork
+    // 的子进程发起连接：子进程关闭继承的 fd 后限额恢复，connect 不受影响
+    std::vector<ScopedFd> occupied_fds;
+    for (int i = 0; i < 65536; i++) {
+        int fd = ::open("/dev/null", O_RDONLY);
+        if (fd < 0) {
+            break;
+        }
+        occupied_fds.push_back(ScopedFd{fd});
+    }
+    ASSERT_FALSE(occupied_fds.empty());
+
+    pid_t pid = fork();
+    ASSERT_GE(pid, 0);
+    if (pid == 0) {
+        // 子进程：关闭从父进程继承的所有 fd（stdin/out/err 之外），恢复自己的
+        // fd 限额，否则 connect 同样 EMFILE。只做原始 socket 操作，不碰 asio 和
+        // gtest（fork 后这些库的锁状态不安全），结果通过退出码回传
+#ifdef __APPLE__
+        closefrom(3);
+#else
+        close_range(3, ~0U, 0);
+#endif
+        int s = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (s < 0) {
+            _exit(1);
+        }
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        int ret = ::connect(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+        _exit(ret == 0 ? 0 : 1);
+    }
+    int status = 0;
+    ASSERT_GE(waitpid(pid, &status, 0), 0);
+    ASSERT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0) << "子进程 connect 失败";
+
+    // 保持 fd 占满一段确定时间再释放：子进程 connect 返回后、本进程释放 fd
+    // 之前，服务器协程必须已经执行 accept4（fd 仍满 → EMFILE）。若先释放
+    // fd，服务器 accept4 可能成功（不 EMFILE），端口一直监听导致下面的
+    // 轮询超时（高频重复实测复现）
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // 正常路径提前释放（异常路径由 ScopedFd 析构兜底），保证后续测试不受影响
+    occupied_fds.clear();
+
+    // 轮询等待服务器释放监听端口：错误分支 close acceptor 后端口立即可绑定，
+    // 可绑定 = 网络线程已退出（同时验证错误分支确实 close 了端口）
+    bool port_released = false;
+    for (int i = 0; i < 200; i++) {
+        asio::ip::tcp::acceptor probe(io);
+        probe.open(asio::ip::tcp::v4());
+        probe.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+        std::error_code probe_ec;
+        probe.bind(ep, probe_ec);
+        if (!probe_ec) {
+            port_released = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(port_released);
+
+    // stop→start 后必须恢复正常：此时 stop() 的 close 任务因网络线程已死
+    // 而残留，靠 poll() 兜底消费；没消费掉的话下一代 run() 会误关新 acceptor
+    server.stop();
+    server.start(ep);
+
+    // 新客户端连接 + devlist 请求得到正常回复 = accept 循环活着
+    asio::ip::tcp::socket client2(io);
+    ASSERT_TRUE(connect_with_retry(client2, ep));
+    usbipdcpp::error_code send_ec;
+    asio::write(client2, asio::buffer(UsbIpCommand::OpReqDevlist{}.to_bytes()), send_ec);
+    ASSERT_FALSE(send_ec);
+    ASSERT_EQ(usbipdcpp::read_u16(client2), USBIP_VERSION);
+    ASSERT_EQ(usbipdcpp::read_u16(client2), OP_REP_DEVLIST);
+    client2.close();
+
+    ASSERT_TRUE(wait_sessions_gone(server));
+    server.stop();
+#endif
 }
 
 TEST(TestNetwork, StopWithSilentClient) {

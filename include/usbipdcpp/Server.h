@@ -194,16 +194,21 @@ protected:
     std::list<std::weak_ptr<Session>> sessions;
     mutable std::shared_mutex session_list_mutex;
 
-    //网络通信请异步使用这个io_context
-    asio::io_context asio_io_context;
-    //监听 acceptor 作为成员保存：stop() 时需显式关闭释放端口，否则 stop 后
-    //再次 start() 会与旧协程中的 acceptor 冲突导致 bind 失败。
-    //访问纪律（acceptor 是 asio 共享对象，一切操作必须与 async_accept 同线程）：
+    //网络栈整代重建：每次 start() 创建全新的 io_context + acceptor，stop()
+    //销毁旧代。这是停止协议的根基——旧代（挂起的协程、残留任务、acceptor）
+    //随 io_context 析构一起消失，不会污染下一代，因此 stop() 可以放心用
+    //io_context.stop() 跨线程打断（asio 明令线程安全），不需要 post 到网络
+    //线程关 acceptor，也不需要任何代际标记（曾用 generation 计数防御残留
+    //任务误关新 acceptor，整代重建后残留无意义）
+    std::optional<asio::io_context> asio_io_context;
+    //监听 acceptor 作为成员保存，stop() 时随整代销毁关闭以释放端口，保证
+    //可以再次 start()。访问纪律（acceptor 是 asio 共享对象，一切操作必须
+    //与 async_accept 同线程）：
     // - open/bind/listen：start() 主线程（网络线程尚未启动，无并发）
     // - async_accept：网络线程协程
-    // - close：post 到网络线程（跨线程 close 与 async_accept 并发操作 reactor
-    //   的 fd→state 映射，数据竞态曾导致 CI 崩溃）
-    // - 析构（reset）：stop() 主线程，join 网络线程之后（协程已死，无并发）
+    // - close（do_accept 错误分支）：协程线程，同线程安全
+    // - 析构（reset）：stop() 主线程，join 网络线程之后（协程已挂起不恢复，
+    //   无并发）
     std::optional<asio::ip::tcp::acceptor> acceptor;
     //所有网络通信请运行在下面这个线程，网络通信不可运行在其他线程中
     std::thread network_io_thread;
