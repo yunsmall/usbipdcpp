@@ -34,7 +34,9 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 
     // acceptor 作为成员保存，stop() 时关闭以释放端口，保证可以再次 start()。
     // 在 start() 所在线程同步构造：保证 stop() 时 acceptor 要么已就绪可关闭，
-    // 要么尚未构造，不会出现"网络线程构造到一半被 stop"的竞态窗口。
+    // 要么尚未构造。若放在网络线程里构造，stop() 可能恰好在 open/bind 到一半
+    // 时调用——close 之后网络线程继续 listen 会失败并 exit(1)；或者 stop()
+    // 检查 optional 与网络线程的 emplace 并发访问，构成数据竞态。
     // bind 失败直接抛给调用者处理，而不是在网络线程里静默退出整个进程。
     acceptor.emplace(asio_io_context);
     acceptor->open(ep.protocol());
@@ -62,11 +64,12 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 }
 
 void usbipdcpp::Server::stop() {
-    // 先关闭 acceptor 并退出网络线程。join 之后 do_accept 协程已结束，
-    // 不会再产生新的 session，此时遍历会话列表、等待计数归零才没有竞态：
-    // 若先等计数，等待期间网络线程仍可能 accept 新连接并创建新 session 线程，
-    // 计数可能在检查为 0 之后跳回非 0，stop() 错误地提前返回，Server 析构后
-    // 新线程访问已析构对象导致段错误。
+    // 先关闭 acceptor 并退出网络线程，之后再做会话清理。join 之后 do_accept
+    // 协程已结束，不会再产生新的 session，且所有已创建 session 的活跃计数
+    // 都已登记（计数在创建线程之前递增，见 Session::run），此时遍历会话列表、
+    // 等待计数归零才没有竞态：若先等计数，等待期间网络线程仍可能 accept
+    // 新连接并创建新 session 线程，计数可能在检查为 0 之后跳回非 0，stop()
+    // 错误地提前返回，Server 析构后新线程访问已析构对象导致段错误。
     //
     // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
     // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
@@ -81,6 +84,8 @@ void usbipdcpp::Server::stop() {
         acceptor->close(ignore_ec);
     }
     should_stop = true;
+    // joinable 检查：stop() 可能在 start() 之前被调用（线程尚未创建），
+    // 此时 join 会抛 std::system_error
     if (network_io_thread.joinable()) {
         network_io_thread.join();
     }
@@ -267,7 +272,9 @@ asio::awaitable<void> usbipdcpp::Server::do_accept() {
             spdlog::info("A new connection from {}", remote_endpoint_name);
 
             //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
-            //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备
+            //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。
+            //run() 只在创建线程失败（资源耗尽）时抛异常，异常会传播出本协程
+            //使 io_context.run() 重新抛出，由网络线程的兜底 catch 处理并退出进程
             session->run();
         }
         else if (ec == asio::error::operation_aborted || ec == asio::error::bad_descriptor) {
