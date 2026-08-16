@@ -47,4 +47,8 @@ if (TARGET usbipdcpp_virtual_device)
 
     add_test_file(test_cdc_acm_handler)
     target_link_libraries(test_cdc_acm_handler PRIVATE usbipdcpp_virtual_device)
+
+    # 走网络的虚拟设备测试（import 后 stop 等）
+    add_test_file(test_network_vdev)
+    target_link_libraries(test_network_vdev PRIVATE usbipdcpp_virtual_device)
 endif ()

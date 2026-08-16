@@ -53,28 +53,34 @@ void usbipdcpp::Session::run() {
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionMain);
     }
-    run_thread = std::thread([self = std::move(self)]() {
-        // 活跃线程计数：stop() 等其归零才返回，保证之后析构 Server 或退出
-        // 进程时本线程已完全结束，不会访问任何已析构的全局对象
-        self->server.alive_session_threads.fetch_add(1, std::memory_order_release);
+    // 活跃线程计数必须在创建线程之前递增：若在线程函数体内递增，stop() 可能在
+    // 新线程执行到递增之前检查到计数为 0 而提前返回，调用方随即析构 Server，
+    // 线程醒来后访问已析构的 Server 导致段错误
+    server.alive_session_threads.fetch_add(1, std::memory_order_release);
+    try {
+        run_thread = std::thread([self = std::move(self)]() {
+            try {
+                self->parse_op();
+            } catch (const std::exception &e) {
+                // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程），
+                // 也不能跳过下面的计数递减（否则 stop() 永久等待）
+                SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
+            } catch (...) {
+                SPDLOG_ERROR("session线程未捕获未知异常");
+            }
 
-        try {
-            self->parse_op();
-        } catch (const std::exception &e) {
-            // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程），
-            // 也不能跳过下面的计数递减（否则 stop() 永久等待）
-            SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
-        } catch (...) {
-            SPDLOG_ERROR("session线程未捕获未知异常");
-        }
-
-        // 处理结束后自动往服务器中删除自身并触发退出回调
-        self->server.remove_session(self.get());
-        // 把当前这个线程detach了，防止线程内部析构自己导致报错
-        self->run_thread.detach();
-        self->server.alive_session_threads.fetch_sub(1, std::memory_order_release);
-        self->server.all_sessions_closed_cv.notify_one();
-    });
+            // 处理结束后自动往服务器中删除自身并触发退出回调
+            self->server.remove_session(self.get());
+            // 把当前这个线程detach了，防止线程内部析构自己导致报错
+            self->run_thread.detach();
+            self->server.alive_session_threads.fetch_sub(1, std::memory_order_release);
+            self->server.all_sessions_closed_cv.notify_one();
+        });
+    } catch (...) {
+        // 线程创建失败时回滚计数，否则 stop() 会永久等待
+        server.alive_session_threads.fetch_sub(1, std::memory_order_release);
+        throw;
+    }
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionMain, run_thread);
     }

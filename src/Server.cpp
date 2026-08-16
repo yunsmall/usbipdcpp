@@ -32,23 +32,24 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
         asio_io_context.restart();
     }
 
+    // acceptor 作为成员保存，stop() 时关闭以释放端口，保证可以再次 start()。
+    // 在 start() 所在线程同步构造：保证 stop() 时 acceptor 要么已就绪可关闭，
+    // 要么尚未构造，不会出现"网络线程构造到一半被 stop"的竞态窗口。
+    // bind 失败直接抛给调用者处理，而不是在网络线程里静默退出整个进程。
+    acceptor.emplace(asio_io_context);
+    acceptor->open(ep.protocol());
+    acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true));
+    acceptor->bind(ep);
+    acceptor->listen();
+    spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
+    asio::co_spawn(asio_io_context, do_accept(), asio::detached);
+
     if (before_thread_create_callback) {
         before_thread_create_callback(ThreadPurpose::NetworkIO);
     }
-    network_io_thread = std::thread([this, ep]() {
+    // 网络线程只负责跑 io_context 事件循环
+    network_io_thread = std::thread([this]() {
         try {
-            // acceptor 作为成员保存，stop() 时关闭以释放端口，保证可以再次 start()
-            acceptor.emplace(asio_io_context);
-            acceptor->open(ep.protocol());
-            acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true));
-
-            acceptor->bind(ep);
-            acceptor->listen();
-            spdlog::info("Listening on {}:{}", ep.address().to_string(), ep.port());
-            asio::co_spawn(
-                    asio_io_context,
-                    do_accept(),
-                    asio::detached);
             asio_io_context.run();
         } catch (const std::exception &e) {
             SPDLOG_ERROR("An unexpected exception occurs in network thread: {}", e.what());
@@ -61,6 +62,32 @@ void usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
 }
 
 void usbipdcpp::Server::stop() {
+    // 先关闭 acceptor 并退出网络线程。join 之后 do_accept 协程已结束，
+    // 不会再产生新的 session，此时遍历会话列表、等待计数归零才没有竞态：
+    // 若先等计数，等待期间网络线程仍可能 accept 新连接并创建新 session 线程，
+    // 计数可能在检查为 0 之后跳回非 0，stop() 错误地提前返回，Server 析构后
+    // 新线程访问已析构对象导致段错误。
+    //
+    // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
+    // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
+    // close 后挂起的 async_accept 会以 operation_aborted 或 bad_descriptor
+    // 完成（取决于平台），协程 break 退出，io_context 没有剩余工作后
+    // 网络线程自然结束。
+    // 这里不能调用 io_context.stop()：那会丢弃 operation_aborted 的完成回调，
+    // 旧协程残留到下一次 start()，与新协程并发操作同一个 acceptor
+    // （表现为 Bad file descriptor 甚至崩溃）
+    if (acceptor) {
+        std::error_code ignore_ec;
+        acceptor->close(ignore_ec);
+    }
+    should_stop = true;
+    if (network_io_thread.joinable()) {
+        network_io_thread.join();
+    }
+
+    // 网络线程已退出，acceptor 可安全销毁（join 前销毁会与协程并发解引用竞态）
+    acceptor.reset();
+
     {
         std::shared_lock lock(session_list_mutex);
         for (auto &session: sessions) {
@@ -80,22 +107,6 @@ void usbipdcpp::Server::stop() {
         });
     }
     spdlog::info("All sessions were successfully closed");
-
-    // spdlog::info("Successfully shut down transmissions for all devices");
-
-    // 关闭 acceptor 释放监听端口。不关闭的话 acceptor 一直活在 do_accept
-    // 协程帧里，再次 start() 时 bind 同一端口会 EADDRINUSE 失败。
-    // close 后挂起的 async_accept 会以 operation_aborted 完成，协程正常退出
-    if (acceptor) {
-        std::error_code ignore_ec;
-        acceptor->close(ignore_ec);
-        acceptor.reset();
-    }
-
-    asio_io_context.stop();
-    SPDLOG_TRACE("Successfully stop io_context");
-    should_stop = true;
-    network_io_thread.join();
 }
 
 std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
@@ -259,12 +270,16 @@ asio::awaitable<void> usbipdcpp::Server::do_accept() {
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备
             session->run();
         }
-        else if (ec == asio::error::operation_aborted) {
-            SPDLOG_ERROR("Operation aborted：{}", ec.message());
+        else if (ec == asio::error::operation_aborted || ec == asio::error::bad_descriptor) {
+            // stop() 关闭 acceptor 后，挂起的 async_accept 会以 operation_aborted
+            // 或 bad_descriptor 完成（取决于平台），这是正常的停止流程
+            SPDLOG_INFO("Accept loop stopped");
             break;
         }
         else {
             SPDLOG_ERROR("Connection error：{}", ec.message());
+            // acceptor 已无法继续接收连接，继续循环只会反复出错
+            break;
         }
     }
 }

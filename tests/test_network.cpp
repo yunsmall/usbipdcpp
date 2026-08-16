@@ -12,8 +12,7 @@ using namespace usbipdcpp;
 using namespace usbipdcpp::test;
 
 TEST(TestNetwork, ServerCanRestartAfterStop) {
-    // stop() 必须关闭 acceptor 释放端口，否则再次 start() 时 bind 同一端口失败，
-    // 网络线程异常处理会直接 std::exit(1) 结束整个测试进程
+    // stop() 必须关闭 acceptor 释放端口，否则再次 start() 时 bind 同一端口失败
     asio::io_context io;
 
     // 探测一个空闲端口，固定端口才能验证两次 start 的监听不冲突
@@ -50,6 +49,29 @@ TEST(TestNetwork, ServerCanRestartAfterStop) {
         // 主动断开，让服务器侧的 session 快速退出
         probe_sock.close();
 
+        server.stop();
+    }
+}
+
+TEST(TestNetwork, ServerCanStopWithoutConnection) {
+    // start() 后没有任何客户端连接就 stop()：挂在 acceptor 上的 async_accept
+    // 被 close 打断，协程要能干净退出，且可以再次 start()
+    asio::io_context io;
+
+    std::uint16_t port;
+    {
+        asio::ip::tcp::acceptor probe(io);
+        probe.open(asio::ip::tcp::v4());
+        probe.bind(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0));
+        port = probe.local_endpoint().port();
+    }
+
+    usbipdcpp::Server server;
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+
+    for (int round = 0; round < 3; round++) {
+        server.start(ep);
+        // 不做任何连接，直接停止
         server.stop();
     }
 }
