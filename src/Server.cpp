@@ -74,9 +74,18 @@ void usbipdcpp::Server::stop() {
     // 这里不能调用 io_context.stop()：那会丢弃 operation_aborted 的完成回调，
     // 旧协程残留到下一次 start()，与新协程并发操作同一个 acceptor
     // （表现为 Bad file descriptor 甚至崩溃）
+    //
+    // close 必须 post 到网络线程执行：acceptor 是 asio 共享对象，跨线程
+    // close 与协程的 async_accept 并发操作 reactor 的 fd→state 映射
+    // （close 销毁 descriptor_state，start_op 仍在解引用），数据竞态导致
+    // 野指针崩溃（CI 高负载下复现，本地低负载几千次不触发）。post 后
+    // close 与协程在同一个线程串行执行，协程挂起在 await 点时被关闭，
+    // 无并发访问
     if (acceptor) {
-        std::error_code ignore_ec;
-        acceptor->close(ignore_ec);
+        asio::post(asio_io_context, [this]() {
+            std::error_code ignore_ec;
+            acceptor->close(ignore_ec);
+        });
     }
     // joinable 检查：stop() 可能在 start() 之前被调用（线程尚未创建），
     // 此时 join 会抛 std::system_error
@@ -190,8 +199,11 @@ usbipdcpp::Server::~Server() {
     // 进程退出阶段还有活跃 session 走到这里，日志可能访问已析构的 spdlog，
     // 但此时本来就有未停干净的线程问题，可接受
     if (acceptor) {
-        std::error_code ignore_ec;
-        acceptor->close(ignore_ec);
+        // 与 stop() 同理，close 必须 post 到网络线程避免与协程并发
+        asio::post(asio_io_context, [this]() {
+            std::error_code ignore_ec;
+            acceptor->close(ignore_ec);
+        });
     }
     if (network_io_thread.joinable()) {
         network_io_thread.join();

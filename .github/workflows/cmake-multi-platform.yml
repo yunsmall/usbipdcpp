@@ -136,19 +136,27 @@ jobs:
 
       # ======== 高频稳定性测试 ========
       # 线程竞争、停止流程等偶发 bug 单次运行无法暴露（本地曾出现第 1303 次
-      # 循环才挂起的竞态），因此对关键生命周期测试重复跑 50 轮直到失败
+      # 循环才挂起的竞态），因此对曾出过 bug 的生命周期路径重复跑 50 轮直到失败。
+      # StopDuringClientConnectRace 是唯一在 stop 时刻有连接涌入的测试，
+      # 直接覆盖 acceptor close 与 async_accept 的竞态（本次 CI 崩溃的根因），
+      # 虽在 Windows 上单次约 2 秒（线程/socket 开销），但保留。
+      # 注意必须 shell: bash：行尾 \ 续行是 bash 语法，Windows runner 默认
+      # pwsh 会把它当字面参数，导致 -R 过滤丢失、全部测试重复 50 轮（曾
+      # 造成 Windows job 跑 50 分钟）
       - name: Stress test (TestNetwork)
+        shell: bash
         working-directory: build
         run: |
           ctest --build-config Release --repeat until-fail:50 --output-on-failure \
-            -R "TestNetwork\.(ServerCanRestartAfterStop|ManyQuickConnections|StopDuringClientConnectRace|StopWithSilentClient|StopWithMultipleClients)"
+            -R "TestNetwork\.(ServerCanRestartAfterStop|ManyQuickConnections|StopWithMultipleClients|StopDuringClientConnectRace)"
 
       - name: Stress test (TestNetworkVdev)
         if: matrix.vdev == 'ON'
+        shell: bash
         working-directory: build
         run: |
           ctest --build-config Release --repeat until-fail:50 --output-on-failure \
-            -R "TestNetworkVdev\.(ServerCanStopWithImportedDevice|ClientDisconnectsDuringUrbTransfer|ClientReconnectLoop)"
+            -R "TestNetworkVdev\.(ServerCanStopWithImportedDevice|ClientDisconnectsDuringUrbTransfer)"
 
   # Termux (Android) 编译验证。
   # Termux rootfs 无 glibc，actions 的 node 程序（含 actions/checkout）无法在容器内运行，
