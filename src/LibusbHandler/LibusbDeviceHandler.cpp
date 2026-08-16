@@ -637,6 +637,9 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
         err = libusb_claim_interface(native_handle, intf_i);
         if (err) {
             SPDLOG_ERROR("无法声明接口 {}: {}", intf_i, libusb_strerror(err));
+            // 接口 i 在前面已执行 detach，必须先把它的内核驱动挂回去，
+            // 否则该接口的内核驱动永久失联（attach 失败无害，忽略返回值）
+            libusb_attach_kernel_driver(native_handle, intf_i);
             // 回滚已声明的接口
             for (int j = 0; j < intf_i; j++) {
                 libusb_release_interface(native_handle, j);
@@ -701,6 +704,9 @@ bool usbipdcpp::LibusbDeviceHandler::wrap_fd_and_claim_interfaces() {
         err = libusb_claim_interface(native_handle, intf_i);
         if (err) {
             SPDLOG_ERROR("无法声明接口 {}: {}", intf_i, libusb_strerror(err));
+            // 接口 i 在前面已尝试 detach，补一次 attach 把内核驱动挂回去。
+            // Android 后端通常两者都返回 NOT_SUPPORTED，失败无害，忽略返回值
+            libusb_attach_kernel_driver(native_handle, intf_i);
             // 回滚已声明的接口
             for (int j = 0; j < intf_i; j++) {
                 libusb_release_interface(native_handle, j);
