@@ -230,6 +230,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
                                              .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
                                              .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
+                                             .interface_number = intf.altsetting[0].bInterfaceNumber,
                                              .endpoints = std::move(endpoints)});
     }
 
@@ -241,6 +242,11 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
                                     libusb_get_port_number(dev)),
                 .busid = get_device_busid(dev),
                 .bus_num = libusb_get_bus_number(dev),
+                // devnum 与参考项目 usbipd-libusb 一致填端口号
+                // （usbip_host_driver.c: udev->devnum = libusb_get_port_number(dev)）。
+                // 该字段仅用于 usbip list 展示，导入匹配走 busid，不影响功能；
+                // 内核 usbipd 的 devnum 是设备地址（sysfs devnum 属性），两者
+                // 语义不同但均不被客户端依赖
                 .dev_num = libusb_get_port_number(dev),
                 .speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(dev)),
                 .vendor_id = device_descriptor.idVendor,
@@ -330,6 +336,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
         interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
                                              .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
                                              .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
+                                             .interface_number = intf.altsetting[0].bInterfaceNumber,
                                              .endpoints = std::move(endpoints)});
     }
 
@@ -337,6 +344,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     auto busid = get_device_busid(device_for_info);
     auto bus_num = libusb_get_bus_number(device_for_info);
     auto dev_addr = libusb_get_device_address(device_for_info);
+    // devnum 填端口号（同普通模式，见 bind_host_device 的注释）
     auto dev_num = libusb_get_port_number(device_for_info);
     auto speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(device_for_info));
     auto configuration_value = active_config_desc->bConfigurationValue;
@@ -511,6 +519,8 @@ DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &bu
     return DeviceOperationResult::DeviceNotFound;
 }
 
+// 预留 API：当前内部无调用点（热插拔拔出逻辑由 handle_device_left 承担，
+// 逻辑与之基本相同），保留供外部使用者按需调用
 DeviceOperationResult LibusbServer::notify_device_removed(const std::string &busid) {
     SPDLOG_INFO("设备被拔出: {}", busid);
 
@@ -618,9 +628,11 @@ void LibusbServer::handle_device_arrived(libusb_device *device) {
         }
     }
 
-    // 打印设备信息（自动绑定时跳过设备名查询，避免在事件线程上调 libusb_open）
+    // 打印设备信息（热插拔回调运行在 libusb 事件线程，必须始终跳过设备名
+    // 查询——get_device_names 会 libusb_open，可能阻塞事件线程的事件处理；
+    // 显示 VID:PID 已足够。设备名查询只在主线程的 list_host_devices 使用）
     SPDLOG_INFO("检测到新设备插入:");
-    print_device(device, config.auto_bind_hotplug);
+    print_device(device, true);
 
     // 如果启用了热插拔自动绑定，自动绑定新设备
     if (config.auto_bind_hotplug) {
@@ -717,29 +729,50 @@ usbipdcpp::error_code LibusbServer::start(asio::ip::tcp::endpoint &ep) {
 
     should_exit_libusb_event_thread = false;
 
-    libusb_event_thread = std::thread([this]() {
-        try {
-            SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
-            while (!should_exit_libusb_event_thread) {
-                auto ret = libusb_handle_events(nullptr);
+    // 线程创建失败（系统资源不足）时 std::thread 构造抛异常，start 承诺
+    // 不抛异常（error_code 报告错误），捕获后清理已启动的热插拔监控并返回
+    // 错误码（与 Server::start 的线程创建失败处理一致）
+    try {
+        libusb_event_thread = std::thread([this]() {
+            try {
+                SPDLOG_INFO("启动一个libusb device handle的libusb事件循环线程");
+                while (!should_exit_libusb_event_thread) {
+                    auto ret = libusb_handle_events(nullptr);
 
-                if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) [[unlikely]] {
-                    SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
-                    break;
+                    if (ret == LIBUSB_ERROR_INTERRUPTED && should_exit_libusb_event_thread) [[unlikely]] {
+                        SPDLOG_INFO("libusb事件循环收到中断信号正常退出");
+                        break;
+                    }
+                    if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) [[unlikely]] {
+                        SPDLOG_ERROR("Event handling error: {}\n", libusb_strerror(ret));
+                        break;
+                    }
                 }
-                if (ret < 0 && ret != LIBUSB_ERROR_INTERRUPTED) [[unlikely]] {
-                    SPDLOG_ERROR("Event handling error: {}\n", libusb_strerror(ret));
-                    break;
-                }
+                SPDLOG_TRACE("退出libusb事件循环");
+            } catch (const std::exception &e) {
+                SPDLOG_ERROR("An unexpected exception occurs in libusb handler thread: {}", e.what());
+                std::exit(1);
             }
-            SPDLOG_TRACE("退出libusb事件循环");
-        } catch (const std::exception &e) {
-            SPDLOG_ERROR("An unexpected exception occurs in libusb handler thread: {}", e.what());
-            std::exit(1);
-        }
-    });
+        });
+    } catch (...) {
+        stop_hotplug_monitor();
+        SPDLOG_ERROR("libusb 事件线程创建失败");
+        return std::make_error_code(std::errc::resource_unavailable_try_again);
+    }
     // Server::start 不抛异常，错误通过返回值报告（便于无异常环境的嵌入式平台）
-    return server.start(ep);
+    auto ec = server.start(ep);
+    if (ec) [[unlikely]] {
+        // start 失败（如端口被占）时调用方按失败处理、不再调 stop()，这里必须
+        // 回收已启动的资源：注销热插拔监控并停掉 libusb 事件线程（join），
+        // 否则线程仍 joinable，LibusbServer 析构（空析构）会触发 std::terminate
+        stop_hotplug_monitor();
+        should_exit_libusb_event_thread = true;
+        libusb_interrupt_event_handler(nullptr);
+        if (libusb_event_thread.joinable()) {
+            libusb_event_thread.join();
+        }
+    }
+    return ec;
 }
 
 void LibusbServer::stop() {
@@ -783,7 +816,11 @@ void LibusbServer::stop() {
     should_exit_libusb_event_thread = true;
     libusb_interrupt_event_handler(nullptr);
     spdlog::info("等待libusb事件线程结束");
-    libusb_event_thread.join();
+    // 防御：start 失败（内部已 join）或从未 start 时线程不可 join，
+    // 直接 join 会 std::terminate
+    if (libusb_event_thread.joinable()) {
+        libusb_event_thread.join();
+    }
     spdlog::info("libusb事件线程结束");
 }
 

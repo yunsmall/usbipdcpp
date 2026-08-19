@@ -1,3 +1,10 @@
+// 这个文件的调试信息太多了，开成TRACE打印会疯掉的
+// 这里强制改成INFO
+#ifdef SPDLOG_ACTIVE_LEVEL
+    #undef SPDLOG_ACTIVE_LEVEL
+#endif
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+
 #include "usbipdcpp/Session.h"
 
 #include <asio.hpp>
@@ -117,6 +124,10 @@ void usbipdcpp::Session::parse_op() {
                 }
                 else if constexpr (std::is_same_v<UsbIpCommand::OpReqImport, T>) {
                     SPDLOG_TRACE("收到 OpReqImport 包");
+                    // busid 是客户端可控的 32 字节，不保证含 \0（from_socket
+                    // 只读满 32 字节）。先强制截断最后一个字节再构造 string，
+                    // 否则 std::string(ptr) 会越界读栈内存（安全漏洞）
+                    cmd.busid[31] = '\0';
                     auto wanted_busid = std::string(reinterpret_cast<char *>(cmd.busid.data()));
                     UsbIpResponse::OpRepImport op_rep_import{};
                     SPDLOG_TRACE("客户端想连接busid为 {} 的设备", wanted_busid);
@@ -269,10 +280,29 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     // （join sender）就绪，不存在句柄未赋值的中间状态——若两线程句柄先后
     // 赋值，主线程可能在子线程句柄赋值前就收尾，随后才创建的子线程会把
     // 残留响应写到已关闭的 socket。
-    // 创建失败（如系统资源不足）抛异常传播出 transfer_loop，由主线程的兜底
-    // catch（run()）统一收尾：移除自身并析构，避免异常逃逸导致
-    // std::terminate，也避免会话卡在"已注册但无线程"的中间状态
-    std::thread sender_thread([&, this]() { sender(sender_ec); });
+    // 创建失败（如系统资源不足）时连接已建立（on_new_connection 已调用，
+    // 设备已打开/声明接口）但传输循环无法启动，走断连收尾（见 catch）：
+    // 通知 handler 断连释放设备接口，把设备移回可用列表，否则设备滞留
+    // using 列表，下次导入会误报"正在使用"；然后重新抛出，由 run() 的
+    // 兜底 catch 移除 session，避免异常逃逸导致 std::terminate
+    std::thread sender_thread;
+    try {
+        sender_thread = std::thread([&, this]() { sender(sender_ec); });
+    } catch (...) {
+        SPDLOG_ERROR("sender 线程创建失败，断开本次连接");
+        usbipdcpp::error_code disconnect_ec;
+        current_handler->on_disconnection(disconnect_ec);
+        if (current_handler->is_device_removed()) {
+            std::lock_guard lock(server.get_devices_mutex());
+            server.get_using_devices().erase(*current_import_device_id);
+        }
+        else {
+            server.try_moving_device_to_available(*current_import_device_id);
+        }
+        current_import_device_id.reset();
+        current_import_device.reset();
+        throw;
+    }
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionSender, sender_thread);
     }
@@ -465,6 +495,12 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
     // 「从 map 移除 → 入队 RET_SUBMIT」，handle_unlink_seqnum 想介入必须等锁释放。
     // 等它拿到锁时 map 里已无此传输，此时入队的 RET_UNLINK 天然排在 RET_SUBMIT
     // 之后，顺序正确。
+    //
+    // 退出时丢弃队列中残留的响应是正确行为：循环只在 receiver 退出（socket
+    // 错误/EOF）或 stop() 后退出，这两种情况下连接已不可用——TCP 客户端
+    // （Linux vhci/usbip）没有"半关闭后仍等响应"的协议流程，要么正常通信
+    // 要么整体关闭连接，客户端不会因丢失响应而挂起；与内核 stub 连接错误
+    // 时停止发送、丢弃未发数据的行为一致
     while (!should_immediately_stop) {
         auto send_data_opt = sender_get_data(ec);
         if (ec || should_immediately_stop) [[unlikely]] {
@@ -514,6 +550,11 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
                 socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
                 socket.cancel(ignore_ec);
             }
+            // 不把 sending_ec 传给 transfer_loop：发送失败时已 shutdown+cancel
+            // 打断 receiver 的挂起读，receiver 必然随后以 socket 错误退出并设置
+            // receiver_ec，transfer_loop 的 ec 优先走 receiver_ec（sender_ec 为
+            // 默认 0 时走 else if 分支），外部仍能区分错误来源，sending_ec 没有
+            // 额外信息量
             // ec = sending_ec;
             break;
         }

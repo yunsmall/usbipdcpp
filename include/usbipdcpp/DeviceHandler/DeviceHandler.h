@@ -50,8 +50,32 @@ public:
      * @param ec 发生的ec
      */
     virtual void on_new_connection(Session &current_session, error_code &ec) {
+        register_session(current_session);
+    }
+
+    /**
+     * @brief 注册当前通信的 Session（记录 session 指针）。
+     *
+     * 内部基础设施：由基类的 on_new_connection 调用；子类在 on_new_connection
+     * 后半段失败（如打开设备失败）时，必须手动调用 remove_session() 撤销注册。
+     * 残留指针并非无害：设备回 available 后若再次被导入，try_moving_device_to_using
+     * 先把它移入 using，在本次 on_new_connection 重新注册之前的窗口内设备拔出，
+     * trigger_session_stop 会通过上次连接残留的悬垂指针访问已析构的 Session
+     */
+    void register_session(Session &current_session) {
         std::lock_guard lock(session_mutex_);
         session = &current_session;
+    }
+
+    /**
+     * @brief 移除已注册的 Session（清空 session 指针）。
+     *
+     * 内部基础设施：由基类的 on_disconnection 调用，也供子类在连接建立
+     * 失败时手动调用。仅清指针，不做资源收尾（资源回滚由各自的失败路径负责）
+     */
+    void remove_session() {
+        std::lock_guard lock(session_mutex_);
+        session = nullptr;
     }
 
     /**
@@ -59,8 +83,7 @@ public:
      * 可以阻塞，处理所有需要处理的事务。子类实现时请在函数末尾调用这个函数
      */
     virtual void on_disconnection(error_code &ec) {
-        std::lock_guard lock(session_mutex_);
-        session = nullptr;
+        remove_session();
     }
 
     /**

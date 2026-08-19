@@ -108,7 +108,10 @@ struct USBIPDCPP_API UsbIpHeaderBasic {
     std::uint32_t seqnum;
     std::uint32_t devid;
     std::uint32_t direction;
-    /// USB/IP 线格式端点号（不带方向位，IN 端点的 ep 不含 0x80）
+    /// USB/IP 线格式端点号，不带方向位：方向由 direction 字段给出，
+    /// 发送端（Linux vhci / usbip-win2）均用 usb_endpoint_num（低 4 位）。
+    /// 服务端还原真实端点地址时按 direction 补方向位（In 时 |0x80）。
+    /// 解析时校验 ep <= 0x7F，超范围按协议错误拒绝（见 UsbIpCmdSubmit::from_socket）
     std::uint32_t ep;
 
     [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(command), decltype(seqnum), decltype(devid),
@@ -298,7 +301,7 @@ namespace UsbIpCommand {
         std::uint32_t status;
         array_data_type<32> busid;
 
-        [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST),
+        [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_IMPORT),
                                                                       decltype(status), decltype(busid)>()>
         to_bytes() const;
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;

@@ -347,6 +347,10 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
             }
             std::error_code close_ec;
             acceptor.close(close_ec);
+            // 此处不置 running=false：stop() 的完整清理路径（cancel/join/等待
+            // 会话析构归零/清空会话表）依赖 running 为 true 才走主流程，若
+            // 这里提前置 false，stop() 会短路返回并跳过全部清理，导致存活
+            // 会话泄漏、acceptor/端口状态残留，服务器无法干净地再次 start()
             co_return;
         }
 

@@ -114,6 +114,30 @@ public:
     std::mutex transfer_complete_mutex_;
     std::condition_variable transfer_complete_cv_;
 
+    /**
+     * @brief 递减 pending_count_ 并通知等待者。
+     *
+     * 所有递减点统一走本函数（transfer_callback 收尾、receive_urb 的 submit
+     * 失败路径）。递减与通知必须放在 transfer_complete_mutex_ 锁内（标准
+     * CV 模式），等待者（on_disconnection）在同一把锁内等待，两个并发
+     * 正确性问题靠这把锁解决：
+     * 1) 丢失唤醒：等待者的流程是「持锁检查谓词（pending_count_==0）→ 不满
+     *    足则释放锁并睡眠」。若本函数在锁外递减+通知，递减可能落在等待者
+     *    「检查谓词与释放锁入睡」之间：此时通知先于睡眠发生，等待者入睡后
+     *    再也收不到通知，永久阻塞。锁内递减使 fetch_sub 必须等 on_disconnection
+     *    释放锁（即已入睡）才能执行，随后的通知必然被已睡眠的等待者收到
+     * 2) use-after-free：等待者的谓词满足（计数归零）后立即返回，receiver
+     *    随后可能马上清理设备并析构本 handler（设备拔出路径无其他引用）。
+     *    若递减与通知之间还访问本对象的成员（如 cv），即为悬垂访问。锁内
+     *    完成 fetch_sub + notify 保证「计数归零」与「不再触碰 handler」同步
+     *    发生：等待者拿到锁看到谓词满足时，本函数必然已全部执行完
+     */
+    void decrement_pending_and_notify() {
+        std::lock_guard lock(transfer_complete_mutex_);
+        pending_count_.fetch_sub(1, std::memory_order_release);
+        transfer_complete_cv_.notify_one();
+    }
+
     // 这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
     std::atomic_bool client_disconnection = false;
     std::atomic_bool device_removed = false;

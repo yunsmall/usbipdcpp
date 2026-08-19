@@ -14,6 +14,11 @@ struct USBIPDCPP_API UsbInterface {
     std::uint8_t interface_subclass;
     std::uint8_t interface_protocol;
 
+    /// USB 规范接口号（bInterfaceNumber），SET_INTERFACE 的 wIndex 用它匹配。
+    /// 默认 0 与数组下标一致（虚拟设备接口从 0 连续编号）；
+    /// libusb 后端绑定真实设备时按配置描述符填充（跳号设备下标≠接口号）
+    std::uint8_t interface_number = 0;
+
     std::uint8_t current_altsetting = 0;
 
     /// 所有 alternate setting 的端点列表，[altsetting] = 该 alt 的端点

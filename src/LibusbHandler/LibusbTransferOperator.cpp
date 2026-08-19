@@ -4,6 +4,7 @@
 
 #include <asio.hpp>
 #include <libusb.h>
+#include <spdlog/spdlog.h>
 
 #include "usbipdcpp/LibusbHandler/LibusbDeviceHandler.h"
 #include "usbipdcpp/constant.h"
@@ -118,7 +119,11 @@ void LibusbTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::soc
         // offset: buffer 中的包槽位偏移（pkt.length 步长），同时用于数据读取和描述符 offset 字段。
         //   槽位大小由客户端 CMD_SUBMIT 的描述符 length 决定，必须按 pkt.length 步进而非 actual_length，
         //   否则 vhci 会把包 N 的数据错误地写入包 N-1 的槽位中。
-        bool need_to_send_buffer = (length > 0);
+        // 只对 IN 方向发送数据：与内核 stub_tx.c 一致（ISO 的 transfer buffer
+        // 分支全部要求 usb_pipein），vhci 侧对 OUT 传输也不读数据
+        // （usbip_recv_xbuff 对 pipeout 直接返回）。OUT 方向只发描述符
+        bool is_in = (trx->endpoint & LIBUSB_ENDPOINT_IN) != 0;
+        bool need_to_send_buffer = is_in && (length > 0);
         std::uint32_t offset = 0;
         for (int i = 0; i < trx->num_iso_packets; i++) {
             auto &pkt = trx->iso_packet_desc[i];
@@ -160,9 +165,28 @@ void LibusbTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::soc
             return;
     }
 
+    // 校验并读取 ISO 描述符：length/actual_length 是客户端可控字段，必须验证
+    // 才能写入 libusb transfer——libusb 按 length 从缓冲区读写数据，length
+    // 总和超过缓冲区大小（trx->length，ISO 传输不含 setup 前缀）会越界读写
+    // （堆溢出），actual_length 超过 length 则包数据溢出。不合法拒绝整个
+    // 命令（调用方 ec 非空时抛异常断开连接）
+    std::uint64_t total_length = 0;
     for (int i = 0; i < trx->num_iso_packets; i++) {
         UsbIpIsoPacketDescriptor iso_desc{};
         iso_desc.from_socket(sock);
+        if (iso_desc.actual_length > iso_desc.length ||
+            iso_desc.length > static_cast<std::uint32_t>(trx->length) - total_length) [[unlikely]] {
+            SPDLOG_ERROR("ISO 描述符非法：包 {} length={} actual_length={}（剩余缓冲 {}）",
+                         i, iso_desc.length, iso_desc.actual_length,
+                         static_cast<std::uint32_t>(trx->length) - total_length);
+            ec = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        total_length += iso_desc.length;
+        // 客户端描述符里的 offset 被丢弃（set_iso_descriptor 不写它）：libusb
+        // 的 iso_packet_desc 没有 offset 字段（buffer 布局隐式连续），发送端
+        // 的 offset 由 send_transfer_data 按 pkt.length 累加自行计算，恶意或
+        // 错误的 offset 无法影响服务器的数据定位
         set_iso_descriptor(handle, i, iso_desc);
     }
 }

@@ -92,6 +92,10 @@ void VirtualDeviceHandler::on_new_connection(Session &current_session, error_cod
         if (intf.handler) {
             intf.handler->on_new_connection(current_session, ec);
             if (ec) {
+                // 子接口连接建立失败：撤销基类已注册的 session 指针，
+                // 防止残留指向即将析构的 Session（use-after-free，见
+                // AbstDeviceHandler::register_session 注释）
+                remove_session();
                 break;
             }
         }

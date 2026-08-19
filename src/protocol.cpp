@@ -212,8 +212,14 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
     auto data1 = array_add_padding<8>(
             to_network_array(header.to_bytes(), status, actual_length, start_frame, number_of_packets, error_count));
 
-    // 从 transfer 获取数据
-    if (transfer && actual_length > 0) [[likely]] {
+    // 从 transfer 获取数据。入口条件不能只看 actual_length：ISO 传输即使
+    // actual_length 为 0（如全包失败/0 字节）也必须由 operator 发送 iso
+    // 描述符（vhci 按 number_of_packets 读取，不发会错位），数据发不发由
+    // operator 按方向决定（ISO OUT 不发送数据）；非 ISO 传输 actual_length
+    // 为 0 时走 else 分支只发 header——不能把 0 字节的非 ISO 传输放进 op
+    // 路径（如存储后端的零拷贝 send_direct 在 Windows 上
+    // TransmitFile(0) 会发送整个文件）
+    if (transfer && (actual_length > 0 || number_of_packets > 0)) {
         auto *op = transfer.get_operator();
         void *raw_handle = transfer.get();
 
@@ -345,8 +351,10 @@ usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
 }
 
 void UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
+    // status 是客户端请求里的保留字段（协议规定为 0），服务端读后忽略：
+    // 不 assert status == 0——恶意客户端可发任意值，debug 构建下 assert 失败
+    // 会让服务端崩溃（可被远程触发的崩溃点）
     status = read_u32(sock);
-    assert(status == 0);
 }
 
 array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_IMPORT),
@@ -362,7 +370,8 @@ void UsbIpCommand::OpReqImport::to_socket(asio::ip::tcp::socket &sock, error_cod
 
 void usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock) {
     data_read_from_socket(sock, status, busid);
-    assert(status == 0);
+    // 同 OpReqDevlist：不 assert status == 0——status 是请求里的保留字段，
+    // 恶意客户端可发任意值，debug 构建下 assert 失败会让服务端崩溃
 }
 
 void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
@@ -388,6 +397,14 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
                                                  interval, setup_buffer);
     // 设置命令类型
     header.command = USBIP_CMD_SUBMIT;
+
+    // 校验端点号：header.ep 是 32 位，转 uint8_t 会截断，恶意客户端可发
+    // 溢出值（如 0x100）截断后映射到错误端点。协议中 ep 是端点号且不带
+    // 方向位（方向由 direction 字段给出，见 protocol.h 中 UsbIpHeaderBasic::ep
+    // 的注释），合法范围 0-0x7F，超范围按协议错误拒绝
+    if (header.ep > 0x7F) [[unlikely]] {
+        throw std::system_error(std::make_error_code(std::errc::protocol_error), "invalid endpoint number");
+    }
 
     // 解析 setup packet（小端序）
     setup = SetupPacket::parse(setup_buffer);

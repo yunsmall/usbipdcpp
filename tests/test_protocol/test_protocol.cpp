@@ -63,13 +63,15 @@ TEST(TestProtocol, UsbIpHeaderBasicReadSocket) {
 }
 
 TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
-    // IN 传输，没有数据需要读取
+    // IN 传输，没有数据需要读取。
+    // 注意 ep 不带方向位（协议语义，见 protocol.h 的 UsbIpHeaderBasic::ep
+    // 注释），方向由 direction 字段给出，不能写 0x80（会被解析校验拒绝）
     UsbIpHeaderBasic header{
             .command = USBIP_CMD_SUBMIT,
             .seqnum = 0x1234,
             .devid = 0x5678,
             .direction = UsbIpDirection::In,
-            .ep = 0x80
+            .ep = 0x08
     };
 
     asio::io_context io_context;
@@ -180,7 +182,9 @@ void send_cmd_submit_with_packets(std::uint32_t number_of_packets, AbstDeviceHan
         usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x1234));
         usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
         usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(UsbIpDirection::In));
-        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x80));
+        // ep 不带方向位（协议语义，见 protocol.h 的 UsbIpHeaderBasic::ep 注释），
+        // 方向由 direction 字段给出，不能写 0x80（会被解析校验拒绝）
+        usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0x08));
         // transfer 参数：transfer_flags, transfer_buffer_length, start_frame, number_of_packets, interval
         usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(0));
         usbipdcpp::vector_append_to_net(buffer, static_cast<std::uint32_t>(64));
