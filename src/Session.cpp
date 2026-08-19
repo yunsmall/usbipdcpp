@@ -85,7 +85,9 @@ void usbipdcpp::Session::run() {
     });
     main_thread.detach();
     if (server.after_thread_create_callback) {
-        // 回调只用 native_handle 设置线程名等，detach 后的句柄仍可用
+        // 用户回调抛异常不在此捕获：用户自己的代码抛了，用户想做的事
+        // 可能已不正常，异常按原有路径传播（accept_loop 的兜底 catch
+        // 会移除会话记录）——库不为用户回调擦屁股
         server.after_thread_create_callback(ThreadPurpose::SessionMain, main_thread);
     }
 }
@@ -311,7 +313,25 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     // 兜底 catch 移除 session，避免异常逃逸导致 std::terminate
     std::thread sender_thread;
     try {
-        sender_thread = std::thread([&, this]() { sender(sender_ec); });
+        sender_thread = std::thread([&, this]() {
+            try {
+                sender(sender_ec);
+            } catch (const std::exception &e) {
+                // sender 内 to_socket 的 send_transfer_data 可能抛
+                // （SmallVector 扩容 bad_alloc 等），异常不能逃出线程函数
+                // （否则 std::terminate 崩溃整个进程）。置错误码供
+                // transfer_loop 报告
+                SPDLOG_ERROR("sender 线程异常：{}", e.what());
+                sender_ec = make_error_code(ErrorType::INTERNAL_ERROR);
+            } catch (...) {
+                SPDLOG_ERROR("sender 线程未知异常");
+                sender_ec = make_error_code(ErrorType::INTERNAL_ERROR);
+            }
+            // 线程退出标记：唤醒 transfer_loop 的限时等待（sender 函数
+            // 正常路径末尾已置位，此处为异常路径兜底，重复置位无害）
+            sender_done.store(true);
+            data_available_cv.notify_one();
+        });
     } catch (...) {
         SPDLOG_ERROR("sender 线程创建失败，断开本次连接");
         usbipdcpp::error_code disconnect_ec;
@@ -331,7 +351,39 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
         server.after_thread_create_callback(ThreadPurpose::SessionSender, sender_thread);
     }
 
-    receiver(receiver_ec);
+    bool receiver_ok = true;
+    try {
+        receiver(receiver_ec);
+    } catch (const std::exception &e) {
+        SPDLOG_ERROR("receiver 异常：{}", e.what());
+        receiver_ec = make_error_code(ErrorType::INTERNAL_ERROR);
+        receiver_ok = false;
+    } catch (...) {
+        SPDLOG_ERROR("receiver 未知异常");
+        receiver_ec = make_error_code(ErrorType::INTERNAL_ERROR);
+        receiver_ok = false;
+    }
+    if (!receiver_ok) {
+        // receiver 异常路径跳过了其收尾（on_disconnection + 设备回池），
+        // 这里补齐，否则设备滞留 using 列表（清理逻辑与 receiver 末尾
+        // 一致）。不能让它逃出 transfer_loop：sender_thread 尚未 join，
+        // std::thread 析构会 std::terminate 崩溃整个进程
+        usbipdcpp::error_code disconnect_ec;
+        try {
+            current_handler->on_disconnection(disconnect_ec);
+        } catch (...) {
+            SPDLOG_ERROR("on_disconnection 异常");
+        }
+        if (current_handler->is_device_removed()) {
+            std::lock_guard lock(server.get_devices_mutex());
+            server.get_using_devices().erase(*current_import_device_id);
+        }
+        else {
+            server.try_moving_device_to_available(*current_import_device_id);
+        }
+        current_import_device_id.reset();
+        current_import_device.reset();
+    }
     SPDLOG_INFO("receiver退出");
 
     // receiver 结束后 sender 必然在退出路上（should_immediately_stop 已置），
@@ -418,6 +470,9 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
             else {
                 SPDLOG_ERROR("从socket中获取命令时出错：{}", ec.message());
             }
+            // 把错误传出给 transfer_loop（否则上层只能看到默认 0，
+            // 无法区分"正常断开"与"socket 错误断开"）
+            receiver_ec = ec;
             break;
         }
         if (should_immediately_stop) [[unlikely]]
@@ -485,7 +540,17 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                 },
                 command);
     }
-    // 通知设备断连，告诉设备禁止再发消息
+    // 顺序有讲究：必须先通知设备断连，再停 sender，不能反序。
+    // handler 在 on_disconnection 被调用之前一直以为连接还在正常通信
+    // （虚拟设备会持续把数据写入队列，如虚拟串口收到的字节），
+    // on_disconnection 是"连接已断开"的通知：handler 收到后才停止写入、
+    // 完成自己的收尾（可能把最后一批数据入队），随后 sender 才停止、
+    // 尽力把这批最后的数据发送出去（即使连接已失效，发送失败也走
+    // sender 的错误退出路径，无害）。若反序先停 sender，handler 尚未
+    // 收到断连通知、收尾入队的数据会被静默丢弃，虚拟设备表现为
+    // "毫无预兆地断连"。libusb 后端的 on_disconnection 会阻塞等待全部
+    // 传输回调完成（cancel 后回调必触发），期间 sender 仍可能消费队列
+    // 并向已失效的 socket 发送（失败即退出），这是设计允许的
     current_handler->on_disconnection(receiver_ec);
     // 然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
     should_immediately_stop = true;

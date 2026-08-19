@@ -25,6 +25,11 @@ void LibusbTransferLM::destroy(libusb_transfer *p) {
 void LibusbTransferReset::reset(libusb_transfer &t) {
     t.actual_length = 0;
     t.status = LIBUSB_TRANSFER_COMPLETED;
+    // num_iso_packets 只被 libusb_fill_iso_transfer 设置，池只回收非等时
+    // 传输（free_transfer_handle 按 num_iso_packets==0 判回池），复用对象
+    // 本应恒为 0；显式清零把该不变式局部化，防止未来池策略变化（如等时
+    // 也入池）时残留值被非等时路径误读
+    t.num_iso_packets = 0;
 }
 
 } // namespace usbipdcpp::detail
@@ -174,11 +179,15 @@ void LibusbTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::soc
     for (int i = 0; i < trx->num_iso_packets; i++) {
         UsbIpIsoPacketDescriptor iso_desc{};
         iso_desc.from_socket(sock);
+        // 校验写成 total_length + length > trx->length：若写成
+        // length > trx->length - total_length，total_length 超过
+        // trx->length 时无符号减法会下溢成巨大值、校验失效（前序校验
+        // 保证 total_length 恒 ≤ trx->length，实际不会触发，但可读性差）
         if (iso_desc.actual_length > iso_desc.length ||
-            iso_desc.length > static_cast<std::uint32_t>(trx->length) - total_length) [[unlikely]] {
+            total_length + iso_desc.length > static_cast<std::uint64_t>(trx->length)) [[unlikely]] {
             SPDLOG_ERROR("ISO 描述符非法：包 {} length={} actual_length={}（剩余缓冲 {}）",
                          i, iso_desc.length, iso_desc.actual_length,
-                         static_cast<std::uint32_t>(trx->length) - total_length);
+                         static_cast<std::uint64_t>(trx->length) - total_length);
             ec = std::make_error_code(std::errc::invalid_argument);
             return;
         }

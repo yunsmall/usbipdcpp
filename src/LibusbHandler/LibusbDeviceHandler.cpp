@@ -573,18 +573,21 @@ void usbipdcpp::LibusbDeviceHandler::masking_bogus_flags(bool is_out, struct lib
         case LIBUSB_TRANSFER_TYPE_CONTROL:
             /*allowed |= URB_NO_FSBR; */ /* only affects UHCI */
             /* FALLTHROUGH */
-        case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
-            // ISO 包短包（包实际长度小于分配槽位）是正常语义，不能设
-            // SHORT_NOT_OK（否则依赖短包状态的 ISO 设备可能被误报
-            // ERROR）。注：usbipd-libusb 的 masking_bogus_flags 没有此
-            // case、ISO 会掉进 default 被设上 SHORT_NOT_OK，但 Linux
-            // usbfs 的 URB_SHORT_NOT_OK 对 ISO 传输无实际效果（ISO 完成
-            // 状态由 iso_frame_desc 表达，不走 short 检查），此处显式
-            // 排除以符合注释 "all non-iso endpoints" 的意图
-            break;
         default: /* all non-iso endpoints */
             if (!is_out)
                 allowed |= LIBUSB_TRANSFER_SHORT_NOT_OK;
+            break;
+        case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
+            // ISO 包短包（包实际长度小于分配槽位）是正常语义，不能设
+            // SHORT_NOT_OK（否则依赖短包状态的 ISO 设备可能被误报
+            // ERROR）。case 必须放在 default 之后：若放在 CONTROL 之后，
+            // BULK/CONTROL 的 fallthrough 会在这里 break，永远到不了
+            // default，Bulk IN / Control IN 的 SHORT_NOT_OK 会被清除
+            // （曾引入此回归）。注：usbipd-libusb 的 masking_bogus_flags
+            // 没有此 case、ISO 会掉进 default 被设上 SHORT_NOT_OK，但
+            // Linux usbfs 的 URB_SHORT_NOT_OK 对 ISO 传输无实际效果
+            // （ISO 完成状态由 iso_frame_desc 表达，不走 short 检查），
+            // 此处显式排除以符合注释 "all non-iso endpoints" 的意图
             break;
     }
     trx->flags &= allowed;
@@ -759,7 +762,9 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
             if (callback_arg.is_out) {
                 if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) [[unlikely]] {
                     // ISO OUT：转移所有权给响应，由 send_transfer_data 发送
-                    // 描述符（OUT 方向不发送数据，见其注释）
+                    // 描述符（OUT 方向不发送数据，见其注释）。
+                    // start_frame 恒 0（同 IN 分支的注释：libusb 无帧号概念，
+                    // 与 usbipd-libusb 一致）
                     ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
                             callback_arg.seqnum, trxstat2error(trx->status), actual_length,
                             0, trx->num_iso_packets, std::move(callback_arg.transfer));
@@ -773,7 +778,10 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
                 }
             }
             else {
-                // IN 传输：有数据，转移所有权
+                // IN 传输：有数据，转移所有权。
+                // start_frame 恒 0：libusb 传输没有帧号概念（usbfs 的
+                // ISO 即 ASAP 调度），与参考项目 usbipd-libusb 一致
+                // （stub_common.c 的 ret_submit 打包同样填 0）
                 ret = UsbIpResponse::UsbIpRetSubmit::create_ret_submit(callback_arg.seqnum, trxstat2error(trx->status),
                                                                        actual_length,
                                                                        0, // start_frame

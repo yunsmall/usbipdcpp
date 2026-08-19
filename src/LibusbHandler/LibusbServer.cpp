@@ -147,8 +147,14 @@ void LibusbServer::print_device(libusb_device *dev, bool skip_name) {
 }
 
 void LibusbServer::list_host_devices() {
-    libusb_device **devs;
+    libusb_device **devs = nullptr;
     auto dev_nums = libusb_get_device_list(nullptr, &devs);
+    if (dev_nums < 0) {
+        // 失败时 devs 未被赋值（保持 nullptr），不能往下走
+        // libusb_free_device_list(devs, 1)（free 未初始化指针是未定义行为）
+        SPDLOG_ERROR("libusb_get_device_list 失败: {}", libusb_strerror(static_cast<int>(dev_nums)));
+        return;
+    }
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
         if (config.skip_hub) {
             libusb_device_descriptor desc{};
@@ -163,8 +169,13 @@ void LibusbServer::list_host_devices() {
 }
 
 libusb_device *LibusbServer::find_by_busid(const std::string &busid) {
-    libusb_device **devs;
+    libusb_device **devs = nullptr;
     int dev_nums = libusb_get_device_list(nullptr, &devs);
+    if (dev_nums < 0) {
+        // 失败时 devs 未赋值，不能执行下方 free（同 list_host_devices 的注释）
+        SPDLOG_ERROR("libusb_get_device_list 失败: {}", libusb_strerror(dev_nums));
+        return nullptr;
+    }
     for (auto dev_i = 0; dev_i < dev_nums; dev_i++) {
         if (get_device_busid(devs[dev_i]) == busid) {
             auto ret_dev = libusb_ref_device(devs[dev_i]);
@@ -780,6 +791,12 @@ usbipdcpp::error_code LibusbServer::start(asio::ip::tcp::endpoint &ep) {
                 }
                 SPDLOG_TRACE("退出libusb事件循环");
             } catch (const std::exception &e) {
+                // 事件循环异常（如 libusb 内部状态损坏）后无法恢复：所有
+                // 传输回调都依赖本循环派发，循环死了 session 的断连清理
+                // （on_disconnection 等 pending 归零）会永久等待，优雅退出
+                // 无从谈起。用 std::exit 快速失败是唯一安全选择（替代方案
+                // "退出线程"会让所有会话卡死，比崩溃更糟）；退出码留给
+                // 宿主进程的监控/看门狗处理
                 SPDLOG_ERROR("An unexpected exception occurs in libusb handler thread: {}", e.what());
                 std::exit(1);
             }
@@ -807,6 +824,12 @@ usbipdcpp::error_code LibusbServer::start(asio::ip::tcp::endpoint &ep) {
 
 void LibusbServer::stop() {
     stop_hotplug_monitor();
+    // 顺序有讲究：server.stop()（打断 session → on_disconnection 等待
+    // libusb 传输回调）必须在事件线程停止之前——session 的断连清理依赖
+    // 事件线程持续处理回调（cancel 后回调在事件线程触发，pending 计数
+    // 才能归零），先停事件线程会让 on_disconnection 永久等待。事件线程
+    // 在最后 interrupt + join。hotplug deregister 不等待正在执行的回调，
+    // 但回调只操作 devices_mutex 保护的列表，与下方清理互斥
     server.stop();
     SPDLOG_INFO("usbip服务器关闭");
 

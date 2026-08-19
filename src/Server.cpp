@@ -107,6 +107,9 @@ usbipdcpp::error_code usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
         return std::make_error_code(std::errc::resource_unavailable_try_again);
     }
     if (after_thread_create_callback) {
+        // 用户回调抛异常不在此捕获：用户自己的代码抛了，用户想做的事
+        // 可能已不正常，异常按原有路径传播（start 抛给调用方）——库不
+        // 为用户回调擦屁股
         after_thread_create_callback(ThreadPurpose::NetworkIO, network_io_thread);
     }
     return {};
@@ -316,126 +319,137 @@ void usbipdcpp::Server::remove_session(std::uint64_t id) {
 
 
 asio::awaitable<void> usbipdcpp::Server::accept_loop() {
-    while (true) {
-        if (!running) {
-            co_return;
-        }
+    try {
+        while (true) {
+            if (!running) {
+                co_return;
+            }
 
-        // 先创建会话（内部自持 io_context 与 socket，见 Session.h），连接异步
-        // 接受进会话的 socket。id 原子分配单调递增（永不重复），会话收尾/析构
-        // 时直接调 server 的方法移除自身并通知回收完成
-        uint64_t id = next_session_id.fetch_add(1);
-        auto session = std::make_shared<Session>(*this, id);
-        // 创建即计入存活：会话可能从未接受连接（协程被取消），但其析构回调
-        // 同样递减，stop() 的"等待归零"语义覆盖所有已创建会话
-        active_sessions.fetch_add(1);
+            // 先创建会话（内部自持 io_context 与 socket，见 Session.h），连接异步
+            // 接受进会话的 socket。id 原子分配单调递增（永不重复），会话收尾/析构
+            // 时直接调 server 的方法移除自身并通知回收完成
+            uint64_t id = next_session_id.fetch_add(1);
+            auto session = std::make_shared<Session>(*this, id);
+            // 创建即计入存活：会话可能从未接受连接（协程被取消），但其析构回调
+            // 同样递减，stop() 的"等待归零"语义覆盖所有已创建会话
+            active_sessions.fetch_add(1);
 
-        // 注册前检查：缩小 stop() 取消丢失的窗口（最终由 io_context_.stop() 兜底）。
-        // 注册发生在 co_await 求值（await_suspend）时，无法持锁进行"检查+注册"。
-        if (!running) {
-            co_return;
-        }
+            // 注册前检查：缩小 stop() 取消丢失的窗口（最终由 io_context_.stop() 兜底）。
+            // 注册发生在 co_await 求值（await_suspend）时，无法持锁进行"检查+注册"。
+            if (!running) {
+                co_return;
+            }
 
-        // 异步 accept：stop() 通过 acceptor_.cancel() 跨线程取消挂起的 accept
-        // （cancel 是 asio 官方的异步取消接口）。协程挂起期间 session 由协程帧持有
-        asio::error_code ec;
-        co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
-        if (ec) {
-            // 瞬态错误（对端在 accept 前重置/中止连接）在连接频繁建立断开的
-            // 高并发下很常见，直接退出会让服务端静默停止 accept，必须继续循环。
-            // 致命错误（如 EMFILE 资源耗尽、acceptor 被取消/关闭）时同线程
-            // close 立即释放监听端口后退出：不关端口会一直占用到 stop()，
-            // 无法再次 start()（回归测试验证此行为）；stop() 的 close 是幂等
-            // 兜底。acceptor 唯一操作者是本协程（网络线程），同线程 close 安全
-            if (ec == asio::error::connection_reset ||
-                ec == asio::error::connection_aborted ||
-                ec == asio::error::interrupted ||
-                // macOS 特有：客户端在连接建立后、accept 执行前就断开
-                // （FIN/RST）的连接，XNU 的 accept() 返回 EINVAL；Linux 则
-                // 返回已死的 fd，由后续读操作报 ECONNRESET。这是快速连断
-                // 场景下的高频瞬态错误，必须继续循环，否则 accept_loop
-                // 退出后服务端静默停止接受连接（macOS CI 实测
-                // DisconnectRightAfterDevlistRequest 等测试在此处死亡）
-                ec == asio::error::invalid_argument) {
+            // 异步 accept：stop() 通过 acceptor_.cancel() 跨线程取消挂起的 accept
+            // （cancel 是 asio 官方的异步取消接口）。协程挂起期间 session 由协程帧持有
+            asio::error_code ec;
+            co_await acceptor.async_accept(session->socket, asio::redirect_error(asio::use_awaitable, ec));
+            if (ec) {
+                // 瞬态错误（对端在 accept 前重置/中止连接）在连接频繁建立断开的
+                // 高并发下很常见，直接退出会让服务端静默停止 accept，必须继续循环。
+                // 致命错误（如 EMFILE 资源耗尽、acceptor 被取消/关闭）时同线程
+                // close 立即释放监听端口后退出：不关端口会一直占用到 stop()，
+                // 无法再次 start()（回归测试验证此行为）；stop() 的 close 是幂等
+                // 兜底。acceptor 唯一操作者是本协程（网络线程），同线程 close 安全
+                if (ec == asio::error::connection_reset ||
+                    ec == asio::error::connection_aborted ||
+                    ec == asio::error::interrupted ||
+                    // macOS 特有：客户端在连接建立后、accept 执行前就断开
+                    // （FIN/RST）的连接，XNU 的 accept() 返回 EINVAL；Linux 则
+                    // 返回已死的 fd，由后续读操作报 ECONNRESET。这是快速连断
+                    // 场景下的高频瞬态错误，必须继续循环，否则 accept_loop
+                    // 退出后服务端静默停止接受连接（macOS CI 实测
+                    // DisconnectRightAfterDevlistRequest 等测试在此处死亡）
+                    ec == asio::error::invalid_argument) {
+                    continue;
+                }
+                std::error_code close_ec;
+                acceptor.close(close_ec);
+                // 此处不置 running=false：stop() 的完整清理路径（cancel/join/等待
+                // 会话析构归零/清空会话表）依赖 running 为 true 才走主流程，若
+                // 这里提前置 false，stop() 会短路返回并跳过全部清理，导致存活
+                // 会话泄漏、acceptor/端口状态残留，服务器无法干净地再次 start()
+                co_return;
+            }
+
+            // 可能是 stop() 取消后仍完成的连接（竞态），丢弃并退出
+            if (!running) {
+                co_return;
+            }
+
+            // 设置 socket 选项
+            std::error_code socket_opt_ec;
+            if (network_config.socket_recv_buffer_size > 0) {
+                session->socket.set_option(
+                        asio::socket_base::receive_buffer_size(network_config.socket_recv_buffer_size),
+                        socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set receive buffer size: {}", socket_opt_ec.message());
+                }
+            }
+            if (network_config.socket_send_buffer_size > 0) {
+                session->socket.set_option(
+                        asio::socket_base::send_buffer_size(network_config.socket_send_buffer_size),
+                        socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set send buffer size: {}", socket_opt_ec.message());
+                }
+            }
+            if (network_config.tcp_no_delay) {
+                session->socket.set_option(asio::ip::tcp::no_delay(true), socket_opt_ec);
+                if (socket_opt_ec) {
+                    SPDLOG_WARN("Failed to set TCP no_delay: {}", socket_opt_ec.message());
+                }
+            }
+
+            // 用 ec 版获取对端地址：客户端可能在 accept 完成后、协程继续执行
+            // 之前就已断开（尤其 RST），此时 remote_endpoint() 会抛异常。detached
+            // 协程的未捕获异常会导致 std::terminate，因此这里不能抛异常（用 ec
+            // 版），连接已死时直接丢弃 session 继续循环
+            asio::error_code remote_ec;
+            auto remote_endpoint = session->socket.remote_endpoint(remote_ec);
+            if (remote_ec) {
+                SPDLOG_DEBUG("连接在 accept 后立即断开：{}", remote_ec.message());
                 continue;
             }
-            std::error_code close_ec;
-            acceptor.close(close_ec);
-            // 此处不置 running=false：stop() 的完整清理路径（cancel/join/等待
-            // 会话析构归零/清空会话表）依赖 running 为 true 才走主流程，若
-            // 这里提前置 false，stop() 会短路返回并跳过全部清理，导致存活
-            // 会话泄漏、acceptor/端口状态残留，服务器无法干净地再次 start()
-            co_return;
-        }
+            auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
+                                                    remote_endpoint.port());
+            spdlog::info("A new connection from {}", remote_endpoint_name);
 
-        // 可能是 stop() 取消后仍完成的连接（竞态），丢弃并退出
-        if (!running) {
-            co_return;
-        }
+            try {
+                std::lock_guard lock(session_list_mutex);
+                // 仅存 weak_ptr：Session 生命周期自管，Server 不持有引用
+                sessions.emplace(id, session);
+            } catch (...) {
+                // 连接表插入失败（如内存不足）：放弃该会话——active_sessions 已
+                // 在创建时递增，session 离开作用域即析构（析构回调递减），计数
+                // 保持平衡。不能抛给 detached 协程（会终止接受循环），继续 accept
+                continue;
+            }
 
-        // 设置 socket 选项
-        std::error_code socket_opt_ec;
-        if (network_config.socket_recv_buffer_size > 0) {
-            session->socket.set_option(
-                    asio::socket_base::receive_buffer_size(network_config.socket_recv_buffer_size),
-                    socket_opt_ec);
-            if (socket_opt_ec) {
-                SPDLOG_WARN("Failed to set receive buffer size: {}", socket_opt_ec.message());
+            //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
+            //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。
+            try {
+                session->run();
+            } catch (...) {
+                // 主线程创建失败（如系统资源不足）：会话没有线程、不会自行收尾，
+                // 移除其连接记录并放弃该会话（session 离开作用域即析构，析构回调
+                // 递减 active_sessions，计数保持平衡）。不能重抛：detached 协程
+                // 的未捕获异常会让接受协程终止，服务器静默停止接受连接；
+                // 此处继续 accept 循环，资源恢复后即可正常服务
+                remove_session(id);
+                continue;
             }
         }
-        if (network_config.socket_send_buffer_size > 0) {
-            session->socket.set_option(
-                    asio::socket_base::send_buffer_size(network_config.socket_send_buffer_size),
-                    socket_opt_ec);
-            if (socket_opt_ec) {
-                SPDLOG_WARN("Failed to set send buffer size: {}", socket_opt_ec.message());
-            }
-        }
-        if (network_config.tcp_no_delay) {
-            session->socket.set_option(asio::ip::tcp::no_delay(true), socket_opt_ec);
-            if (socket_opt_ec) {
-                SPDLOG_WARN("Failed to set TCP no_delay: {}", socket_opt_ec.message());
-            }
-        }
-
-        // 用 ec 版获取对端地址：客户端可能在 accept 完成后、协程继续执行
-        // 之前就已断开（尤其 RST），此时 remote_endpoint() 会抛异常。detached
-        // 协程的未捕获异常会导致 std::terminate，因此这里不能抛异常（用 ec
-        // 版），连接已死时直接丢弃 session 继续循环
-        asio::error_code remote_ec;
-        auto remote_endpoint = session->socket.remote_endpoint(remote_ec);
-        if (remote_ec) {
-            SPDLOG_DEBUG("连接在 accept 后立即断开：{}", remote_ec.message());
-            continue;
-        }
-        auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
-                                                remote_endpoint.port());
-        spdlog::info("A new connection from {}", remote_endpoint_name);
-
-        try {
-            std::lock_guard lock(session_list_mutex);
-            // 仅存 weak_ptr：Session 生命周期自管，Server 不持有引用
-            sessions.emplace(id, session);
-        } catch (...) {
-            // 连接表插入失败（如内存不足）：放弃该会话——active_sessions 已
-            // 在创建时递增，session 离开作用域即析构（析构回调递减），计数
-            // 保持平衡。不能抛给 detached 协程（会终止接受循环），继续 accept
-            continue;
-        }
-
-        //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
-        //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。
-        try {
-            session->run();
-        } catch (...) {
-            // 主线程创建失败（如系统资源不足）：会话没有线程、不会自行收尾，
-            // 移除其连接记录并放弃该会话（session 离开作用域即析构，析构回调
-            // 递减 active_sessions，计数保持平衡）。不能重抛：detached 协程
-            // 的未捕获异常会让接受协程终止，服务器静默停止接受连接；
-            // 此处继续 accept 循环，资源恢复后即可正常服务
-            remove_session(id);
-            continue;
-        }
+    } catch (const std::exception &e) {
+        // detached 协程的未捕获异常本来就 std::terminate——该崩就崩
+        // （这里只可能是 bad_alloc 等不可恢复异常，继续跑没有意义）。
+        // catch 仅用于打日志留现场，然后重新抛出维持终止行为
+        SPDLOG_ERROR("accept_loop 异常：{}", e.what());
+        throw;
+    } catch (...) {
+        SPDLOG_ERROR("accept_loop 未知异常");
+        throw;
     }
 }
 
