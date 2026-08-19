@@ -128,7 +128,12 @@ KeyboardHandler::KeyboardHandler(UsbInterface &handle_interface, StringPool &str
 void KeyboardHandler::on_new_connection(Session &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
 
-    client_connected_ = true;
+    // 锁内置位再唤醒（与 on_disconnection 同源的标准 CV 模式）：
+    // 无锁置位会让 wait_for_client 的 CV 分支等满超时才醒来
+    {
+        std::lock_guard lock(client_connect_mutex_);
+        client_connected_ = true;
+    }
     client_connected_.notify_all();
     client_connect_cv_.notify_all();
 
@@ -179,7 +184,13 @@ void KeyboardHandler::on_new_connection(Session &current_session, error_code &ec
 }
 
 void KeyboardHandler::on_disconnection(error_code &ec) {
-    should_stop_ = true;
+    // 锁内置位再唤醒（标准 CV 模式）：无锁置位 + notify 会丢失唤醒——
+    // send_thread_ 在 wait 的"检查谓词→睡眠"窗口错过 notify 后永久睡眠，
+    // 下面的 join() 卡死（压测复现）
+    {
+        std::lock_guard lock(state_mutex_);
+        should_stop_ = true;
+    }
     state_cv_.notify_all();
     if (send_thread_.joinable())
         send_thread_.join();

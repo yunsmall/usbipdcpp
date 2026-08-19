@@ -104,7 +104,12 @@ GamepadHandler::GamepadHandler(UsbInterface &handle_interface, StringPool &strin
 void GamepadHandler::on_new_connection(Session &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
 
-    client_connected_ = true;
+    // 锁内置位再唤醒（与 on_disconnection 同源的标准 CV 模式）：
+    // 无锁置位会让 wait_for_client 的 CV 分支等满超时才醒来
+    {
+        std::lock_guard lock(client_connect_mutex_);
+        client_connected_ = true;
+    }
     client_connected_.notify_all();
     client_connect_cv_.notify_all();
 
@@ -142,7 +147,12 @@ void GamepadHandler::on_new_connection(Session &current_session, error_code &ec)
 }
 
 void GamepadHandler::on_disconnection(error_code &ec) {
-    should_stop_ = true;
+    // 锁内置位再唤醒（标准 CV 模式）：无锁置位 + notify 会丢失唤醒，
+    // send_thread_ 永久睡眠导致 join 卡死（与 KeyboardHandler 同源）
+    {
+        std::lock_guard lock(state_mutex_);
+        should_stop_ = true;
+    }
     state_cv_.notify_all();
     if (send_thread_.joinable())
         send_thread_.join();

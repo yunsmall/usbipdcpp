@@ -87,7 +87,12 @@ RelativeMouseHandler::RelativeMouseHandler(UsbInterface &handle_interface, Strin
 void RelativeMouseHandler::on_new_connection(Session &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
 
-    client_connected = true;
+    // 锁内置位再唤醒（与 on_disconnection 同源的标准 CV 模式）：
+    // 无锁置位会让 wait_for_client 的 CV 分支等满超时才醒来
+    {
+        std::lock_guard lock(connect_mutex);
+        client_connected = true;
+    }
     client_connected.notify_all();
     connect_cv.notify_all();
 
@@ -114,7 +119,12 @@ void RelativeMouseHandler::on_new_connection(Session &current_session, error_cod
 }
 
 void RelativeMouseHandler::on_disconnection(error_code &ec) {
-    should_stop = true;
+    // 锁内置位再唤醒（标准 CV 模式）：无锁置位 + notify 会丢失唤醒，
+    // send_thread 永久睡眠导致 join 卡死（与 KeyboardHandler 同源）
+    {
+        std::lock_guard lock(state_mutex);
+        should_stop = true;
+    }
     state_cv.notify_all();
     if (send_thread.joinable())
         send_thread.join();
