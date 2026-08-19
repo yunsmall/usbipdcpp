@@ -127,12 +127,15 @@ struct SetupPacket {
         return !is_out();
     }
 
+    /// 计算带方向位的 ep0 端点地址：OUT 控制传输（主机到设备，含
+    /// wLength==0 的无数据阶段）为 0x00，IN（设备到主机）为 0x80。
+    /// 当前库内无调用点（保留为公共 API）
     [[nodiscard]] std::uint8_t calc_ep0_address() const {
         if (is_out()) {
-            return 0x80;
+            return 0x00;
         }
         else {
-            return 0x00;
+            return 0x80;
         }
     }
 

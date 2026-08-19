@@ -425,6 +425,10 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
     auto *routing_op = transfer.get_operator();
     std::uint8_t real_ep = static_cast<std::uint8_t>(header.ep);
+    // direction 不显式校验（非 0/1 值按 Out 处理）：与内核 usbip 模块和
+    // usbipd-libusb 一致（都只判断 == USBIP_DIR_IN），非法值还原出的
+    // 端点地址不会命中任何真实端点，后续 find_ep 失败自然拒绝，无内存
+    // 安全影响
     if (header.direction == UsbIpDirection::In)
         real_ep |= 0x80;
     auto *leaf_op = routing_op->get_operator_for_ep(real_ep);

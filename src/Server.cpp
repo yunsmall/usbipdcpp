@@ -300,7 +300,14 @@ void usbipdcpp::Server::on_session_exit() {
 void usbipdcpp::Server::remove_session(std::uint64_t id) {
     // 会话析构前调用（session 线程收尾），移除自身的 weak_ptr 记录
     std::lock_guard lock(session_list_mutex);
-    sessions.erase(id);
+    // 幂等：同一 id 只处理一次。accept_loop 对 session->run() 抛异常的
+    // 兜底清理与 session 线程正常收尾可能都调用本函数（run 内部
+    // detach 后 after_thread_create_callback 若抛异常，两条路径都会到
+    // 这里），第二次调用时 erase 返回 0，跳过回调，避免
+    // session_exit_callbacks 重复执行
+    if (sessions.erase(id) == 0) {
+        return;
+    }
     // 调用回调
     for (auto &callback: session_exit_callbacks) {
         callback();

@@ -144,11 +144,17 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
             SPDLOG_DEBUG("控制传输 {}，ep addr: {:02x}", ep.direction() == UsbEndpoint::Direction::Out ? "Out" : "In",
                          ep.address);
 
-            // 校验 setup 的 wLength 与 transfer_buffer_length 一致（内核 stub
-            // 侧由 usbcore 保证二者相等）：libusb_fill_control_transfer 会按
-            // wLength 设置传输长度（8 + wLength），若 wLength 大于按
+            // 校验 wLength 不超过 transfer_buffer_length：libusb_fill_control_transfer
+            // 会按 wLength 设置传输长度（8 + wLength），若 wLength 大于按
             // transfer_buffer_length 分配的缓冲区，libusb 提交后读写会越界
-            // （堆溢出）。恶意客户端可构造 wLength=0xFFFF 触发，必须拒绝
+            // （堆溢出）。恶意客户端可构造 wLength=0xFFFF 触发，必须拒绝。
+            // 不要求严格相等：内核 usbcore（usb_submit_urb）虽然对
+            // wLength != transfer_buffer_length 返回 -EBADR，但那是客户端
+            // 主机侧约束（Linux/Android vhci 的 URB 必然相等）；Windows
+            // vhci（usbip-win2）无此约束，可能发送 wLength <
+            // transfer_buffer_length 的包。此时数据阶段按
+            // transfer_buffer_length 读取（协议固定字段），多余的字节
+            // 读掉即丢弃、后续协议流不错位，无内存风险
             if (setup_packet.length > transfer_buffer_length) [[unlikely]] {
                 SPDLOG_ERROR("控制传输 wLength({}) 大于 transfer_buffer_length({})，拒绝传输",
                              setup_packet.length, transfer_buffer_length);
@@ -178,10 +184,31 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
             trx->flags = get_libusb_transfer_flags(transfer_flags);
             masking_bogus_flags(setup_packet.is_out(), trx);
 
+            bool duplicate_seqnum = false;
             {
                 std::lock_guard lock(transfers_mutex_);
-                transfers_.emplace(seqnum, callback_args);
-                pending_count_.fetch_add(1, std::memory_order_release);
+                // 拒绝重复 seqnum：transfers_ 以 seqnum 为 key，两个在途
+                // 传输共用同一 key 时，回调/unlink/submit 失败路径的
+                // erase 会错删先提交传输的记录，响应与取消语义全乱
+                // （RET_SUBMIT 与 RET_UNLINK 可能乱序）。协议要求 seqnum
+                // 单调递增（内核 vhci 原子递增），重复属客户端违规。
+                // 本次传输不提交给设备，按 EPIPE 回复
+                if (transfers_.contains(seqnum)) [[unlikely]] {
+                    duplicate_seqnum = true;
+                }
+                else {
+                    transfers_.emplace(seqnum, callback_args);
+                    pending_count_.fetch_add(1, std::memory_order_release);
+                }
+            }
+            if (duplicate_seqnum) [[unlikely]] {
+                callback_args->transfer.reset();
+                if (!callback_args_pool_.free(callback_args)) {
+                    delete callback_args;
+                }
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                return;
             }
 
             LATENCY_TRACK(session->latency_tracker, seqnum, "LibusbDeviceHandler::receive_urb libusb_submit_transfer");
@@ -285,10 +312,28 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
         trx->flags = get_libusb_transfer_flags(transfer_flags);
         masking_bogus_flags(is_out, trx);
 
+        bool duplicate_seqnum = false;
         {
             std::lock_guard lock(transfers_mutex_);
-            transfers_.emplace(seqnum, callback_args);
-            pending_count_.fetch_add(1, std::memory_order_release);
+            // 拒绝重复 seqnum（同控制传输分支的注释：transfers_ 以
+            // seqnum 为 key，重复会让两个在途传输共用一个 entry，
+            // erase/取消语义错乱）。按 EPIPE 回复，不提交给设备
+            if (transfers_.contains(seqnum)) [[unlikely]] {
+                duplicate_seqnum = true;
+            }
+            else {
+                transfers_.emplace(seqnum, callback_args);
+                pending_count_.fetch_add(1, std::memory_order_release);
+            }
+        }
+        if (duplicate_seqnum) [[unlikely]] {
+            callback_args->transfer.reset();
+            if (!callback_args_pool_.free(callback_args)) {
+                delete callback_args;
+            }
+            session->submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            return;
         }
 
         auto err = libusb_submit_transfer(trx);
@@ -365,6 +410,12 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_s
                 // 回调会走 unlink 分支入队 RET_UNLINK（带实际状态码）并唤醒 sender。
             }
             else if (err) [[unlikely]] {
+                // libusb 契约：已提交的传输最终必触发回调（cancel 成功或
+                // NOT_FOUND=已完成待派发，回调都以取消/完成状态触发），
+                // 回调因 unlinking 已置位会入队 RET_UNLINK，此处无需立即
+                // 回复。与参考项目 usbipd-libusb 的 stub_recv_cmd_unlink
+                // 一致（只打日志）；若在错误分支立即入队 RET_UNLINK 而
+                // 回调后来也触发，会发两个 RET_UNLINK（协议违规）
                 SPDLOG_ERROR("libusb_cancel_transfer failed: {}", libusb_strerror(err));
             }
         }
@@ -522,6 +573,15 @@ void usbipdcpp::LibusbDeviceHandler::masking_bogus_flags(bool is_out, struct lib
         case LIBUSB_TRANSFER_TYPE_CONTROL:
             /*allowed |= URB_NO_FSBR; */ /* only affects UHCI */
             /* FALLTHROUGH */
+        case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
+            // ISO 包短包（包实际长度小于分配槽位）是正常语义，不能设
+            // SHORT_NOT_OK（否则依赖短包状态的 ISO 设备可能被误报
+            // ERROR）。注：usbipd-libusb 的 masking_bogus_flags 没有此
+            // case、ISO 会掉进 default 被设上 SHORT_NOT_OK，但 Linux
+            // usbfs 的 URB_SHORT_NOT_OK 对 ISO 传输无实际效果（ISO 完成
+            // 状态由 iso_frame_desc 表达，不走 short 检查），此处显式
+            // 排除以符合注释 "all non-iso endpoints" 的意图
+            break;
         default: /* all non-iso endpoints */
             if (!is_out)
                 allowed |= LIBUSB_TRANSFER_SHORT_NOT_OK;
