@@ -13,7 +13,8 @@
 #include "usbipdcpp/network.h"
 #include "usbipdcpp/protocol.h"
 
-usbipdcpp::Session::Session(Server &server) : server(server), socket(session_io_context) {
+usbipdcpp::Session::Session(Server &server, std::uint64_t id) :
+    server(server), id(id) {
 }
 
 void usbipdcpp::Session::enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
@@ -42,25 +43,14 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
 }
 
 usbipdcpp::Session::~Session() {
-    // 正常路径下 run_thread 已被取空（stop() 的 join 或线程末尾的 detach），
-    // 这里只是兜底：万一仍持有 joinable 句柄，避免 std::thread 析构直接 terminate
-    std::thread finished;
-    {
-        std::lock_guard lock(run_thread_mutex);
-        if (run_thread.joinable()) {
-            finished = std::move(run_thread);
-        }
-    }
-    if (finished.joinable()) {
-        if (finished.get_id() == std::this_thread::get_id()) {
-            finished.detach(); // 本线程内析构自己：不能 join 自己（死锁）
-        }
-        else {
-            finished.join();
-        }
-    }
+    // 主线程句柄已在 run() 就地 detach 不存成员，子线程（sender）已在
+    // transfer_loop 内 join 完毕，此处无需线程句柄收尾
     // 注意：不能在析构中打日志。若进程正在退出（如测试 main 返回），spdlog 的
     // 全局 registry 可能已随静态析构销毁，此时打日志会访问已析构对象导致段错误
+    // 通知 Server 析构完成，必须放在析构体末尾：
+    // 回调在析构体开头执行的话，stop() 按计数判断可能提前返回并析构 Server，
+    // 此处再访问 Server（notify_session_destroyed 触碰 reap_cv）即 use-after-free
+    server.notify_session_destroyed();
 }
 
 void usbipdcpp::Session::run() {
@@ -69,7 +59,11 @@ void usbipdcpp::Session::run() {
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionMain);
     }
-    run_thread = std::thread([self = std::move(self)]() {
+    // 主线程句柄就地 detach 不存成员：线程
+    // 收尾时不再触碰自身句柄，避免与 run() 的赋值并发访问 std::thread 对象
+    // （std::thread 对象非线程安全）。线程体内持有 self，return 时最后一个
+    // 引用释放即自析构
+    std::thread main_thread([self = std::move(self)]() {
         try {
             self->parse_op();
         } catch (const std::exception &e) {
@@ -80,44 +74,12 @@ void usbipdcpp::Session::run() {
         }
 
         // 处理结束后自动往服务器中删除自身并触发退出回调
-        self->server.remove_session(self.get());
-
-        // 线程句柄收尾：锁内取出句柄（成员置空），锁外 detach。
-        // 与 Server::stop() 的 join() 互斥（都先拿 run_thread_mutex 再取句柄），
-        // 不会出现两个线程并发操作 std::thread 对象。
-        // - 客户端主动断开路径：stop() 还没来，这里取出并 detach 自己
-        //   （线程无法 join 自己；detach 后本函数返回，self 释放，~Session
-        //   在本线程内执行时 run_thread 已空，析构安全）
-        // - stop() 路径：stop() 已把句柄取走并 join 中，这里取出的是空，无事
-        std::thread finished;
-        {
-            std::lock_guard lock(self->run_thread_mutex);
-            if (self->run_thread.joinable()) {
-                finished = std::move(self->run_thread);
-            }
-        }
-        if (finished.joinable()) {
-            finished.detach();
-        }
+        self->server.remove_session(self->id);
     });
+    main_thread.detach();
     if (server.after_thread_create_callback) {
-        server.after_thread_create_callback(ThreadPurpose::SessionMain, run_thread);
-    }
-}
-
-void usbipdcpp::Session::join() {
-    // 锁内取出句柄（成员置空），锁外 join：join 期间不持锁，线程退出路径
-    // 拿锁取句柄时不会死锁。取出后成员非 joinable，线程末尾/~Session 无需
-    // 再做任何线程句柄操作
-    std::thread finished;
-    {
-        std::lock_guard lock(run_thread_mutex);
-        if (run_thread.joinable()) {
-            finished = std::move(run_thread);
-        }
-    }
-    if (finished.joinable()) {
-        finished.join();
+        // 回调只用 native_handle 设置线程名等，detach 后的句柄仍可用
+        server.after_thread_create_callback(ThreadPurpose::SessionMain, main_thread);
     }
 }
 
@@ -243,17 +205,30 @@ void usbipdcpp::Session::parse_op() {
 close_socket:
     std::error_code ignore_ec;
     SPDLOG_INFO("尝试关闭socket");
-    // 只 shutdown（优雅断开）不 close：这里 close 会与 Server::stop() 的
-    // immediately_stop 里的 cancel 并发操作同一 socket（asio 禁止共享对象并发，
-    // close 不在线程安全白名单内），reactive 后端中 close 的
-    // cleanup_descriptor_data 与 cancel 的 cancel_ops 操作同一 op_queue，
-    // 偶发数据竞态导致挂起（本地循环第 1303 次复现）。
-    // socket 最终由 Session 析构时成员自动关闭（无并发）
-    socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+    // 收尾统一关闭 socket（shutdown + close），与 immediately_stop 的
+    // shutdown/cancel 分属不同线程，close 与 cancel 并发操作同一 socket 是
+    // asio 未定义行为（reactive 后端中 close 的 cleanup_descriptor_data 与
+    // cancel 的 cancel_ops 操作同一 op_queue，偶发数据竞态导致挂起，本地循环
+    // 第 1303 次复现），故用 socket_mutex 互斥。
+    // socket 提前 close 后，~Session 的 socket 析构不再访问 io_context
+    // （已关闭的 socket 析构快速返回），Session 线程自析构即使晚于 Server
+    // 析构也不会悬垂访问
+    {
+        std::lock_guard lock(socket_mutex);
+        socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+        socket.close(ignore_ec);
+    }
 }
 
 void usbipdcpp::Session::immediately_stop() {
-    should_immediately_stop = true;
+    if (should_immediately_stop.exchange(true)) {
+        // 幂等：只处理一次。置位即保证 socket 已由本函数处理（shutdown+cancel
+        // 打断阻塞读），无需重复操作。注意置位路径不只有本函数——receiver /
+        // sender 退出时也会置位（它们只是退出标志，不操作 socket）；真正操作
+        // socket 的只有本函数与收尾的 close_socket（socket_mutex 互斥），
+        // 不存在"置位但无人操作 socket"的路径
+        return;
+    }
 
     std::error_code ignore_ec;
     // shutdown 和 cancel 缺一不可，两个平台打断挂起同步读的机制互补
@@ -262,11 +237,21 @@ void usbipdcpp::Session::immediately_stop() {
     // - Windows：shutdown 不唤醒挂起的 WSAPoll（实测 15 秒以上仍卡住，实际要
     //   等 TcpTimedWaitDelay 240 秒连接超时才返回）；cancel 内部调用
     //   WSACancelBlockingCall 立即打断同步读
-    // 两者在对方平台都无效但无害。不用 close：asio 文档明确 close 不线程安全
-    // （socket 共享对象只有 send/receive/connect/shutdown 相互之间线程安全），
-    // 跨线程 close 与读并发曾导致 CI 上 Linux/macOS 卡死
-    socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
-    socket.cancel(ignore_ec);
+    // 两者在对方平台都无效但无害。顺序必须先 shutdown 再 cancel：若先 cancel，
+    // 而读线程恰好处于"检查缓冲与注册 WSARecv/WSASend 之间"的窗口，cancel
+    // 没有挂起操作可取消会被丢弃，随后注册的 I/O 挂起且 shutdown 不打断已
+    // 挂起的操作，会话将永久阻塞；先 shutdown 则任何"之后注册"的 I/O 都会
+    // 立即失败，cancel 负责取消"已挂起"的。
+    // 不用 close：asio 文档明确 close 不线程安全（socket 共享对象只有
+    // send/receive/connect/shutdown 相互之间线程安全），跨线程 close 与读并发
+    // 曾导致 CI 上 Linux/macOS 卡死。close 只由会话收尾执行（parse_op 的
+    // close_socket），与这里的 shutdown/cancel 用 socket_mutex 互斥（close
+    // 与 cancel 并发是未定义行为）
+    {
+        std::lock_guard lock(socket_mutex);
+        socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+        socket.cancel(ignore_ec);
+    }
     // 唤醒 sender 线程，否则它卡在 data_available_cv.wait() 上直到 receiver 退出。
     data_available_cv.notify_one();
     SPDLOG_INFO("成功调用shutdown");
@@ -280,6 +265,13 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     if (server.before_thread_create_callback) {
         server.before_thread_create_callback(ThreadPurpose::SessionSender);
     }
+    // 先创建 sender 线程再执行接收循环：sender_thread 句柄必然先于收尾
+    // （join sender）就绪，不存在句柄未赋值的中间状态——若两线程句柄先后
+    // 赋值，主线程可能在子线程句柄赋值前就收尾，随后才创建的子线程会把
+    // 残留响应写到已关闭的 socket。
+    // 创建失败（如系统资源不足）抛异常传播出 transfer_loop，由主线程的兜底
+    // catch（run()）统一收尾：移除自身并析构，避免异常逃逸导致
+    // std::terminate，也避免会话卡在"已注册但无线程"的中间状态
     std::thread sender_thread([&, this]() { sender(sender_ec); });
     if (server.after_thread_create_callback) {
         server.after_thread_create_callback(ThreadPurpose::SessionSender, sender_thread);
@@ -287,6 +279,35 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
 
     receiver(receiver_ec);
     SPDLOG_INFO("receiver退出");
+
+    // receiver 结束后 sender 必然在退出路上（should_immediately_stop 已置），
+    // 唯一可能卡住的是挂起的写（对端不读、TCP 窗口满）。限时等待 sender
+    // 自然退出，超时后锁内 close 强制打断：
+    // close 与 sender 挂起的 write 并发是设计用途而非 UB，依据如下：
+    // 1) asio 文档（cancel 的说明）：可移植取消应"Use the close() function
+    //    to simultaneously cancel the outstanding operations and close the
+    //    socket"——close 专门用于打断挂起的异步操作（完成 operation_aborted）；
+    // 2) Windows：close 即 closesocket，句柄关闭后内核保证挂起的 WSASend
+    //    IRP 完成并投递到 IOCP（win_iocp_socket_service_base.ipp），阻塞
+    //    中的 write_some 随即返回；
+    // 3) Linux：close 经 deregister_descriptor（epoll_reactor.ipp）在
+    //    descriptor mutex 下把挂起操作置 operation_aborted 并通过
+    //    post_deferred_completions 同步投递，阻塞中的写被唤醒返回。
+    // 文档"Shared objects: Unsafe"是语言层面的保守表述，close 取消挂起
+    // 操作是文档明确推荐的例外场景。
+    {
+        std::unique_lock lock(swap_mutex);
+        data_available_cv.wait_for(lock, std::chrono::milliseconds(100),
+                                   [this] { return sender_done.load(); });
+    }
+    if (!sender_done.load()) {
+        std::error_code ignore_ec;
+        {
+            std::lock_guard lock(socket_mutex);
+            socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+            socket.close(ignore_ec);
+        }
+    }
     sender_thread.join();
     SPDLOG_INFO("sender thread退出");
 
@@ -484,13 +505,20 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
         if (sending_ec) {
             // TCP 写入失败，立即关闭 session 双向通信。
             // 仅 break 退出 sender 会让 receiver 继续运行直到 keepalive 超时。
-            // shutdown + cancel 跨平台打断 receiver 的挂起同步读（见 immediately_stop 注释）
+            // shutdown + cancel 跨平台打断 receiver 的挂起同步读（见
+            // immediately_stop 注释）；与收尾的 close 互斥（socket_mutex）
             should_immediately_stop = true;
             std::error_code ignore_ec;
-            socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
-            socket.cancel(ignore_ec);
+            {
+                std::lock_guard lock(socket_mutex);
+                socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+                socket.cancel(ignore_ec);
+            }
             // ec = sending_ec;
             break;
         }
     }
+    // 线程退出标记：唤醒 transfer_loop 的限时等待（见 transfer_loop 注释）
+    sender_done.store(true);
+    data_available_cv.notify_one();
 }

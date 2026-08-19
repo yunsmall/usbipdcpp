@@ -23,6 +23,9 @@ endfunction()
 add_test_dir(test_protocol)
 
 add_test_file(test_network)
+# 连接/停止/竞态类测试（需高频重复才能暴露问题），与纯数据测试分开：
+# 高频重复直接 ctest --repeat until-fail:N -R "TestNetworkConnection"
+add_test_file(test_network_connection)
 add_test_file(test_stringpool)
 add_test_file(test_usb_device)
 add_test_file(test_setup_packet)

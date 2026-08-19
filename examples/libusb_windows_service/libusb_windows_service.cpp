@@ -65,7 +65,13 @@ void WINAPI service_main(DWORD argc, LPWSTR *argv) {
     LibusbServer server(config);
 
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), g_port);
-    server.start(endpoint);
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        g_status.dwCurrentState = SERVICE_STOPPED;
+        g_status.dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR;
+        SetServiceStatus(g_status_handle, &g_status);
+        return;
+    }
     server.bind_existing_devices();
 
     g_status.dwCurrentState = SERVICE_RUNNING;

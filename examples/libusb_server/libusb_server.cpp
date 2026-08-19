@@ -148,7 +148,10 @@ int main(int argc, char **argv) {
     LibusbServer libusb_server(server_config);
 
     asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), port);
-    libusb_server.start(endpoint);
+    if (auto ec = libusb_server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
 
     // SPDLOG_DEBUG("直接绑定3-5-1");
     // server.bind_host_device(server.find_by_busid("3-5-1"));

@@ -70,11 +70,16 @@ inline void rst_disconnect(asio::ip::tcp::socket &client) {
     client.close();
 }
 
-// 轮询等待服务器上所有 session 退出（客户端断连后 session 线程在退出前
-// 自行从列表中移除自身），超时返回 false
+// 轮询等待服务器清理完所有已断开的连接：客户端断开后 session 线程收尾
+// 并移除自身（get_session_count 返回存活会话数），归零即清理完成。连接若还
+// 停留在 accept 队列中（未创建 session）计数同样为 0，此时提前返回无碍——
+// 后续 stop() 的活跃会话计数等待（含所有已创建 session）会兜底等干净
 inline bool wait_sessions_gone(Server &server, std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (server.get_session_count() != 0 && std::chrono::steady_clock::now() < deadline) {
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (server.get_session_count() == 0) {
+            return true;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return server.get_session_count() == 0;

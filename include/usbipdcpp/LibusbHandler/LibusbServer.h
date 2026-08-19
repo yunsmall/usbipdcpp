@@ -142,10 +142,12 @@ public:
      * Also starts the hotplug monitor if enabled and supported.
      *
      * @param ep The TCP endpoint to listen on.
+     * @return The error code if the server fails to start (e.g. port already
+     *         in use), no error otherwise. Does not throw.
      *
      * @thread_safety 不可并发调用。至多调用一次（需先 stop() 才能再次调用）。
      */
-    void start(asio::ip::tcp::endpoint &ep);
+    usbipdcpp::error_code start(asio::ip::tcp::endpoint &ep);
 
     /**
      * @brief Stop the server.

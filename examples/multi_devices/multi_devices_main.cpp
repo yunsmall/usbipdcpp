@@ -35,7 +35,10 @@ int main(int argc, char **argv) {
     asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
 
     // 启动服务器
-    server.start(endpoint);
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
 
     SPDLOG_INFO("Server started on port {} with {} devices", port, devices.size());
     SPDLOG_INFO("Use 'usbip list -r localhost --tcp-port {}' to list devices", port);

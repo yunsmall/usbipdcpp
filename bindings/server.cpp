@@ -21,7 +21,11 @@ void bind_server(py::module_ &m) {
         .def("start", [](usbipdcpp::Server &self, const std::string &address, unsigned short port) {
             asio::ip::tcp::endpoint ep(asio::ip::make_address(address), port);
             py::gil_scoped_release release;
-            self.start(ep);
+            // start 不抛异常，错误通过返回值报告（便于无异常环境的嵌入式平台），
+            // 语言绑定在这里转回异常抛给调用方
+            if (auto ec = self.start(ep); ec) {
+                throw std::runtime_error("server start failed: " + ec.message());
+            }
         }, py::arg("address"), py::arg("port"))
         .def("stop", [](usbipdcpp::Server &self) {
             py::gil_scoped_release release;

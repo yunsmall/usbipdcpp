@@ -69,7 +69,10 @@ int main(int argc, char **argv) {
     server.add_device(std::move(device));
 
     asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
-    server.start(endpoint);
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
 
     SPDLOG_INFO("Multi-interface HID started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Interface 0: relative mouse (square pattern)");

@@ -64,8 +64,6 @@ std::shared_ptr<UsbDevice> make_mock_keyboard(StringPool &string_pool) {
     return mock_keyboard;
 }
 
-// 探测一个空闲端口，固定端口才能验证多次 start 的监听不冲突
-// （已在 test_utils.h 提供共享版 probe_free_port，直接使用）
 } // namespace
 
 TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
@@ -73,16 +71,15 @@ TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
     // immediately_stop 要能打断 receiver，设备要能移回可用列表，所有 session
     // 线程 join 后 stop() 才返回，保证之后析构 Server 时没有线程还在访问它
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
 
     // string_pool 必须先于 server 声明（后于 server 析构），handler 保存其引用
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     for (int round = 0; round < 2; round++) {
-        server.start(ep);
+        ASSERT_FALSE(server.start(ep));
 
         // 连接服务器，轮询等待监听就绪
         asio::ip::tcp::socket client(io);
@@ -152,11 +149,10 @@ TEST(TestNetworkVdev, ClientRstWithoutAnyData) {
     // 以连接重置错误返回（SOCKET_ERR 路径，区别于 FIN 的 EOF 路径），
     // session 干净退出，stop() 不卡
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     usbipdcpp::Server server;
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -171,11 +167,10 @@ TEST(TestNetworkVdev, ClientSendsHalfOpThenDisconnects) {
     // 只发送 1 个字节就断开：服务器读 2 字节的 version 时卡在半个头上，
     // 随后 EOF。这是"半包断开"最极端的形态，session 要干净退出
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     usbipdcpp::Server server;
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -192,14 +187,13 @@ TEST(TestNetworkVdev, ClientDisconnectsRightAfterImportRequest) {
     // 回复时发现连接已断。session 要干净退出，设备不能卡在 using_devices——
     // 重启后重新 import 同一设备必须成功
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -217,7 +211,7 @@ TEST(TestNetworkVdev, ClientDisconnectsRightAfterImportRequest) {
     server.stop();
 
     // 重启后重新 import 同一设备：设备没卡在 using_devices 才能成功
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -233,15 +227,14 @@ TEST(TestNetworkVdev, ClientDisconnectsAfterSuccessfulImport) {
     // （on_disconnection → 设备移回可用列表）。3 轮循环验证设备可以反复
     // 导入-释放，没有泄漏在 using_devices 中
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
     for (int round = 0; round < 3; round++) {
-        server.start(ep);
+        ASSERT_FALSE(server.start(ep));
         {
             asio::ip::tcp::socket client(io);
             ASSERT_TRUE(connect_with_retry(client, ep));
@@ -257,14 +250,13 @@ TEST(TestNetworkVdev, ClientRstDuringTransfer) {
     // import 成功后传输进行中客户端 RST（不发 FIN）：receiver 的挂起读要以
     // 连接重置错误返回并走完整清理路径，设备释放，之后可再次 import
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -275,7 +267,7 @@ TEST(TestNetworkVdev, ClientRstDuringTransfer) {
     server.stop();
 
     // 重启后重新 import 验证设备已释放
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -290,14 +282,13 @@ TEST(TestNetworkVdev, TwoClientsContendForSameDevice) {
     // 两个客户端抢同一设备：A import 成功后 B 再 import 同一设备要收到 NA；
     // A 断开释放设备后 C 才能 import 成功
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
 
     // A 先 import 成功
     asio::ip::tcp::socket client_a(io);
@@ -327,11 +318,10 @@ TEST(TestNetworkVdev, ClientSendsGarbageThenDisconnects) {
     // 发送无意义字节流后断开：解析要么报未知版本/命令，要么读中断，
     // 服务器不能崩，session 干净退出
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     usbipdcpp::Server server;
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -349,14 +339,13 @@ TEST(TestNetworkVdev, StopRightAfterImportRequest) {
     // immediately_stop 要在 import 处理的任意阶段打断 session。
     // 关键断言：重启后设备不在 using_devices（没泄漏），可以再 import
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
     {
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -373,7 +362,7 @@ TEST(TestNetworkVdev, StopRightAfterImportRequest) {
     client.close();
 
     // 重启后重新 import：若设备卡在 using_devices 会收到 NA
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -390,14 +379,13 @@ TEST(TestNetworkVdev, ClientDisconnectsDuringUrbTransfer) {
     // 覆盖设备侧在途 URB 清理（on_disconnection）和 sender 写失败分支，
     // 设备必须释放，重启后可再次 import
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -425,7 +413,7 @@ TEST(TestNetworkVdev, ClientDisconnectsDuringUrbTransfer) {
     server.stop();
 
     // 重启后重新 import 验证设备已释放
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -440,14 +428,13 @@ TEST(TestNetworkVdev, ImportNonexistentDevice) {
     // 客户端 import 一个不存在的设备：服务器回复 NoDev，session 正常收尾
     // 不崩；之后 import 真实设备仍然正常
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -458,7 +445,7 @@ TEST(TestNetworkVdev, ImportNonexistentDevice) {
     server.stop();
 
     // 真实设备不受影响
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));
@@ -474,14 +461,13 @@ TEST(TestNetworkVdev, ClientReconnectLoop) {
     // 设备每次都要正确释放回可用列表。FIN 和 RST 断开方式交替，
     // 10 轮后服务器仍然正常工作
     asio::io_context io;
-    const std::uint16_t port = probe_free_port(io);
-    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), port);
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     StringPool string_pool;
     usbipdcpp::Server server;
     server.add_device(make_mock_keyboard(string_pool));
 
-    server.start(ep);
+    ASSERT_FALSE(server.start(ep));
     for (int round = 0; round < 10; round++) {
         asio::ip::tcp::socket client(io);
         ASSERT_TRUE(connect_with_retry(client, ep));

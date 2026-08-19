@@ -81,7 +81,10 @@ int main(int argc, char **argv) {
 
     asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
 
-    server.start(endpoint);
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
 
     SPDLOG_INFO("Mock CDC ACM (virtual serial port) started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);

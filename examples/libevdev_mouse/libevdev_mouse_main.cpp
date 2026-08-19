@@ -111,7 +111,10 @@ int main(int argc, char **argv) {
 
         server.add_device(std::move(libevdev_mouse));
 
-        server.start(endpoint);
+        if (auto ec = server.start(endpoint); ec) {
+            SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+            return 1;
+        }
 
         SPDLOG_INFO("Libevdev mouse started on port {}, busid {}", port, busid);
         SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);

@@ -63,7 +63,10 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    server.start(endpoint);
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
     spdlog::info("enter any thing to stop the server");
 
     std::string line;

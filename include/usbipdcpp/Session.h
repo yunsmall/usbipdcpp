@@ -22,19 +22,25 @@ class Server;
 class AbstDeviceHandler;
 
 /**
- * @brief 一个连接创建一个 Session，生命周期由 shared_ptr 管理：session 线程自身
- * 持有 self 保证运行期间不被析构；Server 的会话列表是 weak_ptr 不持有，
- * stop()/~Server 通过快照临时持有以便 join。
- * Session 线程句柄遵循 joinable + join 的标准停止协议：Server::stop() 逐个 join，
- * 客户端主动断开时线程在退出前自行 detach（常规路径唯一的 detach 点，
- * ~Session 的兜底分支除外）。
+ * @brief 一个连接创建一个 Session，生命周期自管：session 线程持有 shared_ptr
+ * 快照（run() 获取 self），线程 return 时最后一个引用释放即自析构（析构前
+ * 调 server.remove_session(id) 让 Server 移除自身 weak_ptr 记录，析构体末尾
+ * 调 server.notify_session_destroyed() 通知 Server 回收完成）。Server 的会话
+ * 列表是 weak_ptr 不持有，stop() 释放快照引用后等待全部会话自析构完成，
+ * 保证 Server 存活期间无 Session 线程残留。
+ * socket 自持本会话的 io_context（见成员声明顺序），连接的生命周期完全由
+ * 本会话自己管理，不依赖 Server 的 io_context。
  * 请确保 Session 存活的时候 Server 未被析构，不然是未定义行为。
  */
 class USBIPDCPP_API Session final : public std::enable_shared_from_this<Session> {
     friend class Server;
 
 public:
-    explicit Session(Server &server);
+    /**
+     * @brief 由 Server 创建。id 由 Server 分配（原子递增，永不重复），会话
+     *        收尾时用它从 Server 的会话表中移除自身
+     */
+    Session(Server &server, std::uint64_t id);
     Session(const Session &) = delete;
     Session(Session &&) = delete;
 
@@ -84,12 +90,6 @@ private:
      */
     void run();
 
-    /**
-     * @brief 等待本 session 线程结束（阻塞）。由 Server::stop() 和 ~Server 兜底调用。
-     * 若线程已因客户端断开而自行 detach（句柄已被取走），则立即返回。
-     */
-    void join();
-
     // 双缓冲队列：生产者写入 write_buffer，消费者读取 read_buffer
     // 交换时短暂加锁，大幅减少锁竞争
     std::deque<UsbIpResponse::RetVariant> write_buffer;
@@ -124,15 +124,30 @@ private:
     std::shared_mutex current_import_device_data_mutex;
 
     Server &server;
-    asio::io_context session_io_context{};
-    asio::ip::tcp::socket socket;
+    // 会话 id：由 Server 分配（原子递增，永不重复），收尾时用它从 Server
+    // 的会话表中移除自身
+    std::uint64_t id;
+    // 本会话自持的处理上下文，声明在 socket 之前：析构时 socket 先析构
+    // （上下文还活着），随后 io_context 才销毁，顺序安全。socket 自持上下文
+    // 后连接的生命周期完全由本会话自己管理，不依赖 Server 的 io_context——
+    // accept 由 Server 的协程式 async_accept 直接接受进本 socket，不存在
+    // 跨 io_context 转移
+    asio::io_context io_context;
+    // 关联自持上下文，由 accept_loop 接受连接
+    asio::ip::tcp::socket socket{io_context};
+    // 保护 socket 的关闭类操作：会话收尾的 close 与 immediately_stop 的
+    // cancel/shutdown 分属不同线程，close 与 cancel 并发会破坏 asio 内部
+    // 状态（未定义行为），必须互斥。读写的 send/receive 不经此锁（asio
+    // 文档允许与 shutdown 并发）
+    std::mutex socket_mutex;
 
 
-    // session 主线程。停止协议（joinable + join）：
-    // - Server::stop() 通过 join() 等待本线程结束
-    // - 客户端主动断开时，本线程在退出前自行 detach
-    // 锁内取出句柄、锁外 join/detach，避免两个路径并发操作 std::thread 对象
-    std::thread run_thread;
-    std::mutex run_thread_mutex;
+    // 主线程句柄不在成员中：run() 用局部句柄就地 detach——线程收尾不再
+    // 触碰自身句柄，避免与 run() 的赋值并发访问 std::thread 对象。子线程
+    // （sender）是 transfer_loop 的局部变量，创建/join/析构全在本线程内，
+    // 无需成员句柄
+    // sender 线程已退出标记：transfer_loop 收尾用它做限时等待（sender 可能
+    // 卡在挂起的写，超时后 close 强制打断，见 transfer_loop）
+    std::atomic_bool sender_done = false;
 };
 }
