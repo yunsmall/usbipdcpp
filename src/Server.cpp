@@ -342,7 +342,14 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
             // 兜底。acceptor 唯一操作者是本协程（网络线程），同线程 close 安全
             if (ec == asio::error::connection_reset ||
                 ec == asio::error::connection_aborted ||
-                ec == asio::error::interrupted) {
+                ec == asio::error::interrupted ||
+                // macOS 特有：客户端在连接建立后、accept 执行前就断开
+                // （FIN/RST）的连接，XNU 的 accept() 返回 EINVAL；Linux 则
+                // 返回已死的 fd，由后续读操作报 ECONNRESET。这是快速连断
+                // 场景下的高频瞬态错误，必须继续循环，否则 accept_loop
+                // 退出后服务端静默停止接受连接（macOS CI 实测
+                // DisconnectRightAfterDevlistRequest 等测试在此处死亡）
+                ec == asio::error::invalid_argument) {
                 continue;
             }
             std::error_code close_ec;
