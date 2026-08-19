@@ -194,16 +194,40 @@ void usbipdcpp::Session::parse_op() {
                     else
                         SPDLOG_TRACE("发送 OpRepImport 包出错{}", ec.message());
 
-                    if (cmd_transferring) {
-                        usbipdcpp::error_code transferring_ec;
-                        // 进入通信状态
-                        transfer_loop(transferring_ec);
-                        if (transferring_ec) {
-                            SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
-                            ec = transferring_ec;
-                        }
+                    if (!ec) [[likely]] {
+                        if (cmd_transferring) {
+                            usbipdcpp::error_code transferring_ec;
+                            // 进入通信状态
+                            transfer_loop(transferring_ec);
+                            if (transferring_ec) {
+                                SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
+                                ec = transferring_ec;
+                            }
 
-                        // on_disconnection 和设备清理已在 receiver 中处理
+                            // on_disconnection 和设备清理已在 receiver 中处理
+                        }
+                    }
+                    else if (cmd_transferring) {
+                        // OP_REP_IMPORT 发送失败：连接已不可用，立即收尾，
+                        // 不等 receiver 读到错误再清理（窗口内设备滞留
+                        // using 列表，拔出/stop 竞争时状态不一致）。清理逻辑
+                        // 与 transfer_loop 中 sender 线程创建失败的路径一致：
+                        // 通知 handler 断连释放设备接口，按 is_device_removed()
+                        // 决定从 using 移除或移回可用列表。不能进入
+                        // transfer_loop——receiver 会再次清理（current_handler
+                        // 已 reset），二次清理是空指针访问
+                        SPDLOG_ERROR("发送 OpRepImport 失败，断开本次连接: {}", ec.message());
+                        usbipdcpp::error_code disconnect_ec;
+                        current_handler->on_disconnection(disconnect_ec);
+                        if (current_handler->is_device_removed()) {
+                            std::lock_guard lock(server.get_devices_mutex());
+                            server.get_using_devices().erase(*current_import_device_id);
+                        }
+                        else {
+                            server.try_moving_device_to_available(*current_import_device_id);
+                        }
+                        current_import_device_id.reset();
+                        current_import_device.reset();
                     }
                 }
                 else {

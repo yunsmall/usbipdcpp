@@ -15,6 +15,7 @@ enum class DeviceOperationResult {
     Success, ///< Operation completed successfully
     DeviceNotFound, ///< Device was not found in the device list
     DeviceInUse, ///< Device is currently in use and cannot be modified
+    DeviceAlreadyBound, ///< Device with same busid is already bound
     DeviceOpenFailed, ///< Failed to open the device
     GetDescriptorFailed, ///< Failed to get device descriptor
     GetConfigFailed, ///< Failed to get configuration descriptor

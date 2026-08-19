@@ -1,5 +1,6 @@
 #include "usbipdcpp/LibusbHandler/LibusbDeviceHandler.h"
 
+#include <chrono>
 #include <spdlog/spdlog.h>
 
 #include "usbipdcpp/Endpoint.h"
@@ -10,6 +11,20 @@
 #include "usbipdcpp/protocol.h"
 
 using namespace usbipdcpp;
+
+namespace {
+// 回调中取设备 busid 用于日志：libusb 契约保证回调执行期间 trx->dev_handle
+// 必然有效（提交时 handle 持引用计数，直到 libusb_close 才释放，而 close
+// 在 on_disconnection 等 pending_count_ 归零、全部回调完成之后），
+// libusb_get_device 也恒返回 handle->dev 非空。判空仅为防御 libusb 版本
+// 行为差异（如某些后端在 NO_DEVICE 时提前清理 handle 内部状态）
+std::string get_trx_device_busid(libusb_transfer *trx) {
+    if (auto *dev = libusb_get_device(trx->dev_handle)) {
+        return get_device_busid(dev);
+    }
+    return "unknown";
+}
+} // namespace
 
 // 普通模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device) :
@@ -83,8 +98,17 @@ void usbipdcpp::LibusbDeviceHandler::on_disconnection(error_code &ec) {
 
     // 等待所有传输完成
     {
+        // libusb 契约保证已提交的传输最终必触发回调（取消的传输同样以
+        // CANCELLED 完成，见 libusb_cancel_transfer 文档），等待必然结束。
+        // 超时仅作为 libusb 内部错误的诊断手段（与 Server::stop 的
+        // reap_cv 超时模式一致）；不能超时后放弃等待直接继续——回调仍可能
+        // 在事件线程执行并访问本 handler，handler 提前析构是 use-after-free
         std::unique_lock lock(transfer_complete_mutex_);
-        transfer_complete_cv_.wait(lock, [this]() { return pending_count_.load(std::memory_order_acquire) == 0; });
+        if (!transfer_complete_cv_.wait_for(lock, std::chrono::seconds(10),
+                                            [this]() { return pending_count_.load(std::memory_order_acquire) == 0; })) {
+            SPDLOG_ERROR("on_disconnection 等待传输完成超时（剩余 {} 个），继续等待", pending_count_.load());
+            transfer_complete_cv_.wait(lock, [this]() { return pending_count_.load(std::memory_order_acquire) == 0; });
+        }
     }
 
     // 为下次连接做准备，重置对象池状态
@@ -485,6 +509,9 @@ uint8_t usbipdcpp::LibusbDeviceHandler::get_libusb_transfer_flags(uint32_t in) {
 }
 
 void usbipdcpp::LibusbDeviceHandler::masking_bogus_flags(bool is_out, struct libusb_transfer *trx) {
+    // 结构与 is_out 判定（控制传输按方向位或 wLength==0 视为 OUT，即无数据
+    // 阶段）均与参考项目 usbipd-libusb 的 masking_bogus_flags 一致
+    // （driver-libusb/stub_rx.c，两者同为 usbip 服务器实现）
     std::uint32_t allowed = 0;
     /* enforce simple/standard policy */
     switch (trx->type) {
@@ -586,25 +613,25 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
                 trx->status = LIBUSB_TRANSFER_COMPLETED;
             }
             else {
-                SPDLOG_ERROR("dev {}: error on endpoint {}", get_device_busid(libusb_get_device(trx->dev_handle)),
+                SPDLOG_ERROR("dev {}: error on endpoint {}", get_trx_device_busid(trx),
                              trx->endpoint);
             }
             break;
         case LIBUSB_TRANSFER_CANCELLED:
             SPDLOG_INFO("dev {}: unlinked by a call to usb_unlink_urb()",
-                        get_device_busid(libusb_get_device(trx->dev_handle)));
+                        get_trx_device_busid(trx));
             break;
         case LIBUSB_TRANSFER_STALL:
             SPDLOG_ERROR("dev {}: endpoint {} is stalled",
-                         get_device_busid(libusb_get_device(trx->dev_handle)), trx->endpoint);
+                         get_trx_device_busid(trx), trx->endpoint);
             break;
         case LIBUSB_TRANSFER_NO_DEVICE:
-            SPDLOG_INFO("dev {}: device removed?", get_device_busid(libusb_get_device(trx->dev_handle)));
+            SPDLOG_INFO("dev {}: device removed?", get_trx_device_busid(trx));
             callback_arg.handler->device_removed = true;
             break;
         default:
             SPDLOG_WARN("dev {}: urb completion with unknown status {}",
-                        get_device_busid(libusb_get_device(trx->dev_handle)),
+                        get_trx_device_busid(trx),
                         static_cast<int>(trx->status));
             break;
     }

@@ -186,7 +186,11 @@ void LibusbTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::soc
         // 客户端描述符里的 offset 被丢弃（set_iso_descriptor 不写它）：libusb
         // 的 iso_packet_desc 没有 offset 字段（buffer 布局隐式连续），发送端
         // 的 offset 由 send_transfer_data 按 pkt.length 累加自行计算，恶意或
-        // 错误的 offset 无法影响服务器的数据定位
+        // 错误的 offset 无法影响服务器的数据定位。协议线格式数据本来就是
+        // 紧凑的：客户端（Linux vhci）发送 ISO 数据时按描述符 offset 从本地
+        // URB buffer 紧凑复制进 PDU（内核 usbip_common.c 的
+        // usbip_alloc_iso_desc_pdu：memcpy 目标逐个 length 连续累加），
+        // 不存在带间隙的线上布局
         set_iso_descriptor(handle, i, iso_desc);
     }
 }

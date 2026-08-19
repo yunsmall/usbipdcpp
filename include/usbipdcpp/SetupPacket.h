@@ -115,6 +115,10 @@ struct SetupPacket {
                request_type == static_cast<std::uint8_t>(RequestRecipient::Device);
     }
 
+    /// 判断控制传输是否为 OUT 方向。`|| !length`：wLength==0 时无数据阶段，
+    /// 按 OUT（不发送数据回客户端）处理。与参考项目 usbipd-libusb 的
+    /// masking_bogus_flags 判定一致（driver-libusb/stub_rx.c：
+    /// `is_out = !(bmRequestType & USB_DIR_IN) || !wLength`）
     [[nodiscard]] bool is_out() const {
         return !(request_type & 0x80) || !length;
     }

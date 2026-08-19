@@ -237,6 +237,21 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
     // 创建 UsbDevice 和 LibusbDeviceHandler
     {
         std::lock_guard lock(server.get_devices_mutex());
+        // 拒绝重复绑定同一 busid：导入时 try_moving_device_to_using 按
+        // busid 匹配，重复项会让同一 busid 对应多个设备、导入结果不确定；
+        // 拔出清理（handle_device_left）也只按 busid 移除一个，重复项会残留。
+        // 在锁内手写查重（不能调 has_bound_device——它内部取读锁，与这里
+        // 的写锁重入未定义行为）
+        for (const auto &d: server.get_available_devices()) {
+            if (d->busid == get_device_busid(dev)) {
+                libusb_unref_device(dev);
+                return DeviceOperationResult::DeviceAlreadyBound;
+            }
+        }
+        if (server.get_using_devices().contains(get_device_busid(dev))) {
+            libusb_unref_device(dev);
+            return DeviceOperationResult::DeviceInUse;
+        }
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
                 .path = std::format("/sys/bus/{}/{}/{}", libusb_get_bus_number(dev), libusb_get_device_address(dev),
                                     libusb_get_port_number(dev)),
@@ -356,6 +371,16 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     // 创建 UsbDevice 和 LibusbDeviceHandler
     {
         std::lock_guard lock(server.get_devices_mutex());
+        // 拒绝重复绑定同一 busid（同 bind_host_device 的注释：导入按 busid
+        // 匹配、拔出按 busid 移除，重复项会导致行为不确定）。锁内手写查重
+        for (const auto &d: server.get_available_devices()) {
+            if (d->busid == busid) {
+                return DeviceOperationResult::DeviceAlreadyBound;
+            }
+        }
+        if (server.get_using_devices().contains(busid)) {
+            return DeviceOperationResult::DeviceInUse;
+        }
         auto current_device = std::make_shared<UsbDevice>(UsbDevice{
                 .path = std::format("/sys/bus/{}/{}/{}", bus_num, dev_addr, dev_num),
                 .busid = busid,
@@ -501,17 +526,17 @@ DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &bu
         }
     }
     if (auto device = server_using_devices.find(busid); device != server_using_devices.end()) {
-        if (auto libusb_device_handler = std::dynamic_pointer_cast<LibusbDeviceHandler>((*device).second->handler)) {
-            if (libusb_device_handler->native_handle) {
-                libusb_close(libusb_device_handler->native_handle);
-                libusb_device_handler->native_handle = nullptr;
-            }
-            if (libusb_device_handler->native_device_) {
-                libusb_unref_device(libusb_device_handler->native_device_);
-                libusb_device_handler->native_device_ = nullptr;
-            }
-            server_using_devices.erase(device);
-            spdlog::info("删除正在使用设备中的{}", busid);
+        // 设备正在使用中：不能直接 close handle / unref device——挂起的
+        // libusb 传输回调持有 handler 裸指针，erase 后 handler 引用计数归零
+        // 即析构，回调再访问 handler 是 use-after-free；且 session 对设备
+        // 拔出毫无感知。与 handle_device_left 的拔出路径一致：置
+        // device_removed 并触发会话停止，由 session 收尾（on_disconnection）
+        // 完成取消传输、等待回调、释放接口的完整清理，随后设备按
+        // is_device_removed() 从 using 列表移除，不会移回可用列表
+        if (std::dynamic_pointer_cast<LibusbDeviceHandler>(device->second->handler)) {
+            device->second->handler->on_device_removed();
+            SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+            device->second->handler->trigger_session_stop();
             return DeviceOperationResult::Success;
         }
     }
@@ -634,7 +659,12 @@ void LibusbServer::handle_device_arrived(libusb_device *device) {
     SPDLOG_INFO("检测到新设备插入:");
     print_device(device, true);
 
-    // 如果启用了热插拔自动绑定，自动绑定新设备
+    // 自动绑定的 bind_host_device 会调 libusb_get_active_config_descriptor：
+    // Linux 主平台（usbfs 后端）该调用是同步 ioctl，不经过 libusb 事件
+    // 循环，在热插拔回调中调用安全；darwin（macOS）等同步 I/O 走事件循环
+    // 的后端理论上有嵌套事件处理风险，但本项目无该平台的真设备运行场景。
+    // 不把绑定投递到工作线程：引入队列/线程/生命周期管理复杂度，嵌入式
+    // 平台实现困难，而主平台行为已被验证安全
     if (config.auto_bind_hotplug) {
         SPDLOG_INFO("自动绑定新设备: {}", busid);
         libusb_ref_device(device); // bind_host_device 会接管引用
