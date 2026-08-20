@@ -77,7 +77,11 @@ void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer
                 req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
     }
     else {
-        // 没有请求，将报告加入队列等待
+        // 没有请求，将报告加入队列等待。
+        // 队列超限时丢最旧（主机长期不读中断 IN 时防止内存无限增长）
+        if (pending_input_reports_.size() >= MAX_PENDING_INPUT_REPORTS) {
+            pending_input_reports_.pop_front();
+        }
         pending_input_reports_.emplace_back(static_cast<const std::uint8_t *>(data.data()),
                                             static_cast<const std::uint8_t *>(data.data()) + data.size());
     }
@@ -113,9 +117,14 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec
 void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum,
                                                                  std::uint32_t cmd_seqnum) {
     std::lock_guard lock(endpoint_requests_mutex_);
-    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
-    // 不管找没找到都返回成功
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
+    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
+    // 与内核 stub_tx.c（priv->unlinking 时 RET_UNLINK 带 urb->status=-ECONNRESET，
+    // 否则 0）及 usbipd-libusb 一致，也是本项目 LibusbDeviceHandler 的 unlink
+    // 范本（trxstat2error(CANCELLED)=-ECONNRESET、找不到回 0）
+    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
 // ========== 控制请求处理 ==========

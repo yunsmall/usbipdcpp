@@ -92,9 +92,17 @@ void VirtualDeviceHandler::on_new_connection(Session &current_session, error_cod
         if (intf.handler) {
             intf.handler->on_new_connection(current_session, ec);
             if (ec) {
-                // 子接口连接建立失败：撤销基类已注册的 session 指针，
-                // 防止残留指向即将析构的 Session（use-after-free，见
-                // AbstDeviceHandler::register_session 注释）
+                // 子接口连接建立失败：先回滚前面已成功建连的接口（它们可能已启动
+                // 发送线程，不通知断开会留下运行中的线程，析构时 join 卡死），
+                // 再撤销基类已注册的 session 指针，防止残留指向即将析构的
+                // Session（use-after-free，见 AbstDeviceHandler::register_session 注释）
+                error_code rollback_ec;
+                for (auto &done: handle_device.interfaces) {
+                    if (&done == &intf)
+                        break;
+                    if (done.handler)
+                        done.handler->on_disconnection(rollback_ec);
+                }
                 remove_session();
                 break;
             }
@@ -226,6 +234,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         }
                         default: {
                             SPDLOG_WARN("Device Unhandled StandardRequest {}", static_cast<int>(std_request));
+                            // 未处理的请求回 EPIPE，不能留在默认 0（StatusOK）上报告成功
+                            status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                         }
                     }
                     // 将数据写入 transfer_handle
@@ -275,6 +285,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             }
                             default: {
                                 SPDLOG_WARN("Interface Unhandled StandardRequest {}", static_cast<int>(std_request));
+                                // 未处理的请求回 EPIPE，不能留在默认 0（StatusOK）上报告成功
+                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                             }
                         }
                         // transfer 析构时自动释放
@@ -311,6 +323,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             }
                             default: {
                                 SPDLOG_WARN("Interface Unhandled StandardRequest {}", static_cast<int>(std_request));
+                                // 未处理的请求回 EPIPE，不能留在默认 0（StatusOK）上报告成功
+                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                             }
                         }
                         // 将数据写入 transfer_handle
@@ -362,6 +376,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                     default: {
                                         SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}", setup_packet.index,
                                                     static_cast<int>(std_request));
+                                        // 未处理的请求回 EPIPE，不能留在默认 0（StatusOK）上报告成功
+                                        status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                                     }
                                 }
                                 // transfer 析构时自动释放
@@ -389,6 +405,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                     default: {
                                         SPDLOG_WARN("Endpoint {:04x} Unhandled StandardRequest {}", setup_packet.index,
                                                     static_cast<int>(std_request));
+                                        // 未处理的请求回 EPIPE，不能留在默认 0（StatusOK）上报告成功
+                                        status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                                     }
                                 }
                                 // 将数据写入 transfer_handle
@@ -720,14 +738,20 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
     }
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
-        auto class_specific_descriptor = intf.handler->get_class_specific_descriptor();
+        // 接口未注册 handler 时跳过 class-specific 描述符（与 handle_control_urb 的 EPIPE 处理一致）
+        auto class_specific_descriptor =
+                intf.handler ? intf.handler->get_class_specific_descriptor() : data_type{};
 
         auto num_alts = intf.endpoints.size();
         if (num_alts == 0)
             num_alts = 1; // 至少保证 alt 0 如果没有初始化
 
+        // 无端点接口（如纯控制接口）：alt_endpoints 用空列表，防止 endpoints[0] 越界
+        static const std::vector<UsbEndpoint> no_endpoints;
         for (std::size_t alt = 0; alt < num_alts; alt++) {
-            auto &alt_endpoints = (alt < intf.endpoints.size()) ? intf.endpoints[alt] : intf.endpoints[0];
+            auto &alt_endpoints = intf.endpoints.empty()
+                                          ? no_endpoints
+                                          : (alt < intf.endpoints.size() ? intf.endpoints[alt] : intf.endpoints[0]);
             data_type intf_desc;
             InterfaceDesc{0x09, static_cast<std::uint8_t>(DescriptorType::Interface),
                           static_cast<std::uint8_t>(i), // bInterfaceNumber
@@ -736,12 +760,12 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                           intf.interface_class, // bInterfaceClass
                           intf.interface_subclass, // bInterfaceSubClass
                           intf.interface_protocol, // bInterfaceProtocol
-                          intf.handler->get_string_interface_value()} // iInterface
+                          (intf.handler ? intf.handler->get_string_interface_value() : std::uint8_t{0})} // iInterface
                     .append_to(intf_desc);
             // class-specific 描述符默认只放 alt 0（TinyUSB 做法），alt>0 只放端点。
             // 若放所有 alt，UVC 的 config descriptor 会被撑到超过 255 字节导致 Windows 截断解析失败。
             // UAC 的 AS 接口描述符很小且 alt 1 必须有格式描述符，通过 put_class_specific_descriptor_in_all_alts 放行
-            bool all_alts = intf.handler->put_class_specific_descriptor_in_all_alts();
+            bool all_alts = intf.handler && intf.handler->put_class_specific_descriptor_in_all_alts();
             if ((alt == 0 || all_alts) && !class_specific_descriptor.empty()) {
                 intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
             }
@@ -827,10 +851,15 @@ data_type VirtualDeviceHandler::get_device_qualifier_descriptor(std::uint8_t lan
     // USB 2.0 §9.6.2: 高速设备必须返回 other-speed 信息
     // 返回全速模式下的设备描述信息（bMaxPacketSize0 等与高速相同）
     std::shared_lock lock(data_mutex);
+    // bcdUSB 用 usb_version 的 operator uint16_t() 编码（BCD：major<<8 |
+    // minor<<4 | patch），与 device descriptor 一致，不能只拆 minor/major
+    // 漏掉 patch。拆成大小端两字节塞进字节数组描述符
+    std::uint16_t bcd_usb = usb_version;
     data_type desc = {
             0x0A,                                                           // bLength
             static_cast<std::uint8_t>(DescriptorType::DeviceQualifier),     // bDescriptorType
-            usb_version.minor, usb_version.major,                           // bcdUSB
+            static_cast<std::uint8_t>(bcd_usb & 0x00FF),                    // bcdUSB 低字节
+            static_cast<std::uint8_t>(bcd_usb >> 8),                        // bcdUSB 高字节
             handle_device.device_class,                                     // bDeviceClass
             handle_device.device_subclass,                                  // bDeviceSubClass
             handle_device.device_protocol,                                  // bDeviceProtocol

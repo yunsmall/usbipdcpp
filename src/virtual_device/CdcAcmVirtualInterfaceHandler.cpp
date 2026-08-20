@@ -255,9 +255,12 @@ void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) 
 
 void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     std::lock_guard lock(endpoint_requests_mutex_);
-    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
-    // 不管找没找到都返回成功
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
+    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
+    // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
+    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
 // ==================== CdcAcmDataInterfaceHandler ====================
@@ -289,9 +292,12 @@ void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     std::lock_guard lock(endpoint_requests_mutex_);
-    endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
-    // 不管找没找到都返回成功
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(cmd_seqnum));
+    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
+    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
+    // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
+    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
 void CdcAcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,

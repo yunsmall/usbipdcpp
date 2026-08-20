@@ -25,10 +25,17 @@ struct USBIPDCPP_API UsbInterface {
     std::vector<std::vector<UsbEndpoint>> endpoints;
 
     [[nodiscard]] const std::vector<UsbEndpoint> &current_endpoints() const {
-        return endpoints[current_altsetting < endpoints.size() ? current_altsetting : 0];
+        // 无端点接口（如纯控制接口）返回空列表，防止 endpoints[0] 越界
+        static const std::vector<UsbEndpoint> no_endpoints;
+        return endpoints.empty()
+                       ? no_endpoints
+                       : endpoints[current_altsetting < endpoints.size() ? current_altsetting : 0];
     }
     std::vector<UsbEndpoint> &current_endpoints() {
-        return endpoints[current_altsetting < endpoints.size() ? current_altsetting : 0];
+        static std::vector<UsbEndpoint> no_endpoints;
+        return endpoints.empty()
+                       ? no_endpoints
+                       : endpoints[current_altsetting < endpoints.size() ? current_altsetting : 0];
     }
 
     std::shared_ptr<VirtualInterfaceHandler> handler;

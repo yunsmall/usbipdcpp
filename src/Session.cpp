@@ -514,12 +514,13 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                             }
                         }
                         else {
-                            SPDLOG_WARN("找不到端点{}", real_ep);
-                            // 通过 sender 队列发送，避免 receiver 和 sender 两个线程
-                            // 并发写同一 TCP socket 导致数据流损坏。
-                            submit_ret_submit(
-                                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(
-                                            cmd2.header.seqnum, 0));
+                            // 找不到 real_ep 对应的端点。静默丢弃、不回 EPIPE，
+                            // 与内核 usbip 的 stub_rx.c get_pipe()（if (pipe==-1)
+                            // return，无响应）及 usbipd-libusb 的
+                            // stub_get_transfer_type()（type>MASK 时 return）一致：
+                            // 正常客户端只发设备配置描述符里真实存在的端点，
+                            // 找不到说明是异常/非法输入的兜底，丢弃即可
+                            SPDLOG_WARN("找不到端点{}，静默丢弃该 CMD_SUBMIT", real_ep);
                         }
                     }
                     else if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdUnlink, T>) {

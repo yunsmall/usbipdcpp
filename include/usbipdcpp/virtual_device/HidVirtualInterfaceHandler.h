@@ -186,7 +186,10 @@ protected:
 
     /**
      * @brief 待发送的输入报告队列
+     *
+     * 主机长期不发起中断 IN 请求时报告会堆积，超过上限丢最旧（见 send_input_report）
      */
+    static constexpr std::size_t MAX_PENDING_INPUT_REPORTS = 1024;
     std::deque<data_type> pending_input_reports_;
 
     bool has_pending_input_reports() const {

@@ -238,6 +238,13 @@ public:
     }
 
     void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
+        // 注意：HID 等基于 GenericTransfer 的类（handle_control_urb、
+        // handle_interrupt_transfer、send_input_report 里的
+        // GenericTransfer::from_handle）硬性依赖 handle 是 GenericTransfer。
+        // 默认 GenericTransferOperator 符合此假设；仅存储类（MSC 的
+        // StorageTransferOperator，走 Bulk 不经 from_handle）例外。除非你
+        // 清楚自己在做什么，否则不要给依赖 GenericTransfer 的接口换非
+        // Generic 的 op，否则 from_handle 强转是未定义行为
         transfer_op_ = std::move(op);
     }
 
