@@ -7,6 +7,7 @@
 #include <asio/read.hpp>
 
 #include "usbipdcpp/type.h"
+#include "usbipdcpp/utils/utils.h"
 
 namespace usbipdcpp {
 

@@ -5,6 +5,7 @@
 
 // 通用类请求码（SET_CUR/GET_CUR 等）和类特定描述符类型（CS_INTERFACE 等）
 #include "usbipdcpp/type.h"
+#include "usbipdcpp/utils/utils.h"
 #include "usbipdcpp/virtual_device/UsbClassConstants.h"
 
 namespace usbipdcpp {

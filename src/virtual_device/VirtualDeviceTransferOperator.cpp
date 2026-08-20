@@ -15,7 +15,14 @@ TransferOperator *VirtualDeviceTransferOperator::get_operator_for_ep(std::uint8_
 void *VirtualDeviceTransferOperator::alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
                                                            const UsbIpHeaderBasic &header,
                                                            const SetupPacket &setup_packet) {
-    auto *leaf_op = get_operator_for_ep(static_cast<std::uint8_t>(header.ep));
+    // header.ep 是 USB/IP 线格式端点号（不带方向位），需按 direction 补上方向位
+    // 再查注册表（ep_operators_ 的键是含方向位的完整端点地址，见
+    // setup_interface_handlers 的 register_endpoint_operator）。与
+    // UsbIpCmdSubmit::from_socket 还原 real_ep 的逻辑保持一致
+    std::uint8_t real_ep = static_cast<std::uint8_t>(header.ep);
+    if (header.direction == UsbIpDirection::In)
+        real_ep |= 0x80;
+    auto *leaf_op = get_operator_for_ep(real_ep);
     return leaf_op->alloc_transfer_handle(buffer_length, num_iso_packets, header, setup_packet);
 }
 

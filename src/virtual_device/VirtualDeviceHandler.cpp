@@ -3,6 +3,7 @@
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/utils/utils.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
@@ -229,7 +230,9 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         case StandardRequest::GetStatus: {
                             SPDLOG_TRACE("设备GetStatus");
                             auto gotten_status = request_get_status(&status);
-                            vector_append_to_net(result, gotten_status);
+                            // USB 控制传输数据阶段多字节字段小端（GetStatus 返回 2 字节
+                            // 设备状态，低字节在前），不能用网络字节序
+                            vector_append_to_le(result, gotten_status);
                             break;
                         }
                         default: {
@@ -308,7 +311,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             case StandardRequest::GetStatus: {
                                 SPDLOG_TRACE("接口request_get_status");
                                 auto ret = handler->request_get_status(&status);
-                                vector_append_to_net(result, ret);
+                                // USB 控制传输数据阶段多字节字段小端，不能用网络字节序
+                                vector_append_to_le(result, ret);
                                 break;
                             }
                             case StandardRequest::GetDescriptor: {
@@ -394,7 +398,8 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                         SPDLOG_TRACE("端点request_endpoint_get_status");
                                         auto gotten_status =
                                                 handler->request_endpoint_get_status(setup_packet.index, &status);
-                                        vector_append_to_net(result, gotten_status);
+                                        // USB 控制传输数据阶段多字节字段小端，不能用网络字节序
+                                        vector_append_to_le(result, gotten_status);
                                         break;
                                     }
                                     case StandardRequest::SynchFrame: {

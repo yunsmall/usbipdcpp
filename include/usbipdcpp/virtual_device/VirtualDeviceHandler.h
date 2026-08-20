@@ -119,19 +119,42 @@ protected:
 
 public:
     void change_string_configuration(const std::wstring &new_str) {
-        string_pool.change_string(string_configuration_value, new_str);
+        // 首次设置（索引 0 未分配）时先分配有效索引，避免 change_string(0) 抛异常；
+        // 已分配则直接更新。四个 change_string_* 统一此健壮性处理
+        if (string_configuration_value == 0) {
+            string_configuration_value = string_pool.new_string(new_str);
+        }
+        else {
+            string_pool.change_string(string_configuration_value, new_str);
+        }
     }
 
     void change_string_manufacturer(const std::wstring &new_str) {
-        string_pool.change_string(string_manufacturer_value, new_str);
+        if (string_manufacturer_value == 0) {
+            string_manufacturer_value = string_pool.new_string(new_str);
+        }
+        else {
+            string_pool.change_string(string_manufacturer_value, new_str);
+        }
     }
 
     void change_string_product(const std::wstring &new_str) {
-        string_pool.change_string(string_product_value, new_str);
+        if (string_product_value == 0) {
+            string_product_value = string_pool.new_string(new_str);
+        }
+        else {
+            string_pool.change_string(string_product_value, new_str);
+        }
     }
 
     void change_string_serial(const std::wstring &new_str) {
-        string_pool.change_string(string_serial_value, new_str);
+        // string_serial_value 默认 0（无序列号，不占字符串池索引）
+        if (string_serial_value == 0) {
+            string_serial_value = string_pool.new_string(new_str);
+        }
+        else {
+            string_pool.change_string(string_serial_value, new_str);
+        }
     }
 
     std::wstring get_string_manufacturer() const {

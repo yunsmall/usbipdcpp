@@ -271,9 +271,11 @@ public:
     virtual void on_data_received(data_type &&data);
 
     /**
-     * @brief 主机请求数据时回调，用于按需生成数据
+     * @brief 主机请求数据时回调，用于实时按需生成数据
      * @param length 主机请求的数据长度
      * @return 返回要发送的数据，如果返回空则等待 send_data 调用
+     * @warning 禁止在里面调用send_data等函数，会死锁。这个函数就是跟你按需生成数据的，
+     * 生成数据后当场就给你发走了，没任何必要调用send_data等函数。
      */
     virtual data_type on_data_requested(std::uint16_t length);
 
