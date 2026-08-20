@@ -247,7 +247,9 @@ void KeyboardHandler::request_set_report(std::uint8_t type, std::uint8_t report_
 data_type KeyboardHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) {
     data_type result;
-    vector_append_to_net(result, static_cast<std::uint16_t>(idle_speed_.load()));
+    // idle rate 是 16 位，控制传输数据阶段必须小端（此前用大端是 bug：
+    // 主机按小端解读，非 0 的 idle 值会读错）
+    vector_append_to_le(result, static_cast<std::uint16_t>(idle_speed_.load()));
     return result;
 }
 

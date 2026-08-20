@@ -151,7 +151,9 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
                     case HIDRequest::GetProtocol: {
                         auto ret = request_get_protocol(&status);
-                        vector_append_to_net(result, ret);
+                        // 控制传输数据阶段统一小端（GetProtocol 返回 1 字节，
+                        // 大小端无区别，与 GetStatus 等保持一致）
+                        vector_append_to_le(result, ret);
                         break;
                     }
                     case HIDRequest::GetReport: {

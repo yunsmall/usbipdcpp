@@ -215,7 +215,9 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         case StandardRequest::GetConfiguration: {
                             SPDLOG_TRACE("设备GetConfiguration");
                             auto ret = request_get_configuration(&status);
-                            vector_append_to_net(result, ret);
+                            // 控制传输数据阶段统一小端（GetConfiguration 返回 1 字节，
+                            // 大小端无区别，与 GetStatus 等保持一致）
+                            vector_append_to_le(result, ret);
                             break;
                         }
                         case StandardRequest::GetDescriptor: {
@@ -305,7 +307,9 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             case StandardRequest::GetInterface: {
                                 SPDLOG_TRACE("接口request_get_interface");
                                 auto ret = this->request_get_interface(setup_packet.index, &status);
-                                vector_append_to_net(result, ret);
+                                // 控制传输数据阶段统一小端（GetInterface 返回 1 字节，
+                                // 大小端无区别，与 GetStatus 等保持一致）
+                                vector_append_to_le(result, ret);
                                 break;
                             }
                             case StandardRequest::GetStatus: {

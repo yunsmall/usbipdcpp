@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(usbipdcpp VERSION 1.0.7)
+project(usbipdcpp VERSION 1.0.8)
 
 set(CMAKE_CXX_STANDARD 23)
 
