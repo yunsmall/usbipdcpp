@@ -4,19 +4,20 @@
 #include <string>
 #include <vector>
 
-#include "usbipdcpp/Export.h"
 #include "usbipdcpp/virtual_device/audio_sources/AudioSource.h"
 
 namespace usbipdcpp {
 
-/// 音频文件音源（基于 miniaudio，支持 WAV/MP3/FLAC/OGG Vorbis 等）
+/// 音频文件音源（基于 miniaudio，支持 WAV/MP3/FLAC/OGG Vorbis 等）。
+/// mock_audio 示例私有类（2024-08 从虚拟设备库搬入），依赖 miniaudio（单头文件库，
+/// 随 vcpkg 的 miniaudio 包安装；stb_vorbis.c 也在其 include 目录）。
 /// 解码为 16 位 PCM 流式输出；支持采样率切换，重采样由 miniaudio 完成。
 /// 采样率需为 8kHz 整数倍（高速等时传输下每 microframe 数据量需为整数字节）。
 /// 播到文件末尾后循环播放（可通过 loop 关闭，关闭后输出静音）。
 /// 初始化失败（文件打不开/格式不支持/采样率列表非法）不抛异常：
 /// 打错误日志后进入降级状态，返回合法默认格式（同 FfmpegSource 的做法），
 /// get_chunk 恒返回 false（调用方填静音），设备仍可正常枚举。
-class USBIPDCPP_API AudioFileSource : public AudioSource {
+class AudioFileSource : public AudioSource {
 public:
     /// @param path 音频文件路径（WAV/MP3/FLAC/OGG Vorbis）
     /// @param sample_rates 支持的采样率列表（Hz，8kHz 整数倍）。为空时仅支持文件原生采样率

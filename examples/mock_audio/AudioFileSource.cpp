@@ -1,13 +1,19 @@
 // Vorbis 解码由外部 stb_vorbis 提供：miniaudio 检测到 STB_VORBIS_INCLUDE_STB_VORBIS_H
 // 宏才编译 Vorbis 解码后端。直接包含 .c 实现文件是 stb 库的标准集成方式。
 // 注意：必须放在所有系统头之前，其内部宏会与 Windows SDK 头冲突。
+// stb 头文件布局随平台不同（vcpkg 在 include 根目录、Termux 在 include/stb/ 子目录），
+// 用 __has_include 自适应；两种都没有时仅 OGG 解码不可用（WAV/MP3/FLAC 正常）
+#if __has_include("stb_vorbis.c")
 #include "stb_vorbis.c"
+#elif __has_include("stb/stb_vorbis.c")
+#include "stb/stb_vorbis.c"
+#endif
 // stb_vorbis.c 的播放矩阵宏（L/C/R）不清理，会污染后续包含的 Windows 头（winnt.h 位域成员同名）
 #undef L
 #undef C
 #undef R
 
-#include "usbipdcpp/virtual_device/audio_sources/AudioFileSource.h"
+#include "AudioFileSource.h"
 
 #include <algorithm>
 #include <cstring>

@@ -166,8 +166,8 @@ jobs:
   # workspace 挂载属主是 host 的 runner(1001)，容器用户不可写，
   # 构建目录放容器 HOME，workspace 仅作只读源码。
   # cxxopts 不在 Termux 仓库，按 README 指南手动安装（其测试依赖 Android 系统库
-  # liblog 而镜像无 Android 运行时，需禁用）；miniaudio 也没有，正好验证
-  # AudioFileSource 自动禁用路径。
+  # liblog 而镜像无 Android 运行时，需禁用）；miniaudio 也没有，
+  # mock_audio 的 --audio 选项（AudioFileSource）自动禁用。
   termux-build:
     runs-on: ubuntu-latest
     steps:

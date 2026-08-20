@@ -39,7 +39,8 @@ add_test_file(test_reuse_set)
 add_test_file(test_descriptors)
 add_test_file(test_ring_buffer)
 
-# 音频源在虚拟设备库中；AudioFileSource 相关用例由文件内 USBIPDCPP_USE_MINIAUDIO 宏条件编译
+# 音频源在虚拟设备库中（FourierSource/SineWaveSource，无第三方依赖；
+# AudioFileSource 已随实现搬入 examples/mock_audio，其测试由 mock_audio 的 CMakeLists 添加）
 if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_audio_sources)
     target_link_libraries(test_audio_sources PRIVATE usbipdcpp_virtual_device)

@@ -12,7 +12,7 @@
 #include "usbipdcpp/virtual_device/audio_sources/FourierSource.h"
 #include "usbipdcpp/virtual_device/audio_sources/SineWaveSource.h"
 #ifdef USBIPDCPP_USE_MINIAUDIO
-#include "usbipdcpp/virtual_device/audio_sources/AudioFileSource.h"
+#include "AudioFileSource.h"
 #endif
 
 using namespace usbipdcpp;
@@ -73,22 +73,31 @@ static std::unique_ptr<AudioSource> create_source(const cxxopts::ParseResult &re
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("mock_audio", "USB/IP virtual UAC microphone");
-    opts.add_options()
+    auto options_group = opts.add_options();
+    options_group
         ("freq", "Sine frequency in Hz (integer)", cxxopts::value<int>()->default_value("440"))
         ("rates", "Comma-separated sample rate list in Hz (multiples of 8000, first is initial)",
          cxxopts::value<std::string>()->default_value("48000"))
         ("channels", "Channel count (1 or 2)", cxxopts::value<int>()->default_value("1"))
         ("amp", "Amplitude 0-100 (percent of full scale)", cxxopts::value<int>()->default_value("50"))
         ("harmonics", "Fourier series harmonics \"freq:amp[:phase],...\" (amp in percent, phase in radians, "
-         "overrides sine)", cxxopts::value<std::string>())
-        ("audio", "Audio file to play instead of sine (WAV/MP3/FLAC/OGG)", cxxopts::value<std::string>());
+         "overrides sine)", cxxopts::value<std::string>());
+#ifdef USBIPDCPP_USE_MINIAUDIO
+    // 仅 miniaudio 可用时注册 --audio：不可用的构建里 -h 不显示该选项，
+    // 直接传也会被 cxxopts 按未知选项拒绝（parse_example_args 打印 help 退出）
+    options_group("audio", "Audio file to play instead of sine (WAV/MP3/FLAC/OGG)", cxxopts::value<std::string>());
+#endif
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
     auto freq = result["freq"].as<int>();
     auto channels = result["channels"].as<int>();
     auto amp = result["amp"].as<int>();
+#ifdef USBIPDCPP_USE_MINIAUDIO
     auto has_audio = result.count("audio") > 0;
+#else
+    auto has_audio = false; // --audio 未注册（无 miniaudio 构建）
+#endif
     auto has_harmonics = result.count("harmonics") > 0;
 
     // 列表参数解析（stoul/stod 对非法输入抛异常，转成友好报错退出）
@@ -116,12 +125,6 @@ int main(int argc, char **argv) {
         std::cerr << "Harmonics list is empty or malformed, use \"freq:amp[:phase],...\"" << std::endl;
         return 1;
     }
-#ifndef USBIPDCPP_USE_MINIAUDIO
-    if (has_audio) {
-        std::cerr << "This build was compiled without miniaudio, --audio is unavailable" << std::endl;
-        return 1;
-    }
-#endif
 
     spdlog::set_level(spdlog::level::trace);
 

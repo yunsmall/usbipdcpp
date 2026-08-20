@@ -48,7 +48,6 @@
 | `USBIPDCPP_BUILD_SHARED_LIBS` | ON | 编译为动态库（符合 LGPL 合规要求，推荐）；设为 OFF 编译静态库 |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (顶级项目) | 编译所有示例程序 |
 | `USBIPDCPP_BUILD_TESTS` | ON (顶级项目) | 编译测试套件 |
-| `USBIPDCPP_USE_MINIAUDIO` | ON | 音频文件播放（`AudioFileSource`，WAV/MP3/FLAC/OGG）；找不到 miniaudio 头文件时自动禁用 |
 
 更多选项详见 `CMakeLists.txt`
 
@@ -71,7 +70,7 @@ sudo apt install libgtest-dev
 # 如果需要 libusb 转发物理设备（默认 USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON）
 sudo apt install libusb-1.0-0-dev
 
-# 如果需要音频文件播放（默认 USBIPDCPP_USE_MINIAUDIO=ON，位于 universe 软件源）
+# 如果需要 mock_audio 的 --audio 音频文件播放（可选，位于 universe 软件源；不装则自动跳过）
 sudo apt install libminiaudio-dev
 
 # 编译
@@ -84,10 +83,13 @@ cmake --install build
 - `-DUSBIPDCPP_BUILD_EXAMPLES=OFF` → 可不装 `libcxxopts-dev`
 - `-DUSBIPDCPP_BUILD_TESTS=OFF` → 可不装 `libgtest-dev`
 - `-DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF` → 可不装 `libusb-1.0-0-dev`
-- `-DUSBIPDCPP_USE_MINIAUDIO=OFF` → 可不装 `libminiaudio-dev`
 
 如果你的软件源里没有 `libminiaudio-dev`，可以从 [miniaudio](https://miniaudio.app/) 官网
-下载 `miniaudio.h` 放到 include 路径，或直接禁用该选项——找不到头文件时 `AudioFileSource` 会自动从构建中排除。
+下载 `miniaudio.h` 放到 include 路径——找不到 miniaudio 头文件时
+mock_audio 的 `--audio` 选项（`AudioFileSource`）会自动跳过（configure 时有 WARNING），
+其他音源不受影响。miniaudio 查找支持两种方式：直接找头文件，找不到走 pkgconf。
+stb_vorbis 的布局差异（vcpkg 在 include 根、Termux 在 include/stb/）由源码
+`__has_include` 自适应，缺 stb 时仅 OGG 解码不可用（WAV/MP3/FLAC 正常）。
 
 #### Windows — vcpkg
 
@@ -111,7 +113,7 @@ cmake --install build
 
 - Visual Studio 生成器是多配置的：`cmake --build` 和 `ctest` 需要加 `--config Release`（或 Debug）。
 - Windows 下依赖库是 DLL，`cmake --install` 会自动把依赖 DLL 拷贝到可执行文件旁。
-- 禁用对应功能时可跳过相应的 vcpkg 包：测试 → `gtest`、示例 → `cxxopts`、libusb 组件 → `libusb`、音频文件播放 → `miniaudio`。
+- 禁用对应功能时可跳过相应的 vcpkg 包：测试 → `gtest`、示例 → `cxxopts`、libusb 组件 → `libusb`、mock_audio 的音频文件播放 → `miniaudio`。
 
 #### Termux (Android)
 
@@ -148,7 +150,7 @@ cmake --install build --prefix $PREFIX
 - 必须开启 `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON`：Termux 的 libasio 是 autotools 构建，只提供 `asio.pc`，没有 CMake config。
 - 不装 cxxopts 也可以，examples 会被整块跳过（configure 时会有 WARNING）；也可通过 `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF` 只编译库。
 - `libevdev_mouse` 和 `mock_uvc_ffmpeg` 依赖的 libevdev / FFmpeg 在 Termux 没有 dev 包，configure 时自动跳过，无需额外选项。
-- Termux 仓库没有 miniaudio，`AudioFileSource` 自动禁用（mock_audio 的 `--audio` 选项不可用）；可手动安装头文件，或用 `-DUSBIPDCPP_USE_MINIAUDIO=OFF` 关闭提示。
+- Termux 仓库没有 miniaudio，mock_audio 的 `--audio` 选项（`AudioFileSource`）自动跳过；可手动安装头文件启用。stb 头文件在 Termux 放在 `include/stb/` 子目录（vcpkg 在 include 根目录），源码用 `__has_include` 自适应两种布局。
 - 如需编译 termux_libusb_server 示例，添加 `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`；运行它需要 `pkg install termux-api`（提供 termux-usb 命令）。
 
 #### 使用vcpkg包管理器
@@ -161,7 +163,7 @@ cmake --install build --prefix $PREFIX
 ```bash
 ./vcpkg install gtest
 ```
-如需音频文件播放（`AudioFileSource`），还需安装 miniaudio：
+如需 mock_audio 的音频文件播放（`AudioFileSource`），还需安装 miniaudio：
 ```bash
 ./vcpkg install miniaudio
 ```
@@ -388,7 +390,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    - 正弦波测试音（默认）：`--freq 440 --amp 50`
    - 傅里叶级数合成：`--harmonics "440:50,880:25"`（频率Hz : 幅度% [: 相位弧度]）
    - 音频文件播放：`--audio music.mp3`（WAV/MP3/FLAC/OGG，基于 miniaudio，默认循环播放；
-     需要 `USBIPDCPP_USE_MINIAUDIO=ON`）
+     需安装 miniaudio，未找到时自动跳过）
 
    使用：`mock_audio --rates 48000,16000,8000`（采样率需为 8000 的整数倍，首个为初始采样率）
 
@@ -449,7 +451,7 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | libevdev | 可选 (仅Linux) | 用于evdev输入设备转发 |
 | cxxopts | 可选 | 用于编译示例程序 |
 | GTest | 可选 | 用于编译测试 |
-| miniaudio | 可选 | 虚拟麦克风的音频文件播放（纯头文件） |
+| miniaudio + stb | 可选 | mock_audio 示例的音频文件播放（--audio，纯头文件） |
 
 ### 平台支持
 
@@ -510,7 +512,7 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `AudioSource` | UAC 虚拟麦克风 PCM 音频源抽象接口 |
 | `SineWaveSource` | 正弦波测试音源 |
 | `FourierSource` | 傅里叶级数合成音源（多谐波叠加，各谐波独立相位） |
-| `AudioFileSource` | 音频文件音源（WAV/MP3/FLAC/OGG，基于 miniaudio，支持重采样和循环播放） |
+| `AudioFileSource` | mock_audio 示例的音源（WAV/MP3/FLAC/OGG，基于 miniaudio，支持重采样和循环播放；在 examples/mock_audio/） |
 
 ### 类继承关系
 
