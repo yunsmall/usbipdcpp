@@ -70,31 +70,48 @@ TEST(VirtualDeviceHandlers, HidClassSpecificDescriptor) {
     EXPECT_EQ(desc, expect);
 }
 
-// ========== HID 类请求默认实现（未重写时返回 EPIPE） ==========
+// ========== HID 类请求默认实现（形式响应对齐内核 f_hid.c，不 stall） ==========
 
-TEST(VirtualDeviceHandlers, HidIdleDefaultsToStall) {
+TEST(VirtualDeviceHandlers, HidIdleFormalResponse) {
     HidTestEnv env;
 
+    // GET_IDLE 返回初始 idle 值 0；SET_IDLE 无条件接受
     std::uint32_t status = 0;
     auto ret = env.handler.request_get_idle(0, 0, 1, &status);
-    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
-    EXPECT_TRUE(ret.empty());
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
+    EXPECT_EQ(ret, data_type({0x00}));
 
     status = 0;
     env.handler.request_set_idle(0, &status);
-    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
 }
 
-TEST(VirtualDeviceHandlers, HidReportDefaultsToStall) {
+TEST(VirtualDeviceHandlers, HidReportFormalResponse) {
     HidTestEnv env;
 
+    // GET_REPORT 返回全 0 空报告（长度按主机 wLength）；SET_REPORT 接受并丢弃
     std::uint32_t status = 0;
     auto ret = env.handler.request_get_report(1, 0, 8, &status);
-    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
-    EXPECT_TRUE(ret.empty());
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
+    EXPECT_EQ(ret, data_type(8, 0));
 
     status = 0;
     env.handler.request_set_report(1, 0, 8, {}, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
+}
+
+TEST(VirtualDeviceHandlers, HidProtocolFormalResponse) {
+    HidTestEnv env;
+
+    // GET_PROTOCOL 返回初始 protocol 值 0
+    std::uint32_t status = 0;
+    auto ret = env.handler.request_get_protocol(&status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
+    EXPECT_EQ(ret, 0u);
+
+    // 测试环境接口 subclass=0（非 Boot），SET_PROTOCOL 应 stall（对齐内核）
+    status = 0;
+    env.handler.request_set_protocol(1, &status);
     EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }
 

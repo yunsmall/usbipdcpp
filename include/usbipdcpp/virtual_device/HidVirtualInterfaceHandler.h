@@ -104,24 +104,32 @@ public:
     // ========== HID 类特定请求（子类可选重写） ==========
 
     /**
-     * @brief Rarely implemented, this is optional for unbooted devices
+     * @brief 获取当前协议（Boot/Report），形式响应对齐内核 f_hid.c：
+     *        内核 GET_PROTOCOL 返回 protocol 值（configfs 初始 0），
+     *        即使设备不支持切换也照常应答。子类实现协议切换时重写返回实际值
      * @param p_status
-     * @return
+     * @return 协议值（0=Boot，1=Report）
      */
     virtual std::uint8_t request_get_protocol(std::uint32_t *p_status) {
-        SPDLOG_WARN("unhandled request_get_protocol");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
         return 0;
     };
 
     /**
-     * @brief Rarely implemented, this is optional for unbooted devices
-     * @param type
+     * @brief 设置协议，对齐内核 f_hid.c：仅 Boot 子类接口（bInterfaceSubClass=1）
+     *        接受 SET_PROTOCOL（wValue ≤ 1），其余 stall。协议值仅内部记录，
+     *        本项目默认不做 Boot 报告切换，接受即可；子类可重写
+     * @param type wValue（0=Boot 协议，1=Report 协议）
      * @param p_status
      */
     virtual void request_set_protocol(std::uint16_t type, std::uint32_t *p_status) {
-        SPDLOG_WARN("unhandled request_set_protocol");
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (handle_interface.interface_subclass == 0x01 /* USB_INTERFACE_SUBCLASS_BOOT */
+            && type <= static_cast<std::uint16_t>(HIDProtocolType::Report)) {
+            *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+        }
+        else {
+            *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        }
     };
 
     virtual data_type request_get_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
@@ -129,9 +137,23 @@ public:
     virtual void request_set_report(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                     const data_type &data, std::uint32_t *p_status);
 
+    /**
+     * @brief 获取空闲节流值，形式响应对齐内核 f_hid.c：GET_IDLE 返回
+     *        idle 值（初始 0），设备默认不做 idle 节流；子类可重写
+     */
     virtual data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
-                                       std::uint32_t *p_status);
-    virtual void request_set_idle(std::uint8_t speed, std::uint32_t *p_status);
+                                       std::uint32_t *p_status) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+        return {0x00};
+    };
+
+    /**
+     * @brief 设置空闲节流值，对齐内核 f_hid.c：无条件接受 SET_IDLE
+     *        （idle 只是设备侧节流参数，本项目默认不做节流，接受即可）
+     */
+    virtual void request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+    };
 
     // ========== 标准请求默认实现 ==========
 

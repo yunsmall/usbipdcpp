@@ -244,17 +244,6 @@ usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::get_class_specific_d
     };
 }
 
-usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
-                                                                             std::uint16_t length,
-                                                                             std::uint32_t *p_status) {
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    return {};
-}
-
-void usbipdcpp::HidVirtualInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-
 // ========== 非HID请求默认实现 ==========
 
 void usbipdcpp::HidVirtualInterfaceHandler::handle_non_hid_request_type_control_urb(
@@ -270,14 +259,18 @@ usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_report(s
                                                                                std::uint8_t report_id,
                                                                                std::uint16_t length,
                                                                                std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_get_report");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    return {};
+    // 形式响应（对齐内核 f_hid.c hidg_setup：GET_REPORT 返回全 0 空报告，
+    // 长度由主机 wLength 决定）。真实报告数据走中断 IN 端点，控制传输
+    // GET_REPORT 只是兜底应答；子类需要真实数据时重写
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+    return data_type(length, 0);
 }
 
 void usbipdcpp::HidVirtualInterfaceHandler::request_set_report(std::uint8_t type, std::uint8_t report_id,
                                                                std::uint16_t length, const data_type &data,
                                                                std::uint32_t *p_status) {
-    SPDLOG_WARN("unhandled request_set_report");
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    // 对齐内核 f_hid.c ssreport 模式（无 OUT 端点时 SET_REPORT 经 ep0 接收，
+    // 数据落 set_report_buf 供用户态读取）。本项目默认没有消费者，接受并
+    // 丢弃；子类需要输出报告（如键盘 LED）时重写本函数
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
 }
