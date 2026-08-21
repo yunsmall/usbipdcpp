@@ -156,15 +156,19 @@ TEST(TransferSchedulerTest, NegativePacketsRespondImmediately) {
 // ==================== 同一端点串行 ====================
 
 TEST(TransferSchedulerTest, SerialCompletionSameEndpoint) {
-    // 同端点 2 个 URB 各 1 包：后一个在前一个的间隔之后完成，且顺序保持
+    // 同端点 2 个 URB 各 1 包：后一个完成不早于提交时刻 + 一个间隔（只晚不早），
+    // 且顺序保持。不断言相邻间隔：调度延迟会让相邻 URB 的完成时刻靠拢
+    // （交付只可能晚于帧边界，不可能提前），间隔下界断言在该场景下不成立
     TestFixture fx;
     fx.start();
     submit_iso(fx.scheduler, 0x81, 60ms, 1, 1);
+    auto submit2_at = std::chrono::steady_clock::now();
     submit_iso(fx.scheduler, 0x81, 60ms, 1, 2);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(2, 3s));
     auto times = fx.scheduler.completion_times();
     ASSERT_EQ(times.size(), 2);
-    EXPECT_GE(times[1] - times[0], 30ms); // 第二个至少等一个间隔（下限放宽）
+    EXPECT_GE(times[1] - submit2_at, 55ms) << "第二个 URB 提前完成";
+    EXPECT_GT(times[1], times[0]);
     auto responses = fx.scheduler.take_responses();
     EXPECT_EQ(responses[0].header.seqnum, 1);
     EXPECT_EQ(responses[1].header.seqnum, 2);
@@ -172,17 +176,24 @@ TEST(TransferSchedulerTest, SerialCompletionSameEndpoint) {
 }
 
 TEST(TransferSchedulerTest, PacingAcrossManyUrbs) {
-    // 同端点 4 个 URB 连续提交：完成时刻严格递增且间隔均匀（下限放宽）
+    // 同端点 4 个 URB 连续提交：每个至少等满一个间隔（提交时刻 + 40ms）
+    // 才完成，且完成时刻严格递增。不断言相邻间隔，原因见 SerialCompletionSameEndpoint
     TestFixture fx;
     fx.start();
-    for (std::uint32_t i = 1; i <= 4; ++i)
+    std::vector<std::chrono::steady_clock::time_point> submitted_at;
+    for (std::uint32_t i = 1; i <= 4; ++i) {
+        submitted_at.push_back(std::chrono::steady_clock::now());
         submit_iso(fx.scheduler, 0x81, 40ms, 1, i);
+    }
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(4, 4s));
     auto times = fx.scheduler.completion_times();
     ASSERT_EQ(times.size(), 4);
+    for (std::size_t i = 0; i < times.size(); ++i) {
+        // 定时器只可能晚触发，不可能提前（容差 5ms 与 DelayedResponse 风格一致）
+        EXPECT_GE(times[i] - submitted_at[i], 35ms) << "URB " << i + 1 << " 提前完成";
+    }
     for (std::size_t i = 1; i < times.size(); ++i) {
         EXPECT_GT(times[i], times[i - 1]) << "URB " << i << " 应晚于前一 URB";
-        EXPECT_GE(times[i] - times[i - 1], 20ms) << "URB " << i << " 间隔过短";
     }
     fx.scheduler.stop();
 }
