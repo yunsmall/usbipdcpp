@@ -42,12 +42,14 @@ AudioFileSource::AudioFileSource(std::string path, std::vector<std::uint32_t> sa
     }
 
     if (this->sample_rates.empty()) {
-        // 仅原生采样率：必须为 8kHz 整数倍（等时传输每 microframe 数据量需为整数字节）
+        // 仅原生采样率
         this->sample_rates.push_back(file_sample_rate);
     }
+    // 只校验正数：等时传输对非 8kHz 整数倍采样率（如 44100）由残差算法
+    // 处理（基准包长 + 溢出补帧，包长恒为帧大小整数倍），无需 8kHz 倍数限制
     for (auto r: this->sample_rates) {
-        if (r == 0 || r % 8000 != 0) {
-            SPDLOG_ERROR("采样率必须为 8kHz 整数倍: {}", r);
+        if (r == 0) {
+            SPDLOG_ERROR("采样率必须为正数: {}", r);
             return;
         }
     }
@@ -163,11 +165,13 @@ bool AudioFileSource::get_chunk(AudioChunk &chunk) {
         if (frames_read == 0) {
             if (loop && !looped_once) {
                 // 循环播放：回到开头继续读（空文件回绕后仍无数据则输出静音）
+                SPDLOG_INFO("音频文件播放完毕，循环从头播放: {}", path);
                 ma_decoder_seek_to_pcm_frame(dec, 0);
                 looped_once = true;
                 continue;
             }
             finished = true;
+            SPDLOG_INFO("音频文件播放结束: {}", path);
             break;
         }
         got += static_cast<std::size_t>(frames_read);

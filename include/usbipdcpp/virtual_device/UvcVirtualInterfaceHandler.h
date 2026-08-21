@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -151,6 +152,14 @@ private:
     std::vector<std::uint8_t> frame_buffer_;
     std::size_t frame_offset_ = 0;
     bool current_fid_ = false;
+
+    // 帧时钟：本帧开始时刻 + 协商帧间隔。对齐真实摄像头语义——帧率由帧时钟
+    // 决定，不随主机消费速度漂移：
+    // - 带宽不足（一帧传不完一个帧间隔）：丢帧切最新帧，画面实时只是帧率低
+    // - 带宽富余（帧传完还没到帧间隔）：空包等下一帧，避免快放
+    // 首帧前为 epoch（now 恒 ≥ 它 + 间隔），保证开流第一帧立即开始
+    std::chrono::steady_clock::time_point frame_started_at_{};
+    std::chrono::microseconds frame_interval_{};
 };
 
 /// UVC 设备辅助类 — 在 device 上注册 VC/VS 接口 handler 并设置描述符

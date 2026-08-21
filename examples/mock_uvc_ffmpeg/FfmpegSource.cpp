@@ -183,7 +183,7 @@ bool FfmpegSource::get_frame_passthrough(VideoFrame &frame) {
         int ret = av_read_frame(fmt_ctx_, packet_);
         if (ret < 0) {
             if (ret == AVERROR_EOF) {
-                SPDLOG_DEBUG("FFmpeg: EOF, looping");
+                SPDLOG_INFO("FFmpeg: file ended, looping from start");
                 seek_to_start();
                 continue;
             }
@@ -218,7 +218,7 @@ bool FfmpegSource::get_frame_yuy2(VideoFrame &frame) {
         int ret = av_read_frame(fmt_ctx_, packet_);
         if (ret < 0) {
             if (ret == AVERROR_EOF) {
-                SPDLOG_DEBUG("FFmpeg: EOF, looping");
+                SPDLOG_INFO("FFmpeg: file ended, looping from start");
                 seek_to_start();
                 continue;
             }

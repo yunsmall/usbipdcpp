@@ -456,6 +456,7 @@ UvcVideoStreamingHandler::UvcVideoStreamingHandler(UsbInterface &handle_interfac
     probe_data_.dwMaxVideoFrameSize = static_cast<std::uint32_t>(source_->max_frame_size());
     probe_data_.dwMaxPayloadTransferSize = 512; // wMaxPacketSize of ISO endpoint
     probe_data_.dwFrameInterval = source_->frame_interval();
+    frame_interval_ = std::chrono::microseconds(source_->frame_interval() / 10); // 100ns → µs
 }
 
 void UvcVideoStreamingHandler::on_setup_interface_handlers() {
@@ -805,6 +806,9 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         frame_buffer_.resize(source_->max_frame_size());
         frame_offset_ = 0;
         current_fid_ = false;
+        // 重新开播：帧时钟重置，set_format 后帧间隔可能已变
+        frame_started_at_ = {};
+        frame_interval_ = std::chrono::microseconds(source_->frame_interval() / 10);
         session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
     }
@@ -827,6 +831,29 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
 
+    // 内核 usb_submit_urb 会把 iso_frame_desc[n].status 初始化为 -EXDEV，
+    // 必须清零，否则内核 UVC 驱动会跳过所有包。
+    for (auto &iso: iso_descs)
+        iso.status = 0;
+
+    // 帧时钟：帧率由帧时钟决定，不随主机消费速度漂移。
+    // 帧传完但未到帧间隔 → 空包等下一帧（0 字节等时包合法，驱动跳过），
+    // 避免主机拉得快时快放。
+    // 注意：虚拟设备不模拟 USB 总线等时事务节奏（真实摄像头受 125µs×包
+    // 大小带宽限制，虚拟设备不受）——URB 一律立即响应，主机拉多快数据就
+    // 传多快，大帧也能在帧间隔内传完，画面完整且实时。音频不能这么做
+    // （采样率必须精确节流），但视频帧数据有界、帧时钟已管住帧率，立即
+    // 响应不会失控。
+    // 帧传不完帧间隔（主机消费慢）时：不切帧，完整传完当前帧再拉下一帧
+    // （半截帧会被主机驱动标记 corrupted 整帧丢弃，宁慢勿碎）
+    const auto now = std::chrono::steady_clock::now();
+    if (frame_interval_.count() > 0 && frame_offset_ == 0 && now < frame_started_at_ + frame_interval_) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+                seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0, 0,
+                static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
+        return;
+    }
+
     if (frame_offset_ == 0) {
         VideoFrame vf{};
         if (!source_->get_frame(vf)) {
@@ -835,15 +862,11 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
         }
         frame_buffer_.assign(vf.data, vf.data + vf.size);
         current_fid_ = !current_fid_;
+        frame_started_at_ = now;
     }
 
     std::uint32_t total_sent = 0;
     std::size_t frame_remaining = frame_buffer_.size() - frame_offset_;
-
-    // 内核 usb_submit_urb 会把 iso_frame_desc[n].status 初始化为 -EXDEV，
-    // 我们必须清零，否则内核 UVC 驱动会跳过所有包。
-    for (auto &iso: iso_descs)
-        iso.status = 0;
 
     for (int i = 0; i < num_iso_packets && frame_remaining > 0; ++i) {
         auto &iso = iso_descs[i];
@@ -855,8 +878,10 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
         auto chunk = std::min(static_cast<std::size_t>(iso.length - UVC_PAYLOAD_HEADER_SIZE), frame_remaining);
 
         std::uint8_t header_info = current_fid_ ? UVC_PAYLOAD_HEADER_FID : 0;
+        // EOF 位（D7）按 UVC 1.5 Table 2-5 规范位发：Windows usbvideo.sys 据此切帧。
+        // Linux uvcvideo 用自定义位（EOF=0x40）解释不到，但缓冲满强制切帧兜底，行为不变
         if (frame_offset_ + chunk >= frame_buffer_.size())
-            header_info |= 0x02; // EOF
+            header_info |= UVC_PAYLOAD_HEADER_EOF; // EOF
 
         auto *dst = &data[iso.offset];
         dst[0] = UVC_PAYLOAD_HEADER_SIZE;
@@ -872,6 +897,9 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     if (frame_offset_ >= frame_buffer_.size())
         frame_offset_ = 0;
 
+    // 立即响应（不走 TransferScheduler 的 125µs×包 等时节流）：虚拟设备
+    // 没有真实总线，主机拉多快数据就传多快——大帧在帧间隔内传得完才能
+    // 画面流畅。帧时钟已限制帧率上限，不会失控
     session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
             static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
@@ -883,11 +911,13 @@ void UvcVideoStreamingHandler::on_new_connection(Session &current_session, error
     streaming_ = false;
     frame_offset_ = 0;
     current_fid_ = false;
+    frame_started_at_ = {}; // 帧时钟重置：重连开播后首帧立即开始
 }
 
 void UvcVideoStreamingHandler::on_disconnection(error_code &ec) {
     streaming_ = false;
     committed_ = false;
+    frame_started_at_ = {};
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
@@ -961,6 +991,9 @@ void UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &strin
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    // UVC 等时 URB 立即响应（虚拟设备不模拟总线等时事务节奏，帧时钟已管住
+    // 帧率），不启用设备级传输调度器（默认关；启用会被 125µs×包节流卡死
+    // 带宽，大帧画面慢放）。UNLINK 走 endpoint_requests_ 自己的 cancel
     dh->setup_interface_handlers();
 }
 

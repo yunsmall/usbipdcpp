@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <memory>
 
 #include "usbipdcpp/Export.h"
@@ -41,6 +42,11 @@ public:
                                                       std::uint32_t transfer_buffer_length,
                                                       const SetupPacket &setup_packet, TransferHandle transfer,
                                                       std::error_code &ec) override;
+    void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                   std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                   std::error_code &ec) override;
+    void on_disconnection(error_code &ec) override;
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
     void on_setup_interface_handlers() override;
 
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
@@ -67,12 +73,20 @@ public:
 private:
     void build_class_descriptor();
 
+    /// 经 AC 中断端点推送 UAC1 状态字（对齐内核 f_uac1.c 的 audio_notify：
+    /// 无挂起 URB 时缓存，主机后续提交的中断 IN URB 立即拿到，状态不丢）
+    void send_ac_status(data_type status);
+
     data_type class_desc;
     bool desc_built = false;
     UacDeviceConfig config{};
     bool mute = false;
     std::int16_t volume_db = 0; // 单位 1/256 dB，0 表示 0dB
     std::uint32_t gain_q16 = 65536; // 10^(volume_db/256/20) 的 Q16 表示
+
+    // AC 中断端点：状态变化时无挂起 URB 的暂存（UAC1 状态字 2 字节）
+    std::deque<data_type> pending_status_;
+    mutable std::mutex status_mutex_;
 };
 
 /// AudioStreaming 接口处理器 — 类描述符 + 采样率协商 + ISO PCM 推流
@@ -141,14 +155,24 @@ private:
     /// 向 dst 填充 n 字节 PCM：从 source 拉数据，不足时填静音；应用 mute/volume
     void fill_pcm(std::uint8_t *dst, std::size_t n);
 
+    /// 按当前采样率更新每 microframe 包字节数的调度参数（对齐内核 gadget u_audio.c）
+    void update_packet_bytes();
+
     UacAudioControlHandler *ac_handler = nullptr;
 
     std::unique_ptr<AudioSource> source;
     data_type class_desc;
     bool streaming = false;
 
-    // 每 URB 期望的 PCM 字节数（1ms 数据量），随采样率变化
-    std::size_t bytes_per_ms = 0;
+    // ISO IN 包调度参数，对齐内核 gadget u_audio.c（u_audio_start_playback）：
+    // 每包字节数 = 基准包长 + 残差累加溢出时补一帧，包长恒为帧大小的整数倍
+    // （样本交错结构不被切断），平均速率精确匹配采样率，非 8kHz 整数倍采样率
+    // （如 44100）也正确。采样率变化时由 update_packet_bytes 重算
+    std::size_t packet_framesize = 0;   // 一帧 PCM 字节数 = 声道数×样本字节
+    std::size_t packet_interval = 0;    // 每秒包数：高速 bInterval=1 → 每 microframe 一包
+    std::size_t packet_base = 0;        // 基准包长 = 帧大小×(采样率/interval)
+    std::size_t packet_residue_step = 0; // 每包累加的残差 = 帧大小×(采样率%interval)
+    std::size_t packet_residue_acc = 0;  // 残差累加器（跨包/跨 URB 连续）
 
     // 当前音频块引用 + 已消费偏移（跨 URB 连续流）
     const std::uint8_t *chunk_data = nullptr;

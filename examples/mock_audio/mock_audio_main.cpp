@@ -24,7 +24,7 @@ static std::vector<std::uint32_t> parse_sample_rates(const std::string &str) {
     std::string item;
     while (std::getline(ss, item, ',')) {
         auto rate = std::stoul(item);
-        if (rate > 0 && rate % 8000 == 0) {
+        if (rate > 0) {
             rates.push_back(static_cast<std::uint32_t>(rate));
         }
     }
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     auto options_group = opts.add_options();
     options_group
         ("freq", "Sine frequency in Hz (integer)", cxxopts::value<int>()->default_value("440"))
-        ("rates", "Comma-separated sample rate list in Hz (multiples of 8000, first is initial)",
+        ("rates", "Comma-separated sample rate list in Hz (first is initial)",
          cxxopts::value<std::string>()->default_value("48000"))
         ("channels", "Channel count (1 or 2)", cxxopts::value<int>()->default_value("1"))
         ("amp", "Amplitude 0-100 (percent of full scale)", cxxopts::value<int>()->default_value("50"))
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
     }
 
     if (rates.empty()) {
-        std::cerr << "Sample rate list must contain at least one positive multiple of 8000" << std::endl;
+        std::cerr << "Sample rate list must contain at least one positive rate" << std::endl;
         return 1;
     }
     if (channels != 1 && channels != 2) {
@@ -137,7 +137,11 @@ int main(int argc, char **argv) {
     // 声道数以音源实际为准
     channels = source->current_format().channels;
 
-    // 高速等时端点：每 microframe 一个包，端点大小按最高采样率计算 = max_rate*2*ch/8000。
+    // 高速等时端点：bInterval=4 → 每 1ms 一个包（对齐内核 gadget f_uac1.c 的 as_in_ep_desc，
+    // 真实 UAC 设备形态），端点大小按最高采样率帧对齐预留。
+    // 包调度（对齐内核 gadget u_audio.c）为"基准包长 + 残差溢出补一帧"，溢出包比基准大一帧，
+    // 所以 wMaxPacketSize 必须按帧向上取整（帧大小×ceil(max_rate/1000)）：非 1kHz 整数倍采样率
+    // （如 44100 单声道 = 88.2 字节/ms → 88/90 字节包交替）下按字节取整会截断溢出包切碎帧。
     // 必须用音源实际支持格式的最大采样率：软失败降级格式（48000）可能不在命令行 rates 里，
     // 端点按命令行算会偏小，等时数据被截断
     auto fmts = source->supported_formats();
@@ -145,15 +149,21 @@ int main(int argc, char **argv) {
                                      [](const AudioFormatInfo &a, const AudioFormatInfo &b) {
                                          return a.sample_rate < b.sample_rate;
                                      })->sample_rate;
-    auto iso_packet_size = static_cast<std::uint16_t>(max_rate * 2 * channels / 8000);
+    auto iso_packet_size = static_cast<std::uint16_t>(((max_rate + 999) / 1000) * 2 * channels);
 
     std::vector<UsbInterface> interfaces = {
-            // Interface 0: AudioControl（无端点）
+            // Interface 0: AudioControl（含中断端点用于状态通知，
+            // 对齐内核 gadget f_uac1.c 的 ac_int_ep_desc：wMaxPacketSize=2、bInterval=4）
             UsbInterface{
                     .interface_class = CC_AUDIO,
                     .interface_subclass = SC_AUDIOCONTROL,
                     .interface_protocol = 0x00,
-                    .endpoints = {{}},
+                    .endpoints = {{UsbEndpoint{
+                            .address = 0x82, // IN, endpoint 2 — interrupt for status
+                            .attributes = 0x03, // Interrupt
+                            .max_packet_size = 2, // UAC1 状态字（bStatusType + bOriginator）
+                            .interval = 4,
+                    }}},
             },
             // Interface 1: AudioStreaming（alt 0 空端点，alt 1 ISO IN 端点）
             UsbInterface{
@@ -166,7 +176,7 @@ int main(int argc, char **argv) {
                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous) |
                                                         static_cast<std::uint8_t>(IsoSyncType::Async),
                                           .max_packet_size = iso_packet_size,
-                                          .interval = 1,
+                                          .interval = 4, // 每 1ms 一包（对齐 gadget f_uac1.c）
                                   }}},
             },
     };

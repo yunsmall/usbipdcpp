@@ -182,8 +182,8 @@ TEST(AudioFileSource, InvalidFileSoftFail) {
 TEST(AudioFileSource, InvalidSampleRateListSoftFail) {
     auto path = make_test_wav("badrate", 8000, 1, 1.0);
     {
-        // 采样率必须为 8kHz 整数倍：校验失败软失败
-        AudioFileSource src(path, std::vector<std::uint32_t>{44100});
+        // 采样率列表含非法值（0）：校验失败软失败
+        AudioFileSource src(path, std::vector<std::uint32_t>{0});
 
         AudioChunk chunk;
         EXPECT_FALSE(src.get_chunk(chunk));

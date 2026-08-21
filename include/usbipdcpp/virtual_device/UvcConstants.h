@@ -136,9 +136,12 @@ constexpr std::uint8_t VS_FRM_H264_BASE_LEN = 44;      // H.264 frame before int
 constexpr std::uint8_t VS_FRM_H264_CONT_LEN = 56;      // 44 + 3*4
 constexpr std::uint8_t VS_COLOR_MATCHING_LEN = 6;
 
-// UVC Payload Header
+// UVC Payload Header（UVC 1.5 Table 2-5 bmHeaderInfo：D0 FID、D1 EOH、D7 EOF）。
+// Windows usbvideo.sys 按规范位解释；Linux uvcvideo 驱动用自定义位
+// （UVC_STREAM_FID=0x80/UVC_STREAM_EOF=0x40，与规范相反），设备侧必须按规范发
 constexpr std::uint8_t UVC_PAYLOAD_HEADER_SIZE = 2;
-constexpr std::uint8_t UVC_PAYLOAD_HEADER_FID = 0x01; // Frame ID bit
+constexpr std::uint8_t UVC_PAYLOAD_HEADER_FID = 0x01; // D0: Frame ID bit
+constexpr std::uint8_t UVC_PAYLOAD_HEADER_EOF = 0x80; // D7: End of Frame
 
 // ==================== 固定长度描述符结构体 ====================
 // UVC 1.5 描述符长度由规范硬性规定，用 packed 结构体表示，

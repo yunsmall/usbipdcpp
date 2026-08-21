@@ -1,3 +1,10 @@
+// [UAC-AC]/[UAC-AS]/[ISO] 调试日志默认编译期裁掉（TRACE 级别）：
+// 排查主机驱动协商/流问题时定义 USBIPDCPP_STRACE 保留
+#ifndef USBIPDCPP_STRACE
+    #undef SPDLOG_ACTIVE_LEVEL
+    #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+#endif
+
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
 
 #include <algorithm>
@@ -100,6 +107,11 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
 
     auto *trx = GenericTransfer::from_handle(transfer.get());
 
+    // 调试用：打印收到的 AC 控制请求（主机驱动的流启动/音量初始化排查）
+    SPDLOG_TRACE("[UAC-AC] ctrl: bmReqType=0x{:02x} bRequest=0x{:02x} wValue=0x{:04x} wIndex=0x{:04x} len={}",
+                setup_packet.calc_request_type(), setup_packet.request, setup_packet.value, setup_packet.index,
+                transfer_buffer_length);
+
     // 处理类特定 GET_DESCRIPTOR（CS_INTERFACE=0x24）
     if (setup_packet.request == static_cast<std::uint8_t>(StandardRequest::GetDescriptor)) {
         auto desc_type = setup_packet.value >> 8;
@@ -150,7 +162,13 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
                     break;
                 case SET_CUR:
                     if (!trx->data.empty()) {
-                        mute = (trx->data[0] != 0);
+                        auto new_mute = (trx->data[0] != 0);
+                        if (new_mute != mute) {
+                            mute = new_mute;
+                            // 状态变化经 AC 中断端点推送（对齐内核 u_audio_mute_put 的 notify）
+                            send_ac_status({UAC1_STATUS_TYPE_IRQ_PENDING | UAC1_STATUS_TYPE_ORIG_AUDIO_CONTROL_IF,
+                                            UAC_ENTITY_FEATURE_UNIT});
+                        }
                     }
                     trx->actual_length = 0;
                     break;
@@ -203,12 +221,18 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
                     if (trx->data.size() >= 2) {
                         auto v = static_cast<std::int16_t>(trx->data[0] | (trx->data[1] << 8));
                         // clamp 到配置的音量范围
-                        volume_db = std::clamp(v, config.volume_min_db256, config.volume_max_db256);
-                        // Q16 线性增益：10^(dB/20)，低于 -120dB 视为静音
-                        double linear = std::pow(10.0, (volume_db / 256.0) / 20.0);
-                        if (volume_db <= -0x7800)
-                            linear = 0.0;
-                        gain_q16 = static_cast<std::uint32_t>(linear * 65536.0 + 0.5);
+                        auto clamped = std::clamp(v, config.volume_min_db256, config.volume_max_db256);
+                        if (clamped != volume_db) {
+                            volume_db = clamped;
+                            // Q16 线性增益：10^(dB/20)，低于 -120dB 视为静音
+                            double linear = std::pow(10.0, (volume_db / 256.0) / 20.0);
+                            if (volume_db <= -0x7800)
+                                linear = 0.0;
+                            gain_q16 = static_cast<std::uint32_t>(linear * 65536.0 + 0.5);
+                            // 状态变化经 AC 中断端点推送（对齐内核 u_audio_volume_put 的 notify）
+                            send_ac_status({UAC1_STATUS_TYPE_IRQ_PENDING | UAC1_STATUS_TYPE_ORIG_AUDIO_CONTROL_IF,
+                                            UAC_ENTITY_FEATURE_UNIT});
+                        }
                     }
                     trx->actual_length = 0;
                     break;
@@ -225,9 +249,85 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
             return;
     }
 
+    // 调试用：打印提交的响应（数据前 2 字节 + 长度），排查主机驱动的初始化失败
+    SPDLOG_TRACE("[UAC-AC] 提交响应 seq={} actual={} d0=0x{:02x} d1=0x{:02x}", seqnum, trx->actual_length,
+                trx->data.empty() ? 0 : trx->data[0], trx->data.size() < 2 ? 0 : trx->data[1]);
+
     session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
             std::move(transfer)));
+}
+
+void UacAudioControlHandler::handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                       std::uint32_t transfer_flags,
+                                                       std::uint32_t transfer_buffer_length, TransferHandle transfer,
+                                                       std::error_code &ec) {
+    if (ep.is_in()) {
+        std::lock(status_mutex_, endpoint_requests_mutex_);
+        std::lock_guard lock1(status_mutex_, std::adopt_lock);
+        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
+
+        // 有缓存的待推送状态：立即填给这个 URB（对齐内核"request 常驻端点"语义）
+        if (endpoint_requests_.empty(ep.address) && !pending_status_.empty()) {
+            auto status = std::move(pending_status_.front());
+            pending_status_.pop_front();
+            auto *trx = GenericTransfer::from_handle(transfer.get());
+            auto send_len = std::min(status.size(), static_cast<std::size_t>(transfer_buffer_length));
+            trx->data.assign(status.begin(), status.begin() + send_len);
+            trx->actual_length = send_len;
+            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                    seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
+        }
+        else {
+            // 无状态：挂起请求，等 FU 控制变化时填充
+            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
+        }
+    }
+    else {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    }
+}
+
+void UacAudioControlHandler::send_ac_status(data_type status) {
+    std::lock(status_mutex_, endpoint_requests_mutex_);
+    std::lock_guard lock1(status_mutex_, std::adopt_lock);
+    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
+
+    auto req_opt = endpoint_requests_.dequeue_any();
+    if (req_opt.has_value()) {
+        auto &[ep_addr, req] = req_opt.value();
+        auto *trx = GenericTransfer::from_handle(req.transfer.get());
+        auto send_len = std::min(status.size(), static_cast<std::size_t>(req.length));
+        trx->data.assign(status.begin(), status.begin() + send_len);
+        trx->actual_length = send_len;
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
+    }
+    else {
+        pending_status_.push_back(std::move(status));
+    }
+}
+
+void UacAudioControlHandler::on_disconnection(std::error_code &ec) {
+    {
+        std::lock_guard lock(status_mutex_);
+        pending_status_.clear();
+    }
+    {
+        std::lock_guard lock(endpoint_requests_mutex_);
+        endpoint_requests_.clear();
+    }
+    VirtualInterfaceHandler::on_disconnection(ec);
+}
+
+void UacAudioControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    std::lock_guard lock(endpoint_requests_mutex_);
+    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
+    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
+    // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
+    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
 void UacAudioControlHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
@@ -272,9 +372,22 @@ UacAudioStreamingHandler::UacAudioStreamingHandler(UsbInterface &handle_interfac
     VirtualInterfaceHandler(handle_interface, string_pool), source(std::move(source)) {
     change_string_interface(L"Usbipdcpp Microphone");
 
-    // 每 URB 期望 1ms PCM 字节数（采样率需为 8kHz 整数倍，高速等时每 microframe 一包恰好整除）
-    auto fmt = this->source->current_format();
-    bytes_per_ms = static_cast<std::size_t>(fmt.sample_rate) * fmt.channels * (fmt.bits_per_sample / 8) / 1000;
+    // 按初始格式计算包调度参数（采样率/声道数变化时由 SET_CUR 重算）
+    update_packet_bytes();
+}
+
+void UacAudioStreamingHandler::update_packet_bytes() {
+    auto fmt = source->current_format();
+    // 高速等时端点 bInterval=4（对齐内核 gadget f_uac1.c 的 as_in_ep_desc）：
+    // 每 1ms 一个包，每秒 1000 包。
+    // 基准包长 = 帧大小×(采样率/1000)；采样率对 1000 的余数折算成帧数逐包累加，
+    // 累加值够一帧时本包补一帧。包长恒为帧大小整数倍，平均速率精确等于采样率
+    packet_framesize = static_cast<std::size_t>(fmt.channels) * (fmt.bits_per_sample / 8);
+    packet_interval = 1000;
+    auto rate = static_cast<std::size_t>(fmt.sample_rate);
+    packet_base = packet_framesize * (rate / packet_interval);
+    packet_residue_step = packet_framesize * (rate % packet_interval);
+    packet_residue_acc = 0;
 }
 
 void UacAudioStreamingHandler::on_setup_interface_handlers() {
@@ -333,10 +446,16 @@ void UacAudioStreamingHandler::handle_non_standard_request_type_control_urb(
 
     auto *trx = GenericTransfer::from_handle(transfer.get());
 
+    // 调试用：打印收到的 AS 控制请求（主机驱动的流启动排查）
+    SPDLOG_TRACE("[UAC-AS] ctrl: bmReqType=0x{:02x} bRequest=0x{:02x} wValue=0x{:04x} wIndex=0x{:04x} len={}",
+                setup_packet.calc_request_type(), setup_packet.request, setup_packet.value, setup_packet.index,
+                transfer_buffer_length);
+
     // 处理类特定 GET_DESCRIPTOR（CS_INTERFACE=0x24）
     if (setup_packet.request == static_cast<std::uint8_t>(StandardRequest::GetDescriptor)) {
         auto desc_type = setup_packet.value >> 8;
         if (desc_type == CS_INTERFACE) {
+            SPDLOG_TRACE("[UAC-AS] 返回 CS_INTERFACE 类描述符 {} 字节", class_desc.size());
             auto resp = class_desc;
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
@@ -421,8 +540,9 @@ bool UacAudioStreamingHandler::handle_sampling_freq_control(std::uint32_t seqnum
                 SPDLOG_WARN("采样率 SET_CUR {} 被 source 拒绝", rate);
                 return false;
             }
-            bytes_per_ms = static_cast<std::size_t>(rate) * fmt.channels * (fmt.bits_per_sample / 8) / 1000;
-            SPDLOG_INFO("采样率 SET_CUR: {} → source 切换成功，bytes_per_ms={}", rate, bytes_per_ms);
+            update_packet_bytes();
+            SPDLOG_INFO("采样率 SET_CUR: {} → source 切换成功，基准包长={} 残差步进={}", rate,
+                        packet_base, packet_residue_step);
             chunk_data = nullptr;
             chunk_size = 0;
             chunk_offset = 0;
@@ -498,34 +618,49 @@ void UacAudioStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
 
+    // 调试用：确认 ISO URB 是否到达、每包填多少字节（Windows 录音无数据排查）
+    SPDLOG_TRACE("[ISO] seq={} num_packets={} buf_len={} packet_base={} residue_step={}",
+                seqnum, num_iso_packets, transfer_buffer_length, packet_base, packet_residue_step);
+
     // 内核 usb_submit_urb 会把 iso_frame_desc[n].status 初始化为 -EXDEV，
     // 必须清零，否则内核音频驱动会跳过所有包。
     for (auto &iso: iso_descs)
         iso.status = 0;
 
-    // 每个 URB 恰好携带 1ms 音频。
-    // 高速等时每 microframe 一个包：每包实际字节数 = bytes_per_ms / 8（采样率为 8kHz 整数倍时整除）。
-    // 端点 wMaxPacketSize 按最高采样率预留，低采样率下每包只填 packet_bytes，
-    // 驱动按当前采样率的每包字节数取数据，填多了会造成样本错乱。
-    std::size_t packet_bytes = bytes_per_ms / 8;
-    std::size_t remaining = bytes_per_ms;
+    // 每包字节数按内核 gadget u_audio.c（u_audio_iso_complete 的 PLAYBACK 分支）的
+    // 残差累加算法逐包计算：基准包长 + 残差累积够一帧时补一帧。
+    // 包长恒为帧大小整数倍，平均速率精确匹配采样率——非 1kHz 整数倍采样率
+    // （如 44100）下每 ms 88.2 字节由 88/90 字节包交替实现，
+    // 短包合法（CS_ENDPOINT bmAttributes D7=0，MaxPacketsOnly 未置位）
     std::uint32_t total_sent = 0;
 
-    for (int i = 0; i < num_iso_packets && remaining > 0; ++i) {
+    for (int i = 0; i < num_iso_packets; ++i) {
         auto &iso = iso_descs[i];
-        auto want = std::min({static_cast<std::size_t>(iso.length), packet_bytes, remaining});
+        packet_residue_acc += packet_residue_step;
+        auto packet_bytes = packet_base;
+        if (packet_residue_acc >= packet_framesize * packet_interval) {
+            packet_bytes += packet_framesize;
+            packet_residue_acc -= packet_framesize * packet_interval;
+        }
+        auto want = std::min(static_cast<std::size_t>(iso.length), packet_bytes);
         if (want == 0)
             continue;
 
         fill_pcm(&data[iso.offset], want);
         iso.actual_length = static_cast<std::uint32_t>(want);
         total_sent += iso.actual_length;
-        remaining -= want;
     }
 
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
-            static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
+    // 数据已填好，交给设备级传输调度器按帧节奏延迟响应（对齐内核 vudc
+    // 帧调度：URB 的 N 个等时包分布在 N 个端点间隔里完成，完成节奏 = 总线
+    // 节奏）。立即响应会让主机驱动的"完成→重提交"循环失去节流（实测超发 158 倍）
+    // 调试用：ISO 响应信息（每包实际字节数分布）
+    SPDLOG_TRACE("[ISO] 提交调度 seq={} num_packets={} total={}B", seqnum, num_iso_packets, total_sent);
+    device_handler->get_transfer_scheduler().submit(
+            ep, EndpointAttributes::Isochronous, num_iso_packets,
+            UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
+                    static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
 }
 
 void UacAudioStreamingHandler::on_new_connection(Session &current_session, error_code &ec) {
@@ -552,6 +687,7 @@ void UacAudioStreamingHandler::request_set_interface(std::uint16_t alternate_set
     else if (alternate_setting == 1) {
         streaming = true;
         chunk_offset = 0; // 重新开始拉数据，保证流起点干净
+        packet_residue_acc = 0; // 残差清零（对齐 gadget 的 uac_pcm_open 重置 p_residue）
         *p_status = 0;
     }
     else {
@@ -612,6 +748,8 @@ void UacDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &strin
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    // UAC 走等时帧调度（ISO URB 按帧节奏延迟响应），启用设备级调度器
+    dh->set_use_transfer_scheduler(true);
     dh->setup_interface_handlers();
 }
 

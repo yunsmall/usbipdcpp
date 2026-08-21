@@ -177,12 +177,17 @@ if (USBIPDCPP_BUILD_LIBUSB_COMPONENTS)
     target_link_libraries(${PROJECT_NAME}_libusb PUBLIC ${PROJECT_NAME})
 endif ()
 
+if (USBIPDCPP_BUILD_TESTS)
+    # 必须在 add_subdirectory 之前调用，否则 examples 等子树不生成
+    # CTestTestfile.cmake，其 gtest_discover_tests 测试不会被 ctest 收录
+    enable_testing()
+endif ()
+
 if (USBIPDCPP_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif ()
 
 if (USBIPDCPP_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif ()
 

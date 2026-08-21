@@ -9,8 +9,9 @@ SineWaveSource::SineWaveSource(std::uint32_t frequency_hz, std::vector<std::uint
                                std::uint16_t channels, double amplitude) :
     frequency_hz(frequency_hz), sample_rates(std::move(sample_rates)), channels(channels), amplitude(amplitude) {
     // 注意：初始化列表已完成 move，函数体内必须用 this-> 访问成员（参数已失效）
-    // 过滤非法采样率（需为 8kHz 整数倍），保持传入顺序
-    std::erase_if(this->sample_rates, [](std::uint32_t r) { return r == 0 || r % 8000 != 0; });
+    // 过滤非法采样率（保留所有正值：UAC 设备支持任意采样率，8kHz 倍数的
+    // 历史限制会让 44100 等非 8kHz 整数倍采样率被静默丢弃，见 set_format 注释）
+    std::erase_if(this->sample_rates, [](std::uint32_t r) { return r == 0; });
     if (this->sample_rates.empty()) {
         this->sample_rates.push_back(48000);
     }

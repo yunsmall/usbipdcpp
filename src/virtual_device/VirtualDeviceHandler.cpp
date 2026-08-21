@@ -1,3 +1,10 @@
+// [CTRL] 等调试日志默认编译期裁掉（TRACE 级别）：排查客户端初始化流程时定义
+// USBIPDCPP_STRACE 保留
+#ifndef USBIPDCPP_STRACE
+    #undef SPDLOG_ACTIVE_LEVEL
+    #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+#endif
+
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
 
 #include "usbipdcpp/Session.h"
@@ -89,6 +96,11 @@ void VirtualDeviceHandler::setup_interface_handlers() {
 
 void VirtualDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
     AbstDeviceHandler::on_new_connection(current_session, ec);
+    // 先启动设备级传输调度器：ISO URB 入队后由它按帧节奏延迟响应
+    // （对齐 vudc 的 v_start_timer）。仅启用调度器的设备启动线程
+    if (use_transfer_scheduler) {
+        transfer_scheduler.start(current_session);
+    }
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
             intf.handler->on_new_connection(current_session, ec);
@@ -104,6 +116,10 @@ void VirtualDeviceHandler::on_new_connection(Session &current_session, error_cod
                     if (done.handler)
                         done.handler->on_disconnection(rollback_ec);
                 }
+                // 回滚：撤销已启动的调度线程
+                if (use_transfer_scheduler) {
+                    transfer_scheduler.stop();
+                }
                 remove_session();
                 break;
             }
@@ -112,6 +128,11 @@ void VirtualDeviceHandler::on_new_connection(Session &current_session, error_cod
 }
 
 void VirtualDeviceHandler::on_disconnection(error_code &ec) {
+    // 先停设备级传输调度器（丢弃未完成 URB、停线程）：调度线程可能正在调
+    // session->submit_ret_submit，join 必须在基类清 session 指针之前完成
+    if (use_transfer_scheduler) {
+        transfer_scheduler.stop();
+    }
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
             intf.handler->on_disconnection(ec);
@@ -159,6 +180,11 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                               TransferHandle transfer, std::error_code &ec) {
     // 获取 GenericTransfer 指针
     auto *trx = GenericTransfer::from_handle(transfer.get());
+
+    // 调试用：打印所有控制请求（含标准请求），排查 Windows 客户端初始化流程停止位置
+    SPDLOG_TRACE("[CTRL] seq={} bmReqType=0x{:02x} bRequest=0x{:02x} wValue=0x{:04x} wIndex=0x{:04x} len={} {}",
+                seqnum, setup_packet.calc_request_type(), setup_packet.request, setup_packet.value,
+                setup_packet.index, transfer_buffer_length, setup_packet.is_out() ? "OUT" : "IN");
 
     auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
     // 标准的请求全在这里处理了
@@ -597,6 +623,14 @@ void VirtualDeviceHandler::handle_isochronous_transfer(std::uint32_t seqnum, con
 }
 
 void VirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    // 等时 URB 驻留在调度器队列中，优先在那里取消（对齐 vudc_rx.c 的
+    // CMD_UNLINK：找到 → 应答 RET_UNLINK(-ECONNRESET) 且不再发 RET_SUBMIT；
+    // 找不到 → 应答 RET_UNLINK(0)，表示 URB 已完成或不存在）
+    if (use_transfer_scheduler && transfer_scheduler.cancel(unlink_seqnum)) {
+        session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+                cmd_seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET)));
+        return;
+    }
     for (auto &interface: handle_device.interfaces) {
         if (interface.handler) {
             interface.handler->handle_unlink_seqnum(unlink_seqnum, cmd_seqnum);

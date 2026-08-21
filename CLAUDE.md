@@ -20,3 +20,9 @@ push前先提交代码，push和提交请分别执行不要放在一起
 - 大的实验性功能：开临时 feature 分支开发，完成后合并回 main 并删除
 - 外部贡献者：fork + PR 到 main
 - 发版本：先更新 CMakeLists.txt 里的版本号并提交推送，再打 v* tag 推送，CI 自动构建发布包
+
+## usbip命令使用
+
+假设有个usbip服务器在本机的53240端口监听，请你attach或者list时使用
+`usbip -t 53240 attach/list ...`这种命令，注意-t必须紧跟usbip的后面，
+处于attach list等所有子命令的前面

@@ -17,8 +17,9 @@ FourierSource::FourierSource(std::vector<FourierHarmonic> harmonics, std::vector
     for (auto &h: this->harmonics) {
         h.amplitude = std::clamp(h.amplitude, 0.0, 1.0);
     }
-    // 过滤非法采样率（需为 8kHz 整数倍），保持传入顺序
-    std::erase_if(this->sample_rates, [](std::uint32_t r) { return r == 0 || r % 8000 != 0; });
+    // 过滤非法采样率（保留所有正值：UAC 设备支持任意采样率，8kHz 倍数的
+    // 历史限制会让 44100 等非 8kHz 整数倍采样率被静默丢弃，见 SineWaveSource 注释）
+    std::erase_if(this->sample_rates, [](std::uint32_t r) { return r == 0; });
     if (this->sample_rates.empty()) {
         this->sample_rates.push_back(48000);
     }

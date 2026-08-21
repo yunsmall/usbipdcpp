@@ -60,6 +60,12 @@ constexpr std::uint8_t FU_VOLUME_CONTROL = 0x02;
 constexpr std::uint8_t AS_CONTROL_UNDEFINED = 0x00;
 constexpr std::uint8_t AS_SAMPLING_FREQ_CONTROL = 0x01;
 
+// ==================== UAC1 状态字（AC 接口中断端点）====================
+// 对齐内核 include/uapi/linux/usb/audio.h 的 UAC1_STATUS_TYPE_*：状态字 2 字节
+// （bStatusType + bOriginator），FU 控制变化时经 AC 中断端点推送（audio_notify）
+constexpr std::uint8_t UAC1_STATUS_TYPE_ORIG_AUDIO_CONTROL_IF = 0x00;
+constexpr std::uint8_t UAC1_STATUS_TYPE_IRQ_PENDING = 0x01;
+
 // ==================== 音频格式常量 ====================
 constexpr std::uint16_t AUDIO_FORMAT_PCM = 0x0001; // wFormatTag: PCM
 

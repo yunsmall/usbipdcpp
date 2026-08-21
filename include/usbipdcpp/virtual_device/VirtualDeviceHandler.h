@@ -2,6 +2,7 @@
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/utils/StringPool.h"
+#include "usbipdcpp/virtual_device/TransferScheduler.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceTransferOperator.h"
 
 namespace usbipdcpp {
@@ -11,7 +12,7 @@ public:
     explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
                                   const Version &usb_version = {2, 0, 0}) :
         AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()), string_pool(string_pool),
-        usb_version(usb_version) {
+        usb_version(usb_version), transfer_scheduler(static_cast<UsbSpeed>(handle_device.speed)) {
         change_device_ep0_max_size_by_speed();
 
         string_configuration_value = string_pool.new_string(L"Default Configuration");
@@ -34,6 +35,19 @@ public:
     void on_disconnection(error_code &ec) override;
 
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+
+    /// 访问设备级传输调度器（vudc 等价物，见 TransferScheduler）。
+    /// 等时等需要按帧节奏响应的传输由 handler 提交给它调度
+    TransferScheduler &get_transfer_scheduler() {
+        return transfer_scheduler;
+    }
+
+    /// 启用/禁用设备级传输调度器（默认禁用：不需要调度器的设备不启动
+    /// 调度线程，避免无谓开销）。需要等时等帧节奏传输的派生类在构造时
+    /// 调用此函数启用，调度器随连接建立/断开自动启动/停止
+    void set_use_transfer_scheduler(bool enable) {
+        use_transfer_scheduler = enable;
+    }
 
     /**
      * @brief 设置所有接口 handler 的 device_handler 指针
@@ -179,5 +193,11 @@ protected:
 
     Version usb_version;
     std::shared_mutex data_mutex;
+
+    /// 设备级传输调度器：连接建立时启动、断开时停止（生命周期见
+    /// on_new_connection / on_disconnection），所有接口共享
+    TransferScheduler transfer_scheduler;
+    /// 是否启用 transfer_scheduler（默认关，见 set_use_transfer_scheduler）
+    bool use_transfer_scheduler = false;
 };
 } // namespace usbipdcpp

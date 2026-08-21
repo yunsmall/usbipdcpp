@@ -55,4 +55,8 @@ if (TARGET usbipdcpp_virtual_device)
     # 走网络的虚拟设备测试（import 后 stop 等）
     add_test_file(test_network_vdev)
     target_link_libraries(test_network_vdev PRIVATE usbipdcpp_virtual_device)
+
+    # 传输调度器（vudc 帧调度等价物）测试
+    add_test_file(test_transfer_scheduler)
+    target_link_libraries(test_transfer_scheduler PRIVATE usbipdcpp_virtual_device)
 endif ()
