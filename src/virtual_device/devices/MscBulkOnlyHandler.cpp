@@ -38,6 +38,13 @@ void MscBulkOnlyHandler::on_setup_interface_handlers() {
         config_.serial = wstr_to_ascii(device_handler->get_string_serial(), "USBIPDCPSN");
     if (config_.revision.empty())
         config_.revision = "1.00";
+
+    // 容量 > 2^32-1 块（2TB @ 512B）时 READ/WRITE/READ CAPACITY (10) 的 32 位 LBA
+    // 无法寻址。本项目只提供 10 字节 CDB 的读写，超限只能报错提示用户缩容
+    if (backend_ && backend_->block_count() > 0xFFFFFFFFull) {
+        SPDLOG_ERROR("存储容量 {} 块（{} 字节）超过 2TB，10 字节 CDB 无法寻址，请缩小镜像",
+                     backend_->block_count(), backend_->block_count() * backend_->block_size());
+    }
 }
 
 void MscBulkOnlyHandler::on_new_connection(Session &current_session, error_code &ec) {
@@ -49,6 +56,7 @@ void MscBulkOnlyHandler::on_new_connection(Session &current_session, error_code 
     data_residue_ = 0;
     command_failed_ = false;
     data_out_unmap_ = false;
+    data_out_write_same_ = false;
     read_mmap_base_ = nullptr;
     read_total_size_ = 0;
     write_mmap_base_ = nullptr;
@@ -63,6 +71,7 @@ void MscBulkOnlyHandler::on_disconnection(error_code &ec) {
     data_residue_ = 0;
     command_failed_ = false;
     data_out_unmap_ = false;
+    data_out_write_same_ = false;
     read_mmap_base_ = nullptr;
     read_total_size_ = 0;
     write_mmap_base_ = nullptr;
@@ -149,23 +158,24 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
             SPDLOG_DEBUG("CBW cmd=0x{:02X} dir={} len={}", cmd, is_data_in ? "IN" : "OUT", transfer_len);
 
             switch (cmd) {
-                case 0x00:
+                case ScsiCmd::TestUnitReady:
                     command_failed_ = !(backend_ != nullptr);
                     state_ = BotState::Status;
                     break;
 
-                case 0x03: {
-                    // REQUEST SENSE
-                    std::uint8_t sense[18] = {};
-                    sense[0] = 0x70;
-                    sense[7] = 10;
-                    auto len = std::min(transfer_len, std::uint32_t(18));
+                case ScsiCmd::RequestSense: {
+                    // REQUEST SENSE：固定格式，无错误时为 0x70 + 附加长度 10
+                    SenseData sense{};
+                    sense.valid_response_code = 0x70;
+                    sense.additional_length = 10;
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(SenseData)));
                     staging_offset_ = 0;
-                    staging_data_ = std::vector<std::uint8_t>(sense, sense + len);
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&sense),
+                                         reinterpret_cast<const std::uint8_t *>(&sense) + len);
                     state_ = BotState::DataIn;
                     break;
                 }
-                case 0x12: {
+                case ScsiCmd::Inquiry: {
                     // INQUIRY (标准 or VPD)
                     bool evpd = (current_cbw_.CBWCB[1] & 0x01) != 0;
                     std::uint8_t page = current_cbw_.CBWCB[2];
@@ -177,62 +187,84 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                             r.resize(n, ' '); // 不足补空格，超出截断
                             return r;
                         };
-                        std::uint8_t inquiry[36] = {};
-                        inquiry[0] = 0x00;
-                        inquiry[1] = 0x80;
-                        inquiry[2] = 0x07;
-                        inquiry[3] = 0x12; // HiSup=1, Response Format=2 (SPC-4)
-                        inquiry[4] = 31;
-                        inquiry[6] |= 0x02; // CmdQue=1
-                        std::memcpy(inquiry + 8, pad(config_.vendor, 8).c_str(), 8);
-                        std::memcpy(inquiry + 16, pad(config_.product, 16).c_str(), 16);
-                        std::memcpy(inquiry + 32, pad(config_.revision, 4).c_str(), 4);
-                        auto len = std::min(transfer_len, std::uint32_t(36));
+                        InquiryData inquiry{};
+                        inquiry.rmb = 0x80; // 可移动介质
+                        inquiry.version = 0x07; // SPC-4
+                        inquiry.hisup_format = 0x12; // HiSup=1, Response Format=2
+                        inquiry.additional_length = sizeof(InquiryData) - 5;
+                        inquiry.cmdque = 0x02; // CmdQue=1（byte 7 bit1）
+                        std::memcpy(inquiry.vendor_id, pad(config_.vendor, 8).c_str(), 8);
+                        std::memcpy(inquiry.product_id, pad(config_.product, 16).c_str(), 16);
+                        std::memcpy(inquiry.product_revision, pad(config_.revision, 4).c_str(), 4);
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(InquiryData)));
                         staging_offset_ = 0;
-                        staging_data_ = std::vector<std::uint8_t>(inquiry, inquiry + len);
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&inquiry),
+                                             reinterpret_cast<const std::uint8_t *>(&inquiry) + len);
                     }
                     else if (page == 0x00) {
-                        // Supported VPD Pages：0x00 0x80 0xB0 0xB2
-                        std::vector<std::uint8_t> vpd{0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0xB0, 0xB2};
-                        auto len = std::min(transfer_len, std::uint32_t(vpd.size()));
+                        // Supported VPD Pages：0x00 0x80 0xB0 0xB1 0xB2
+                        VpdSupportedPages vpd{};
+                        vpd.page_length = 5;
+                        vpd.pages[0] = 0x00;
+                        vpd.pages[1] = 0x80;
+                        vpd.pages[2] = 0xB0;
+                        vpd.pages[3] = 0xB1;
+                        vpd.pages[4] = 0xB2;
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdSupportedPages)));
                         staging_offset_ = 0;
-                        staging_data_ = std::vector<std::uint8_t>(vpd.begin(), vpd.begin() + len);
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
                     else if (page == 0x80) {
                         // Unit Serial Number，来自 config_.serial
-                        const auto &sn = config_.serial;
-                        std::vector<std::uint8_t> vpd{0x00, 0x80, 0x00, static_cast<std::uint8_t>(sn.size())};
-                        vpd.insert(vpd.end(), sn.begin(), sn.end());
-                        auto len = std::min(transfer_len, std::uint32_t(vpd.size()));
+                        VpdUnitSerialNumber vpd{};
+                        vpd.page_code = 0x80;
+                        auto sn_len = std::min<std::size_t>(config_.serial.size(), sizeof(vpd.serial));
+                        vpd.page_length = static_cast<std::uint8_t>(sn_len);
+                        std::memcpy(vpd.serial, config_.serial.data(), sn_len);
+                        auto len = std::min(transfer_len, std::uint32_t(4 + sn_len));
                         staging_offset_ = 0;
-                        staging_data_ = std::vector<std::uint8_t>(vpd.begin(), vpd.begin() + len);
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
                     else if (page == 0xB0) {
-                        // Block Limits VPD: 告之最大 UNMAP LBA 数和粒度
-                        std::vector<std::uint8_t> vpd(64, 0);
-                        vpd[0] = 0x00;
-                        vpd[1] = 0xB0;
-                        vpd[2] = 0x00;
-                        vpd[3] = 0x3C;
-                        // max_unmap_lba_count (bytes 20-23, big-endian): 65536 LBAs = 32 MiB
-                        vpd[21] = 0x01;
-                        // max_unmap_block_desc_count (bytes 24-27, big-endian): 64
-                        vpd[27] = 64;
-                        // optimal_unmap_granularity (bytes 28-31, big-endian): 8 LBAs = 4096 B
-                        vpd[31] = 8;
-                        // unmap_granularity_alignment (bytes 32-35, big-endian), bit31=UGAVALID
-                        vpd[32] = 0x80;
-                        vpd[35] = 8;
-                        auto len = std::min(transfer_len, std::uint32_t(vpd.size()));
+                        // Block Device Characteristics：全零 = 非旋转介质、无特殊特性。
+                        // （UNMAP 相关能力在 0xB1 Block Limits 中宣告）
+                        VpdBlockDeviceCharacteristics vpd{};
+                        vpd.page_code = 0xB0;
+                        put_be16(vpd.page_length, sizeof(vpd.data));
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdBlockDeviceCharacteristics)));
                         staging_offset_ = 0;
-                        staging_data_ = std::vector<std::uint8_t>(vpd.begin(), vpd.begin() + len);
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
+                    }
+                    else if (page == 0xB1) {
+                        // Block Limits (SBC-4)：宣告 UNMAP 与 WRITE SAME 能力，
+                        // 主机 sd 层据此启用 trim / zeroout 路径
+                        VpdBlockLimits vpd{};
+                        vpd.page_code = 0xB1;
+                        put_be16(vpd.page_length, 0x3C);
+                        put_be32(vpd.max_unmap_lba_count, 65536); // 32 MiB
+                        put_be32(vpd.max_unmap_block_desc_count, 64);
+                        put_be32(vpd.opt_unmap_granularity, 8); // 4096 B
+                        put_be32(vpd.unmap_granularity_alignment, 0x80000008); // bit31=UGAVALID
+                        put_be32(vpd.max_write_same_length, 65535);
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdBlockLimits)));
+                        staging_offset_ = 0;
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
                     else if (page == 0xB2) {
-                        // Logical Block Provisioning: 宣告支持 UNMAP
-                        std::vector<std::uint8_t> vpd{0x00, 0xB2, 0x00, 0x04, 0x00, 0x80, 0x02, 0x00};
-                        auto len = std::min(transfer_len, std::uint32_t(vpd.size()));
+                        // Logical Block Provisioning：宣告支持 UNMAP（LBPU=1）
+                        VpdLogicalBlockProvisioning vpd{};
+                        vpd.page_code = 0xB2;
+                        put_be16(vpd.page_length, 0x0004);
+                        vpd.lbpu = 0x80;
+                        vpd.provisioning = 0x02;
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdLogicalBlockProvisioning)));
                         staging_offset_ = 0;
-                        staging_data_ = std::vector<std::uint8_t>(vpd.begin(), vpd.begin() + len);
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
                     else {
                         // 不支持的 VPD page — 回空
@@ -242,93 +274,70 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     state_ = BotState::DataIn;
                     break;
                 }
-                case 0x1A: {
-                    // MODE SENSE (6)
-                    std::uint8_t mode[4] = {};
-                    mode[0] = 3;
+                case ScsiCmd::ModeSense6: {
+                    // MODE SENSE (6)：4 字节模式头，无块描述符/页面
+                    ModeSense6Data mode{};
+                    mode.mode_data_length = sizeof(ModeSense6Data) - 1;
                     if (read_only_)
-                        mode[2] = 0x80;
-                    auto len = std::min(transfer_len, std::uint32_t(4));
+                        mode.wp = 0x80;
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(ModeSense6Data)));
                     staging_offset_ = 0;
-                    staging_data_ = std::vector<std::uint8_t>(mode, mode + len);
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&mode),
+                                         reinterpret_cast<const std::uint8_t *>(&mode) + len);
                     state_ = BotState::DataIn;
                     break;
                 }
-                case 0x1E:
+                case ScsiCmd::PreventAllowMediumRemoval:
                     state_ = BotState::Status;
                     break;
 
-                case 0x23: {
+                case ScsiCmd::ReadFormatCapacities: {
                     // READ FORMAT CAPACITIES（Windows 客户端会发）
+                    ReadFormatCapacitiesData buf{};
                     auto blocks = backend_ ? backend_->block_count() : 0;
                     std::uint32_t bs = backend_ ? backend_->block_size() : 512;
-                    std::uint8_t buf[12] = {};
-                    buf[3] = 8; // 一个 8 字节描述符
-                    buf[4] = (blocks >> 24) & 0xFF;
-                    buf[5] = (blocks >> 16) & 0xFF;
-                    buf[6] = (blocks >> 8) & 0xFF;
-                    buf[7] = blocks & 0xFF;
-                    buf[8] = 0x02; // formatted media
-                    buf[9] = (bs >> 16) & 0xFF;
-                    buf[10] = (bs >> 8) & 0xFF;
-                    buf[11] = bs & 0xFF;
-                    auto len = std::min(transfer_len, std::uint32_t(12));
+                    put_be16(buf.list_length, 8); // 一个 8 字节描述符
+                    put_be32(buf.capacity, static_cast<std::uint32_t>(blocks));
+                    buf.format_type = 0x02; // formatted media
+                    put_be24(buf.block_size, bs);
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(ReadFormatCapacitiesData)));
                     staging_offset_ = 0;
-                    staging_data_ = std::vector<std::uint8_t>(buf, buf + len);
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
+                                         reinterpret_cast<const std::uint8_t *>(&buf) + len);
                     state_ = BotState::DataIn;
                     break;
                 }
 
-                case 0x9E: {
+                case ScsiCmd::ReadCapacity16: {
                     // READ CAPACITY (16)
                     SPDLOG_DEBUG("READ CAPACITY (16)");
-                    auto last_lba = backend_ ? backend_->block_count() - 1 : 0;
-                    std::uint32_t bs = backend_->block_size();
-                    std::uint8_t buf[12] = {};
-                    buf[0] = (last_lba >> 56) & 0xFF;
-                    buf[1] = (last_lba >> 48) & 0xFF;
-                    buf[2] = (last_lba >> 40) & 0xFF;
-                    buf[3] = (last_lba >> 32) & 0xFF;
-                    buf[4] = (last_lba >> 24) & 0xFF;
-                    buf[5] = (last_lba >> 16) & 0xFF;
-                    buf[6] = (last_lba >> 8) & 0xFF;
-                    buf[7] = last_lba & 0xFF;
-                    buf[8] = (bs >> 24) & 0xFF;
-                    buf[9] = (bs >> 16) & 0xFF;
-                    buf[10] = (bs >> 8) & 0xFF;
-                    buf[11] = bs & 0xFF;
-                    auto len = std::min(transfer_len, std::uint32_t(12));
+                    ReadCapacity16Data buf{};
+                    put_be64(buf.last_lba, backend_ ? backend_->block_count() - 1 : 0);
+                    put_be32(buf.block_size, backend_->block_size());
+                    auto len = std::min(transfer_len, std::uint32_t(12)); // 低 12 字节即可（LBA+块大小）
                     staging_offset_ = 0;
-                    staging_data_ = std::vector<std::uint8_t>(buf, buf + len);
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
+                                         reinterpret_cast<const std::uint8_t *>(&buf) + len);
                     state_ = BotState::DataIn;
                     break;
                 }
-                case 0x25: {
+                case ScsiCmd::ReadCapacity10: {
                     // READ CAPACITY (10)
-                    auto last_lba = backend_ ? backend_->block_count() - 1 : 0;
-                    std::uint32_t bs = backend_->block_size();
-                    std::uint8_t buf[8] = {};
-                    buf[0] = (last_lba >> 24) & 0xFF;
-                    buf[1] = (last_lba >> 16) & 0xFF;
-                    buf[2] = (last_lba >> 8) & 0xFF;
-                    buf[3] = last_lba & 0xFF;
-                    buf[4] = (bs >> 24) & 0xFF;
-                    buf[5] = (bs >> 16) & 0xFF;
-                    buf[6] = (bs >> 8) & 0xFF;
-                    buf[7] = bs & 0xFF;
-                    auto len = std::min(transfer_len, std::uint32_t(8));
+                    ReadCapacity10Data buf{};
+                    put_be32(buf.last_lba, static_cast<std::uint32_t>(backend_ ? backend_->block_count() - 1 : 0));
+                    put_be32(buf.block_size, backend_->block_size());
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(ReadCapacity10Data)));
                     staging_offset_ = 0;
-                    staging_data_ = std::vector<std::uint8_t>(buf, buf + len);
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
+                                         reinterpret_cast<const std::uint8_t *>(&buf) + len);
                     state_ = BotState::DataIn;
                     break;
                 }
-                case 0x28: // READ (10)
-                case 0x2A: {
-                    // WRITE (10)
-                    auto lba = (std::uint64_t(current_cbw_.CBWCB[2]) << 24) |
-                               (std::uint64_t(current_cbw_.CBWCB[3]) << 16) |
-                               (std::uint64_t(current_cbw_.CBWCB[4]) << 8) | (std::uint64_t(current_cbw_.CBWCB[5]));
-                    auto count = (std::uint16_t(current_cbw_.CBWCB[7]) << 8) | (std::uint16_t(current_cbw_.CBWCB[8]));
+                case ScsiCmd::Read10:
+                case ScsiCmd::Write10: {
+                    const auto *cdb = reinterpret_cast<const ReadWrite10Cdb *>(current_cbw_.CBWCB);
+                    auto lba = get_be32(cdb->lba);
+                    auto count = get_be16(cdb->block_count);
                     if (count == 0)
                         count = 256;
 
@@ -339,7 +348,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                         break;
                     }
 
-                    if (cmd == 0x28) {
+                    if (cmd == ScsiCmd::Read10) {
                         // READ：优先 mmap 直发（sendfile 路径），否则回退 staging
                         staging_offset_ = 0;
                         read_lba_ = lba;
@@ -373,15 +382,88 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     }
                     break;
                 }
-                case 0x1B:
-                case 0x2F:
+                case ScsiCmd::StartStopUnit:
+                case ScsiCmd::Verify10:
                     state_ = BotState::Status;
                     break;
-                case 0x85:
+                case ScsiCmd::SynchronizeCache: {
+                    // SYNCHRONIZE CACHE：虚拟设备没有写缓存，数据早已落盘，
+                    // 直接成功（对齐内核 do_synchronize_cache）
+                    state_ = BotState::Status;
+                    break;
+                }
+                case ScsiCmd::ModeSense10: {
+                    // MODE SENSE (10)：8 字节模式头，无块描述符/页面。
+                    // WP 位位置与 6 字节版不同（对齐内核 do_mode_sense）
+                    ModeSense10Data mode{};
+                    put_be16(mode.mode_data_length, sizeof(ModeSense10Data) - 2);
+                    if (read_only_)
+                        mode.wp = 0x80;
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(ModeSense10Data)));
+                    staging_offset_ = 0;
+                    staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&mode),
+                                         reinterpret_cast<const std::uint8_t *>(&mode) + len);
+                    state_ = BotState::DataIn;
+                    break;
+                }
+                case ScsiCmd::WriteSame10:
+                case ScsiCmd::WriteSame16: {
+                    // WRITE SAME：CDB[1] 位布局（SBC-3 rev 26+）：
+                    //   bit7-5 = WRPROTECT、bit4 = ANCHOR、bit3 = UNMAP、
+                    //   bit2 = PBDATA、bit1 = LBDATA、bit0 = NDOB
+                    // UNMAP=1：无数据阶段，直接 punch_hole（trim）
+                    // UNMAP=0：DATA-OUT 收 1 个逻辑块，用该数据填充整个 LBA 范围
+                    // 块数 0 = 到介质末尾（与 READ/WRITE 10 的 0=256 块语义不同）
+                    bool unmap = (current_cbw_.CBWCB[1] & 0x08) != 0;
+                    std::uint64_t lba;
+                    std::uint64_t cnt;
+                    if (cmd == ScsiCmd::WriteSame10) {
+                        const auto *cdb = reinterpret_cast<const WriteSame10Cdb *>(current_cbw_.CBWCB);
+                        lba = get_be32(cdb->lba);
+                        cnt = get_be16(cdb->block_count);
+                    }
+                    else {
+                        const auto *cdb = reinterpret_cast<const WriteSame16Cdb *>(current_cbw_.CBWCB);
+                        lba = get_be64(cdb->lba);
+                        cnt = get_be32(cdb->block_count);
+                    }
+                    auto blocks = backend_ ? backend_->block_count() : 0;
+                    if (lba >= blocks) {
+                        SPDLOG_WARN("WRITE SAME LBA={} 超出范围", lba);
+                        command_failed_ = true;
+                        state_ = BotState::Status;
+                        break;
+                    }
+                    if (cnt == 0)
+                        cnt = blocks - lba; // 0 = 直到介质末尾
+                    if (read_only_ || cnt > blocks - lba) {
+                        SPDLOG_WARN("WRITE SAME LBA={} cnt={} 超出范围或只读", lba, cnt);
+                        command_failed_ = true;
+                        state_ = BotState::Status;
+                        break;
+                    }
+                    SPDLOG_DEBUG("WRITE SAME cmd=0x{:02X} unmap={} lba={} cnt={}", cmd, unmap, lba, cnt);
+                    if (unmap) {
+                        backend_->punch_hole(lba, cnt);
+                        state_ = BotState::Status;
+                    }
+                    else {
+                        write_same_lba_ = lba;
+                        write_same_count_ = cnt;
+                        data_out_write_same_ = true;
+                        staging_offset_ = 0;
+                        staging_data_.clear();
+                        // 主机应传 1 个逻辑块，多余字节视为协议偏差丢弃
+                        data_residue_ = transfer_len > backend_->block_size() ? transfer_len - backend_->block_size() : 0;
+                        state_ = BotState::DataOut;
+                    }
+                    break;
+                }
+                case ScsiCmd::AtaPassThrough:
                     command_failed_ = true;
                     state_ = BotState::Status;
                     break;
-                case 0x42: {
+                case ScsiCmd::Unmap: {
                     // UNMAP，数据长度以 CBW.dCBWDataTransferLength 为准（某些内核 CDB 参数长度为 0）
                     auto data_len = current_cbw_.dCBWDataTransferLength;
                     SPDLOG_DEBUG("UNMAP CBW tag=0x{:08X} dataLen={}", current_cbw_.dCBWTag, data_len);
@@ -415,18 +497,33 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 if (staging_data_.size() >= write_count_) {
                     auto &d = staging_data_;
                     for (std::size_t i = 8; i + 16 <= d.size(); i += 16) {
-                        auto lba = (std::uint64_t(d[i]) << 56) | (std::uint64_t(d[i + 1]) << 48) |
-                                   (std::uint64_t(d[i + 2]) << 40) | (std::uint64_t(d[i + 3]) << 32) |
-                                   (std::uint64_t(d[i + 4]) << 24) | (std::uint64_t(d[i + 5]) << 16) |
-                                   (std::uint64_t(d[i + 6]) << 8) | (std::uint64_t(d[i + 7]));
-                        auto cnt = (std::uint32_t(d[i + 8]) << 24) | (std::uint32_t(d[i + 9]) << 16) |
-                                   (std::uint32_t(d[i + 10]) << 8) | (std::uint32_t(d[i + 11]));
+                        const auto *desc = reinterpret_cast<const UnmapBlockDescriptor *>(&d[i]);
+                        auto lba = get_be64(desc->lba);
+                        auto cnt = get_be32(desc->block_count);
                         SPDLOG_DEBUG("UNMAP punch lba={} cnt={}", lba, cnt);
                         backend_->punch_hole(lba, cnt);
                     }
                     staging_data_.clear();
                     data_out_unmap_ = false;
                     data_residue_ = 0;
+                    state_ = BotState::Status;
+                }
+            }
+            else if (data_out_write_same_) {
+                // WRITE SAME 填充：收满 1 个逻辑块后逐块写入整个范围。
+                // 填充数据只有 1 块，而 write() 的 data 缓冲需完整 count 块，
+                // 故每次只写 1 块（不可批量，否则越界读）
+                auto bs = backend_->block_size();
+                if (staging_data_.size() >= bs) {
+                    auto lba = write_same_lba_;
+                    auto cnt = write_same_count_;
+                    while (cnt > 0) {
+                        backend_->write(lba, 1, staging_data_.data());
+                        lba += 1;
+                        cnt -= 1;
+                    }
+                    staging_data_.clear();
+                    data_out_write_same_ = false;
                     state_ = BotState::Status;
                 }
             }
@@ -510,10 +607,15 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
                 CSW csw{};
                 csw.dCSWSignature = CSW_SIGNATURE;
                 csw.dCSWTag = current_cbw_.dCBWTag;
-                csw.dCSWDataResidue = data_residue_;
                 if (command_failed_) {
+                    // 对齐内核 fsg：失败时 residue = 应传未传字节数。本项目失败
+                    // 均发生在数据阶段前（实际传了 0 字节），故 = dCBWDataTransferLength
+                    csw.dCSWDataResidue = current_cbw_.dCBWDataTransferLength;
                     csw.bCSWStatus = 1;
                     command_failed_ = false;
+                }
+                else {
+                    csw.dCSWDataResidue = data_residue_;
                 }
 
                 auto *trx = StorageIoTransfer::from_handle(transfer.get());

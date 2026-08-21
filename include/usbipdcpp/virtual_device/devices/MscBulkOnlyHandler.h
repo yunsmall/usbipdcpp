@@ -85,6 +85,12 @@ private:
     /** true 时 DataOut 走 UNMAP 描述符解析，不走 WRITE 写盘 */
     bool data_out_unmap_ = false;
 
+    /** WRITE SAME 填充写：目标 LBA、块数（16 字节 CDB 可达 32 位块） */
+    std::uint64_t write_same_lba_ = 0;
+    std::uint64_t write_same_count_ = 0;
+    /** true 时 DataOut 走 WRITE SAME 填充模式（收 1 块数据写满整个范围） */
+    bool data_out_write_same_ = false;
+
     /** READ 零拷贝：mmap 首地址、起始 LBA、总字节数 */
     std::uint64_t read_lba_ = 0;
     void *read_mmap_base_ = nullptr;
