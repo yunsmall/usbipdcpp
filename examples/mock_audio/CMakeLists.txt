@@ -1,6 +1,6 @@
 # AudioFileSource（--audio 选项）依赖 miniaudio（单头文件库，可选）。
 # miniaudio 查找两种方式：先直接找 miniaudio.h，找不到走 pkgconf（Termux 等
-# 只有 pkg-config 的环境）；两种都找不到才算真找不到，此时 warning 跳过
+# 只有 pkg-config 的环境）；两种都找不到才算真找不到，此时打印 DISABLED 并跳过
 # AudioFileSource（sine/fourier 音源不受影响），同 mock_uvc_ffmpeg 的做法。
 # stb_vorbis.c 的布局差异（vcpkg include 根 / Termux include/stb/ 子目录）
 # 由 AudioFileSource.cpp 里的 __has_include 自适应，无需在此检测。
@@ -20,9 +20,11 @@ endif ()
 file(GLOB_RECURSE src *.cpp *.c)
 # 测试文件单独编译进 test target，不参与主程序
 list(FILTER src EXCLUDE REGEX "test_.*\\.cpp")
-if (NOT MINIAUDIO_INCLUDE_DIRS)
+if (MINIAUDIO_INCLUDE_DIRS)
+    message(STATUS "miniaudio: ENABLED (include: ${MINIAUDIO_INCLUDE_DIRS})")
+else ()
     list(FILTER src EXCLUDE REGEX "AudioFileSource")
-    message(WARNING "miniaudio not found, --audio option (AudioFileSource) unavailable")
+    message(STATUS "miniaudio: DISABLED (--audio option unavailable)")
 endif ()
 add_executable(mock_audio ${src})
 target_link_libraries(mock_audio usbipdcpp_virtual_device cxxopts::cxxopts)

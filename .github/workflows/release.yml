@@ -8,6 +8,11 @@ on:
   push:
     tags: [ "v*" ]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "构建完成后是否发布到 Release（tag 触发总是发布；手动触发默认不发布，产物从 artifact 下载）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -35,12 +40,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libgtest-dev
+          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libgtest-dev libminiaudio-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install asio spdlog libusb cxxopts ffmpeg googletest
+          brew install asio spdlog libusb cxxopts ffmpeg googletest miniaudio
 
       - name: Setup FFmpeg (Windows)
         if: runner.os == 'Windows'
@@ -65,7 +70,7 @@ jobs:
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          vcpkg install asio spdlog libusb cxxopts pkgconf gtest --triplet x64-windows
+          vcpkg install asio spdlog libusb cxxopts pkgconf gtest miniaudio --triplet x64-windows
 
       # ======== CMake 配置 ========
 
@@ -182,9 +187,11 @@ jobs:
           path: ${{ env.archive }}
           if-no-files-found: error
 
-  # 等待所有平台都成功后再统一上传到 Release
+  # 等待所有平台都成功后再统一上传到 Release。
+  # tag 触发（push）总是发布；手动触发由 publish 输入控制（默认不发布）
   release-upload:
     needs: [ release ]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,3 +206,5 @@ jobs:
         with:
           files: artifacts/**/*.tar.gz
           generate_release_notes: true
+          # 默认以 pre-release 发布，人工验证后再转正式
+          prerelease: true
