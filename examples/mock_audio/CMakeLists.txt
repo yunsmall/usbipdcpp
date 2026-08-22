@@ -6,8 +6,10 @@
 # 由 AudioFileSource.cpp 里的 __has_include 自适应，无需在此检测。
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h)
 if (NOT MINIAUDIO_INCLUDE_DIR)
-    # Homebrew 0.11.25+ 把头文件装在 include/miniaudio/ 子目录（其余平台在 include 根）
-    find_path(MINIAUDIO_INCLUDE_DIR miniaudio/miniaudio.h)
+    # Homebrew 0.11.25+ 把头文件装在 include/miniaudio/ 子目录，其 miniaudio.pc 的
+    # Cflags 也指向 include 根（pkgconf 分支同样找不到），故必须直接找子目录。
+    # PATH_SUFFIXES 使 find_path 返回 <prefix>/include/miniaudio，正是 -I 需要的目录
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio)
 endif ()
 if (MINIAUDIO_INCLUDE_DIR)
     set(MINIAUDIO_INCLUDE_DIRS ${MINIAUDIO_INCLUDE_DIR})
