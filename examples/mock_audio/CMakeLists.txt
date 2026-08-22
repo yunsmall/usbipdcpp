@@ -5,6 +5,10 @@
 # stb_vorbis.c 的布局差异（vcpkg include 根 / Termux include/stb/ 子目录）
 # 由 AudioFileSource.cpp 里的 __has_include 自适应，无需在此检测。
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h)
+if (NOT MINIAUDIO_INCLUDE_DIR)
+    # Homebrew 0.11.25+ 把头文件装在 include/miniaudio/ 子目录（其余平台在 include 根）
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio/miniaudio.h)
+endif ()
 if (MINIAUDIO_INCLUDE_DIR)
     set(MINIAUDIO_INCLUDE_DIRS ${MINIAUDIO_INCLUDE_DIR})
 else ()
