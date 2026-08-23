@@ -33,10 +33,12 @@ usbipdcpp::error_code usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
         return {};
     }
 
-#ifdef SIGPIPE
+#if defined(SIGPIPE) && !defined(USBIPDCPP_DISABLE_SIGNAL)
     // 对端关闭连接后继续发送会触发 SIGPIPE（默认终止进程），服务器应忽略：
     // 写失败统一走 error_code 路径处理。asio 的 socket 发送已带 MSG_NOSIGNAL，
     // 此处显式忽略作为跨版本防御（重复调用无害）。
+    // ESP-IDF 等平台 libc 声明了 <csignal> 但无实现，定义
+    // USBIPDCPP_DISABLE_SIGNAL（或开 USBIPDCPP_DISABLE_SIGNAL 选项）跳过
     std::signal(SIGPIPE, SIG_IGN);
 #endif
 

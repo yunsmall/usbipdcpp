@@ -158,6 +158,13 @@ endif ()
 if (NOT USBIPDCPP_BUILD_SHARED_LIBS)
     target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_STATIC)
 endif()
+# std::signal 在部分嵌入式平台（如 ESP-IDF）的 libc 只有声明没有实现，链接失败。
+# 默认关闭；不经过本 CMakeLists 的构建系统（如 esp32 的 IDF）直接定义
+# USBIPDCPP_DISABLE_SIGNAL 宏即可，效果等同此选项
+option(USBIPDCPP_DISABLE_SIGNAL "Disable std::signal usage (platforms whose libc declares it but has no implementation)" OFF)
+if (USBIPDCPP_DISABLE_SIGNAL)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC USBIPDCPP_DISABLE_SIGNAL)
+endif ()
 
 # 虚拟设备库
 if (USBIPDCPP_BUILD_VIRTUAL_DEVICE)
