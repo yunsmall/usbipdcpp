@@ -216,8 +216,6 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
 
             if (err < 0) [[unlikely]] {
                 SPDLOG_ERROR("控制传输给设备失败：{}", libusb_strerror(err));
-                bool unlinked = false;
-                std::uint32_t unlink_cmd_seqnum = 0;
                 {
                     std::lock_guard lock(transfers_mutex_);
                     if (transfers_.erase(seqnum)) {
@@ -230,25 +228,20 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                         // callback_args/session
                         pending_count_.fetch_sub(1, std::memory_order_release);
                     }
-                    // 锁内读取取消标记：handle_unlink_seqnum 可能在 submit 完成前
-                    // 已置 unlinking（此时 cancel 返回 NOT_FOUND，因为传输尚未
-                    // 提交）。若此处只发 RET_SUBMIT 而丢弃取消标记，客户端会
-                    // 一直等 RET_UNLINK 而挂起。置位则改发 RET_UNLINK
-                    unlinked = callback_args->unlinking;
-                    unlink_cmd_seqnum = callback_args->unlink_cmd_seqnum;
+                    // 无需检查 unlinking：receive_urb 与 handle_unlink_seqnum
+                    // 同在 receiver 线程串行执行，submit 失败时 handle_unlink
+                    // 不可能已置位（线程模型见 handle_unlink_seqnum 注释）。
+                    // 对齐内核 stub_recv_cmd_submit：提交失败直接回
+                    // RET_SUBMIT(EPIPE)；若主机仍发来 CMD_UNLINK，entry 已
+                    // erase 会走 handle_unlink_seqnum 的 else 分支回
+                    // RET_UNLINK(0)，vhci 对已完成的 URB 丢弃该响应
                 }
                 callback_args->transfer.reset();
                 if (!callback_args_pool_.free(callback_args)) {
                     delete callback_args;
                 }
-                if (unlinked) [[unlikely]] {
-                    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-                            unlink_cmd_seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE)));
-                }
-                else {
-                    session->submit_ret_submit(
-                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-                }
+                session->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
                     device_removed = true;
                     ec = make_error_code(ErrorType::NO_DEVICE);
@@ -339,8 +332,6 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
         auto err = libusb_submit_transfer(trx);
         if (err < 0) [[unlikely]] {
             SPDLOG_ERROR("传输失败，{}", libusb_strerror(err));
-            bool unlinked = false;
-            std::uint32_t unlink_cmd_seqnum = 0;
             {
                 std::lock_guard lock(transfers_mutex_);
                 if (transfers_.erase(seqnum)) {
@@ -348,22 +339,14 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                     // 递减先于等待的谓词检查，谓词直接满足，无需 notify）
                     pending_count_.fetch_sub(1, std::memory_order_release);
                 }
-                // 同控制传输路径：submit 前已被 unlink 标记时改发 RET_UNLINK，
-                // 否则客户端等不到 RET_UNLINK 而挂起
-                unlinked = callback_args->unlinking;
-                unlink_cmd_seqnum = callback_args->unlink_cmd_seqnum;
+                // 无需检查 unlinking：与 handle_unlink_seqnum 同线程串行，
+                // 理由见控制传输分支的注释，对齐内核 stub_recv_cmd_submit
             }
             callback_args->transfer.reset();
             if (!callback_args_pool_.free(callback_args)) {
                 delete callback_args;
             }
-            if (unlinked) [[unlikely]] {
-                session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-                        unlink_cmd_seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE)));
-            }
-            else {
-                session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-            }
+            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
                 device_removed = true;
                 ec = make_error_code(ErrorType::NO_DEVICE);
