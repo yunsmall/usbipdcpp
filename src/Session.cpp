@@ -70,25 +70,36 @@ void usbipdcpp::Session::run() {
     // 收尾时不再触碰自身句柄，避免与 run() 的赋值并发访问 std::thread 对象
     // （std::thread 对象非线程安全）。线程体内持有 self，return 时最后一个
     // 引用释放即自析构
-    std::thread main_thread([self = std::move(self)]() {
-        try {
-            self->parse_op();
-        } catch (const std::exception &e) {
-            // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程）
-            SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
-        } catch (...) {
-            SPDLOG_ERROR("session线程未捕获未知异常");
-        }
+    std::thread main_thread;
+    try {
+        main_thread = std::thread([self = std::move(self)]() {
+            try {
+                self->parse_op();
+            } catch (const std::exception &e) {
+                // 兜底：任何异常都不能逃出线程函数（否则 std::terminate 崩溃整个进程）
+                SPDLOG_ERROR("session线程未捕获异常：{}", e.what());
+            } catch (...) {
+                SPDLOG_ERROR("session线程未捕获未知异常");
+            }
 
-        // 处理结束后自动往服务器中删除自身并触发退出回调
-        self->server.remove_session(self->id);
-    });
+            // 处理结束后自动往服务器中删除自身并触发退出回调
+            self->server.remove_session(self->id);
+        });
+    } catch (...) {
+        // 线程创建失败（如系统资源不足）：after 回调仍要调用（传 nullptr
+        // 表示创建失败），保证 before/after 成对；异常继续传播给
+        // accept_loop 的兜底 catch 移除会话
+        if (server.after_thread_create_callback) {
+            server.after_thread_create_callback(ThreadPurpose::SessionMain, nullptr);
+        }
+        throw;
+    }
     main_thread.detach();
     if (server.after_thread_create_callback) {
         // 用户回调抛异常不在此捕获：用户自己的代码抛了，用户想做的事
         // 可能已不正常，异常按原有路径传播（accept_loop 的兜底 catch
         // 会移除会话记录）——库不为用户回调擦屁股
-        server.after_thread_create_callback(ThreadPurpose::SessionMain, main_thread);
+        server.after_thread_create_callback(ThreadPurpose::SessionMain, &main_thread);
     }
 }
 
@@ -345,10 +356,14 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
         }
         current_import_device_id.reset();
         current_import_device.reset();
+        // after 回调仍要调用（传 nullptr 表示创建失败），保证 before/after 成对
+        if (server.after_thread_create_callback) {
+            server.after_thread_create_callback(ThreadPurpose::SessionSender, nullptr);
+        }
         throw;
     }
     if (server.after_thread_create_callback) {
-        server.after_thread_create_callback(ThreadPurpose::SessionSender, sender_thread);
+        server.after_thread_create_callback(ThreadPurpose::SessionSender, &sender_thread);
     }
 
     bool receiver_ok = true;

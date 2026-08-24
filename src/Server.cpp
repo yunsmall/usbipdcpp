@@ -102,17 +102,21 @@ usbipdcpp::error_code usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
         });
     } catch (...) {
         // 线程创建失败（如系统资源不足）：恢复未运行状态并关闭 acceptor，
-        // 避免服务卡在"已标记运行但无网络线程"的中间状态
+        // 避免服务卡在"已标记运行但无网络线程"的中间状态。after 回调仍要
+        // 调用（传 nullptr 表示创建失败），保证 before/after 成对
         running = false;
         asio::error_code ignored;
         acceptor.close(ignored);
+        if (after_thread_create_callback) {
+            after_thread_create_callback(ThreadPurpose::NetworkIO, nullptr);
+        }
         return std::make_error_code(std::errc::resource_unavailable_try_again);
     }
     if (after_thread_create_callback) {
         // 用户回调抛异常不在此捕获：用户自己的代码抛了，用户想做的事
         // 可能已不正常，异常按原有路径传播（start 抛给调用方）——库不
         // 为用户回调擦屁股
-        after_thread_create_callback(ThreadPurpose::NetworkIO, network_io_thread);
+        after_thread_create_callback(ThreadPurpose::NetworkIO, &network_io_thread);
     }
     return {};
 }
@@ -422,10 +426,14 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
                 std::lock_guard lock(session_list_mutex);
                 // 仅存 weak_ptr：Session 生命周期自管，Server 不持有引用
                 sessions.emplace(id, session);
-            } catch (...) {
+            } catch (const std::exception &e) {
                 // 连接表插入失败（如内存不足）：放弃该会话——active_sessions 已
                 // 在创建时递增，session 离开作用域即析构（析构回调递减），计数
                 // 保持平衡。不能抛给 detached 协程（会终止接受循环），继续 accept
+                SPDLOG_ERROR("会话表插入失败：{}", e.what());
+                continue;
+            } catch (...) {
+                SPDLOG_ERROR("会话表插入未知异常");
                 continue;
             }
 
@@ -433,12 +441,18 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。
             try {
                 session->run();
-            } catch (...) {
-                // 主线程创建失败（如系统资源不足）：会话没有线程、不会自行收尾，
-                // 移除其连接记录并放弃该会话（session 离开作用域即析构，析构回调
-                // 递减 active_sessions，计数保持平衡）。不能重抛：detached 协程
-                // 的未捕获异常会让接受协程终止，服务器静默停止接受连接；
+            } catch (const std::exception &e) {
+                // 主线程创建失败（如系统资源不足）或用户 after 回调抛异常：
+                // 会话没有线程、不会自行收尾，移除其连接记录并放弃该会话
+                // （session 离开作用域即析构，析构回调递减 active_sessions，
+                // 计数保持平衡）。不能重抛：detached 协程的未捕获异常会让
+                // 接受协程终止，服务器静默停止接受连接；
                 // 此处继续 accept 循环，资源恢复后即可正常服务
+                SPDLOG_ERROR("启动会话异常：{}", e.what());
+                remove_session(id);
+                continue;
+            } catch (...) {
+                SPDLOG_ERROR("启动会话未知异常");
                 remove_session(id);
                 continue;
             }

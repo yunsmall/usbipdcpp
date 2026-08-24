@@ -174,11 +174,13 @@ public:
 
     /**
      * @brief 设置线程创建后回调，用于设置线程名称等
-     * @param callback 回调函数，接收线程用途标识和线程引用
+     * @param callback 回调函数，接收线程用途标识和线程指针。指针为 nullptr
+     * 表示线程创建失败（before 回调已执行但线程未创建成功），非空时可用于
+     * 设置线程名称等（指针在线程生命周期内有效）
      *
      * @thread_safety 必须在 start() 之前调用。
      */
-    void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread&)> &&callback) {
+    void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread*)> &&callback) {
         after_thread_create_callback = std::move(callback);
     }
 
@@ -220,8 +222,8 @@ protected:
 
     // 线程创建前回调
     std::function<void(ThreadPurpose)> before_thread_create_callback;
-    // 线程创建后回调
-    std::function<void(ThreadPurpose, std::thread&)> after_thread_create_callback;
+    // 线程创建后回调；参数为线程指针，nullptr 表示线程创建失败
+    std::function<void(ThreadPurpose, std::thread*)> after_thread_create_callback;
 
     // 会话连接表：Server 仅持 weak_ptr 观察，Session 生命周期由自身管理
     // （session 线程作为主线程，return 时最后一个引用释放即自析构）。
