@@ -18,6 +18,79 @@
 
 ---
 
+## 快速开始
+
+最简单的虚拟键盘设备（完整示例见 `examples/mock_keyboard`）：
+
+```cpp
+#include <cstdint>
+#include <iostream>
+#include <vector>
+
+#include "usbipdcpp/Server.h"
+#include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
+
+using namespace usbipdcpp;
+
+int main() {
+    StringPool string_pool;
+
+    // 1. 描述 USB 设备：一个 HID 键盘接口，含 1 个 IN 端点
+    std::vector<UsbInterface> interfaces = {
+        UsbInterface{
+            .interface_class = 0x03,    // HID
+            .interface_subclass = 0x01, // Boot 接口
+            .interface_protocol = 0x01, // 键盘
+            .endpoints = {{UsbEndpoint{
+                .address = 0x81,        // IN 端点 1
+                .attributes = 0x03,     // 中断
+                .max_packet_size = 16,
+                .interval = 10,         // 10ms
+            }}},
+        },
+    };
+    // 2. 给接口绑定实现端点逻辑的 handler
+    interfaces[0].with_handler<KeyboardHandler>(string_pool);
+
+    // 3. 创建设备并注册设备级 handler
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+        .path = "/usbipdcpp/keyboard",
+        .busid = "1-1",
+        .bus_num = 1, .dev_num = 1,
+        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+        .vendor_id = 0x1234, .product_id = 0x5679,
+        .device_bcd = 0x0100,
+        .device_class = 0x00,           // 类定义在接口级
+        .configuration_value = 1, .num_configurations = 1,
+        .interfaces = interfaces,
+        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+    });
+    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+
+    // 4. 启动 USB/IP 服务器（TCP，监听 53240 端口）
+    Server server;
+    server.add_device(std::move(device));
+
+    asio::ip::tcp::endpoint ep{asio::ip::tcp::v4(), 53240};
+    if (auto ec = server.start(ep); ec) {
+        std::cerr << "服务器启动失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    // 客户端连接: usbip attach -r <主机> -b 1-1
+    // 连接后可在任意线程驱动 KeyboardHandler，
+    // 例如 kb->press_key(HIDKey::A) / kb->release_key(HIDKey::A)
+
+    std::cin.get(); // 回车退出
+    server.stop();
+}
+```
+
+本库支持两类设备：**虚拟设备**（纯软件，如上所示——见 `examples/mock_keyboard`、`mock_mouse`、`mock_msc` 等）和 **libusb 设备**（通过网络共享物理 USB 设备——见 `examples/libusb_server`）。
+
+---
+
 ## 编译安装
 
 ### 预编译二进制

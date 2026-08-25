@@ -15,6 +15,79 @@ Contributions welcome! 🚀
 
 ---
 
+## Quick Start
+
+Minimal virtual keyboard device (full example in `examples/mock_keyboard`):
+
+```cpp
+#include <cstdint>
+#include <iostream>
+#include <vector>
+
+#include "usbipdcpp/Server.h"
+#include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
+
+using namespace usbipdcpp;
+
+int main() {
+    StringPool string_pool;
+
+    // 1. Describe the USB device: one HID keyboard interface with an IN endpoint
+    std::vector<UsbInterface> interfaces = {
+        UsbInterface{
+            .interface_class = 0x03,    // HID
+            .interface_subclass = 0x01, // Boot interface
+            .interface_protocol = 0x01, // Keyboard
+            .endpoints = {{UsbEndpoint{
+                .address = 0x81,        // IN endpoint 1
+                .attributes = 0x03,     // Interrupt
+                .max_packet_size = 16,
+                .interval = 10,         // 10 ms
+            }}},
+        },
+    };
+    // 2. Bind a handler that implements the endpoint logic of the interface
+    interfaces[0].with_handler<KeyboardHandler>(string_pool);
+
+    // 3. Create the device and register its device-level handler
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+        .path = "/usbipdcpp/keyboard",
+        .busid = "1-1",
+        .bus_num = 1, .dev_num = 1,
+        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+        .vendor_id = 0x1234, .product_id = 0x5679,
+        .device_bcd = 0x0100,
+        .device_class = 0x00,           // class defined per-interface
+        .configuration_value = 1, .num_configurations = 1,
+        .interfaces = interfaces,
+        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+    });
+    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+
+    // 4. Start the USB/IP server (TCP, listen on port 53240)
+    Server server;
+    server.add_device(std::move(device));
+
+    asio::ip::tcp::endpoint ep{asio::ip::tcp::v4(), 53240};
+    if (auto ec = server.start(ep); ec) {
+        std::cerr << "Failed to start server: " << ec.message() << std::endl;
+        return 1;
+    }
+    // Attach from another machine:  usbip attach -r <host> -b 1-1
+    // Once attached, the KeyboardHandler can be driven from any thread,
+    // e.g. kb->press_key(HIDKey::A) / kb->release_key(HIDKey::A)
+
+    std::cin.get(); // Run until Enter is pressed
+    server.stop();
+}
+```
+
+The library ships two kinds of devices: **virtual devices** (pure software, as above — see `examples/mock_keyboard`, `mock_mouse`, `mock_msc`, ...) and **libusb devices** (share a physical USB device over the network — see `examples/libusb_server`).
+
+---
+
 ## Building
 
 ### Pre-built Binaries
