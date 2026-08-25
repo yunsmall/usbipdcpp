@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace usbipdcpp {
 
@@ -59,7 +60,7 @@ void SineWaveSource::regenerate() {
     buffer.resize(total_samples * 2);
 
     const double max_amp = 32767.0 * amplitude;
-    const double two_pi = 2.0 * 3.14159265358979323846;
+    const double two_pi = 2.0 * std::numbers::pi;
     const double phase_step = two_pi * static_cast<double>(frequency_hz) / static_cast<double>(sample_rate);
 
     auto *dst = reinterpret_cast<std::int16_t *>(buffer.data());

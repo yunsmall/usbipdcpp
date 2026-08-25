@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <vector>
 
 #include "usbipdcpp/virtual_device/audio_sources/FourierSource.h"
@@ -19,7 +21,7 @@ namespace {
 
 /// Goertzel 算法检测单频分量的功率（相对值，用于存在性判断）
 double goertzel_power(const std::int16_t *samples, std::size_t n, double freq, std::uint32_t rate) {
-    double w = 2.0 * 3.14159265358979323846 * freq / rate;
+    double w = 2.0 * std::numbers::pi * freq / rate;
     double coeff = 2.0 * std::cos(w);
     double s0 = 0, s1 = 0, s2 = 0;
     for (std::size_t i = 0; i < n; ++i) {
@@ -112,4 +114,103 @@ TEST(FourierSource, InvalidHarmonicsFiltered) {
     // 440Hz 分量仍在（幅度 50%）
     auto p440 = goertzel_power(p, chunk.size / 2, 440, 8000);
     EXPECT_GT(p440, 1.0);
+}
+
+TEST(FourierSource, NormalizeOverLimitByDefault) {
+    // 两谐波叠加峰值 > 1.0（sin θ + sin 2θ 峰值约 1.76）：默认 normalize 模式
+    // 整体除以峰值——不削波（无连续满幅平顶），峰值被拉到满幅
+    FourierSource src({{440, 1.0}, {880, 1.0}}, {8000}, 1);
+    AudioChunk chunk;
+    ASSERT_TRUE(src.get_chunk(chunk));
+    auto *p = reinterpret_cast<const std::int16_t *>(chunk.data);
+    auto n = chunk.size / 2;
+
+    int max_abs = 0, flat_count = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        auto v = std::abs(p[i]);
+        max_abs = std::max(max_abs, v);
+        if (v == 32767) ++flat_count;
+    }
+    EXPECT_GT(max_abs, 32760); // 峰值被拉到满幅（浮点舍入 ±7 LSB）
+    EXPECT_LT(flat_count, 3); // 无削波平顶（削波时一个周期内有多个连续满幅采样）
+}
+
+TEST(FourierSource, ClampModeClips) {
+    // 削波模式（normalize=false）：超限采样被削成 ±32767，出现大量连续满幅平顶
+    FourierSource src({{440, 1.0}, {880, 1.0}}, {8000}, 1, false);
+    AudioChunk chunk;
+    ASSERT_TRUE(src.get_chunk(chunk));
+    auto *p = reinterpret_cast<const std::int16_t *>(chunk.data);
+    auto n = chunk.size / 2;
+
+    int max_abs = 0, flat_count = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        auto v = std::abs(p[i]);
+        max_abs = std::max(max_abs, v);
+        if (v == 32767) ++flat_count;
+    }
+    EXPECT_EQ(max_abs, 32767);
+    EXPECT_GT(flat_count, 5); // 削波平顶显著多于归一化模式
+}
+
+TEST(FourierSource, NoScalingBelowLimit) {
+    // 峰值不超满幅时不缩放：50% 幅度输出峰值约 16383（保持音量语义）
+    FourierSource src({{440, 0.5}}, {8000}, 1);
+    AudioChunk chunk;
+    ASSERT_TRUE(src.get_chunk(chunk));
+    auto *p = reinterpret_cast<const std::int16_t *>(chunk.data);
+    auto n = chunk.size / 2;
+
+    int max_abs = 0;
+    for (std::size_t i = 0; i < n; ++i)
+        max_abs = std::max(max_abs, std::abs(p[i]));
+    EXPECT_GT(max_abs, 16000);
+    EXPECT_LT(max_abs, 16500);
+}
+
+TEST(FourierSource, NegativeAmplitudeInvertsPhase) {
+    // 负幅度 = 反相：+A 与 -A 的输出互为相反数（±1 LSB）
+    FourierSource pos({{440, 0.5}}, {8000}, 1);
+    FourierSource neg({{440, -0.5}}, {8000}, 1);
+    AudioChunk a, b;
+    ASSERT_TRUE(pos.get_chunk(a));
+    ASSERT_TRUE(neg.get_chunk(b));
+
+    auto *pa = reinterpret_cast<const std::int16_t *>(a.data);
+    auto *pb = reinterpret_cast<const std::int16_t *>(b.data);
+    int diff_count = 0;
+    for (std::size_t i = 0; i < a.size / 2; ++i) {
+        if (std::abs(pa[i] + pb[i]) > 1)
+            ++diff_count;
+    }
+    EXPECT_EQ(diff_count, 0);
+}
+
+TEST(FourierSource, SetNormalizeRegenerates) {
+    // 创建后切换防溢出方案应立即重新生成：先削波（出现连续满幅平顶），
+    // 切到归一化后平顶消失且峰值仍被拉到满幅
+    FourierSource src({{440, 1.0}, {880, 1.0}}, {8000}, 1, false);
+    AudioChunk chunk;
+    ASSERT_TRUE(src.get_chunk(chunk));
+    auto *p = reinterpret_cast<const std::int16_t *>(chunk.data);
+    auto n = chunk.size / 2;
+
+    int flat_count = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::abs(p[i]) == 32767) ++flat_count;
+    }
+    EXPECT_GT(flat_count, 5); // 削波模式有大量平顶
+
+    src.set_normalize(true);
+    ASSERT_TRUE(src.get_chunk(chunk)); // buffer 已重生成，重新取指针
+    p = reinterpret_cast<const std::int16_t *>(chunk.data);
+    int max_abs = 0;
+    flat_count = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        auto v = std::abs(p[i]);
+        max_abs = std::max(max_abs, v);
+        if (v == 32767) ++flat_count;
+    }
+    EXPECT_GT(max_abs, 32760); // 峰值拉到满幅
+    EXPECT_LT(flat_count, 3); // 平顶消失（不削波）
 }

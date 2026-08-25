@@ -31,7 +31,12 @@ static std::vector<std::uint32_t> parse_sample_rates(const std::string &str) {
     return rates;
 }
 
-/// 解析谐波列表，如 "440:50,880:25:1.5708"（频率Hz:幅度百分比[:相位弧度]，相位可省略默认 0）
+/// 解析谐波列表，如 "440:50,880:25:1.5708"（频率Hz:幅度百分比[:相位弧度]，相位可省略
+/// 默认 0；幅度可为负值表示反相，即相位翻转 π）。
+/// 合成公式：y(t) = Σ A_k·sin(2π·f_k·t + φ_k)
+/// 方波前 3 谐波示例（440Hz，原始傅里叶系数 4/(kπ)，k 为奇数）：
+/// "440:127.324,1320:42.441,2200:25.465"——叠加峰值超满幅时默认整体除以峰值
+/// 不削波（波形形状不变），--clamp 改为直接削波
 static std::vector<FourierHarmonic> parse_harmonics(const std::string &str) {
     std::vector<FourierHarmonic> result;
     std::stringstream ss(str);
@@ -58,14 +63,14 @@ static std::vector<FourierHarmonic> parse_harmonics(const std::string &str) {
 static std::unique_ptr<AudioSource> create_source(const cxxopts::ParseResult &result,
                                                   const std::vector<std::uint32_t> &rates,
                                                   const std::vector<FourierHarmonic> &harmonics,
-                                                  int channels, int freq, int amp) {
+                                                  int channels, int freq, int amp, bool normalize) {
 #ifdef USBIPDCPP_USE_MINIAUDIO
     if (result.count("audio") > 0) {
         return std::make_unique<AudioFileSource>(result["audio"].as<std::string>(), rates);
     }
 #endif
     if (!harmonics.empty()) {
-        return std::make_unique<FourierSource>(harmonics, rates, static_cast<std::uint16_t>(channels));
+        return std::make_unique<FourierSource>(harmonics, rates, static_cast<std::uint16_t>(channels), normalize);
     }
     return std::make_unique<SineWaveSource>(static_cast<std::uint32_t>(freq), rates,
                                             static_cast<std::uint16_t>(channels), amp / 100.0);
@@ -80,8 +85,16 @@ int main(int argc, char **argv) {
          cxxopts::value<std::string>()->default_value("48000"))
         ("channels", "Channel count (1 or 2)", cxxopts::value<int>()->default_value("1"))
         ("amp", "Amplitude 0-100 (percent of full scale)", cxxopts::value<int>()->default_value("50"))
-        ("harmonics", "Fourier series harmonics \"freq:amp[:phase],...\" (amp in percent, phase in radians, "
-         "overrides sine)", cxxopts::value<std::string>());
+        ("harmonics",
+         "Fourier series synthesis: y(t)=sum(A_k*sin(2*pi*f_k*t+phi_k)); harmonics "
+         "\"freq:amp[:phase],...\" (freq integer Hz, amp percent of full scale, may be "
+         "negative for phase inversion, phase radians default 0; overrides sine). "
+         "Square wave example at 440Hz, first 3 harmonics (raw coeffs 4/(k*pi)): "
+         "\"440:127.324,1320:42.441,2200:25.465\"",
+         cxxopts::value<std::string>())
+        ("clamp", "Clip over-limit samples to full scale instead of scaling the whole "
+         "wave down by the peak (default: scale only when peak exceeds full scale)",
+         cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
 #ifdef USBIPDCPP_USE_MINIAUDIO
     // 仅 miniaudio 可用时注册 --audio：不可用的构建里 -h 不显示该选项，
     // 直接传也会被 cxxopts 按未知选项拒绝（parse_example_args 打印 help 退出）
@@ -93,6 +106,7 @@ int main(int argc, char **argv) {
     auto freq = result["freq"].as<int>();
     auto channels = result["channels"].as<int>();
     auto amp = result["amp"].as<int>();
+    auto clamp = result["clamp"].as<bool>();
 #ifdef USBIPDCPP_USE_MINIAUDIO
     auto has_audio = result.count("audio") > 0;
 #else
@@ -133,7 +147,7 @@ int main(int argc, char **argv) {
     // 音频源：--audio 提供时用文件音源（声道数由文件决定，--channels 忽略）；
     // --harmonics 提供时用傅里叶级数合成；否则正弦波。
     // 文件打不开时 AudioFileSource 软失败（日志报错 + 输出静音），设备仍可枚举（同 FfmpegSource 做法）
-    auto source = create_source(result, rates, harmonics, channels, freq, amp);
+    auto source = create_source(result, rates, harmonics, channels, freq, amp, !clamp);
     // 声道数以音源实际为准
     channels = source->current_format().channels;
 

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <numbers>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -22,7 +23,7 @@ std::string make_test_wav(const std::string &tag, std::uint32_t sample_rate, std
     auto total_frames = static_cast<std::size_t>(sample_rate * seconds);
     std::vector<std::int16_t> samples(total_frames * channels);
     for (std::size_t i = 0; i < total_frames; ++i) {
-        auto v = static_cast<std::int16_t>(16384.0 * std::sin(2.0 * 3.14159265358979323846 * 440.0 * i / sample_rate));
+        auto v = static_cast<std::int16_t>(16384.0 * std::sin(2.0 * std::numbers::pi * 440.0 * i / sample_rate));
         for (std::uint16_t ch = 0; ch < channels; ++ch) {
             samples[i * channels + ch] = v;
         }
