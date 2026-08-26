@@ -707,6 +707,15 @@ This project uses a single-`main`-branch workflow:
 
 This project is licensed under [LGPLv3](LICENSE).
 
+> **Attribution required**: No matter in what form you use this library — including source code
+> reference, dynamic/static linking, derivative works, or redistribution in any product or
+> service — you **must** display a clear attribution in a prominent place (e.g. the About /
+> Acknowledgements section of your product, or your documentation):
+>
+> ```text
+> This product uses usbipdcpp (https://github.com/yunsmall/usbipdcpp), licensed under LGPLv3.
+> ```
+
 For closed-source or proprietary use, please contact: yun_small@163.com
 
 ---

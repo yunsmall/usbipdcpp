@@ -696,6 +696,14 @@ AbstDeviceHandler
 
 本项目使用 [LGPLv3](LICENSE) 许可证。
 
+> **必须署名**：无论以任意形式使用本库——包括源码引用、动态/静态链接、修改后的
+> 衍生作品，以及在任意产品或服务中分发——都**必须**在醒目位置（如产品的"关于/
+> 致谢"页面或文档中）明确标识使用了本库：
+>
+> ```text
+> 本产品使用了 usbipdcpp（https://github.com/yunsmall/usbipdcpp），遵循 LGPLv3 许可证。
+> ```
+
 如需闭源或商业授权，请联系：yun_small@163.com
 
 ---
