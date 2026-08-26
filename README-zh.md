@@ -482,7 +482,32 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    复合 USB 设备示例，在单个设备上同时实现**两个 HID 接口**（鼠标 + 键盘）。
    展示如何使用 `SimpleVirtualDeviceHandler` 创建多接口虚拟设备。
 
-15. libusb_windows_service
+15. mock_pipe
+
+   通用虚拟管道设备（vendor 类接口，bulk IN + bulk OUT）。展示 `PipeDeviceHandler` 的
+   read()/write() 接口：像读写文件一样操作虚拟设备的端点数据流（FunctionFS 风格的
+   FIFO 阻塞语义；非标准控制请求也通过 read() 以带 setup_req 的 PipeXfer 返回）。
+
+16. mock_pipe_hid
+
+   用通用 `PipeDeviceHandler` 实现的 **HID 键盘**（无需 `KeyboardHandler`）——"任意
+   bulk/interrupt 设备只需 read/write 就能实现"的教程示例。HID 设备的关键步骤：
+
+   ```cpp
+   // 1. 构造 HID 接口描述符（Boot 键盘，中断 IN 端点）
+   auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+   // 2. 设置 HID 描述符（0x21）：追加在接口描述符后，驱动加载必需
+   pipe->set_class_specific_descriptor({0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00});
+   // 3. 设置报告描述符（0x22）：GET_DESCRIPTOR 时返回
+   pipe->set_custom_descriptor(0x22, keyboard_report_descriptor);
+   // 4. 数据面就是阻塞 read/write
+   pipe->write(PipeXfer{.ep = 0x81, .data = {0x00, 0x00, 0x04, 0, 0, 0, 0, 0}}); // 按下 A 键
+   ```
+
+   控制请求（GET_REPORT / SET_REPORT 等 class 请求）经 read() 以带 setup_req 的
+   PipeXfer 返回，IN 方向用 `write(PipeXfer{.ep = 0, .data = ...})` 应答。
+
+17. libusb_windows_service
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或

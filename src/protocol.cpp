@@ -1,5 +1,6 @@
 #include "usbipdcpp/protocol.h"
 
+#include <algorithm>
 #include <filesystem>
 
 #include <asio.hpp>
@@ -144,7 +145,24 @@ void UsbIpResponse::OpRepDevlist::to_socket(asio::ip::tcp::socket &sock, error_c
 }
 
 void UsbIpResponse::OpRepDevlist::from_socket(asio::ip::tcp::socket &sock) {
-    return;
+    // 与 to_socket 对称：status + device_count + 每设备（312 字节固定头部 +
+    // 接口计数个 4 字节接口体，接口体数量在设备头部末尾）。version/command
+    // 两个字段由调用方在读命令码时消费，不在此读取
+    data_read_from_socket(sock, status, device_count);
+    devices.clear();
+    // device_count 来自网络不可信：恶意服务端可发巨大值，reserve 直接抛
+    // bad_alloc 崩溃（防御风格同 CmdSubmit::from_socket 的大小校验）
+    devices.reserve(std::min<std::uint32_t>(device_count, 256));
+    for (std::uint32_t i = 0; i < device_count; i++) {
+        UsbDevice device;
+        device.from_socket(sock);
+        // 接口体紧跟在设备头部之后（to_bytes_with_interfaces 的格式），
+        // 数量由头部末尾的接口计数给出
+        for (auto &intf: device.interfaces) {
+            intf.from_socket(sock);
+        }
+        devices.push_back(std::move(device));
+    }
 }
 
 
@@ -188,7 +206,14 @@ void UsbIpResponse::OpRepImport::to_socket(asio::ip::tcp::socket &sock, error_co
 }
 
 void UsbIpResponse::OpRepImport::from_socket(asio::ip::tcp::socket &sock) {
-    return;
+    // 与 to_socket 对称：status 后（成功时）跟设备描述符（312 字节固定头部，
+    // 不含接口体，服务端 import 响应只发 to_bytes()）。version/command
+    // 由调用方在读命令码时消费
+    data_read_from_socket(sock, status);
+    if (status == 0) {
+        device = std::make_shared<UsbDevice>();
+        device->from_socket(sock);
+    }
 }
 
 usbipdcpp::UsbIpResponse::OpRepImport
@@ -233,7 +258,21 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 }
 
 void UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
-    return;
+    // 与 to_socket 对称：header 与传输参数共 40 字节，尾随 8 字节 padding，
+    // 凑齐内核 usbip_header 的 48 字节（vhci_rx_pdu 一次读 sizeof(usbip_header)，
+    // ret_submit 在 union 中占 20 字节，剩余 8 字节本项目以零填充）。
+    // command 由本函数设置，不读
+    unsigned_integral_and_array_read_from_socket<8>(sock, header.seqnum, header.devid, header.direction, header.ep,
+                                                    status, actual_length, start_frame, number_of_packets,
+                                                    error_count);
+    header.command = USBIP_RET_SUBMIT;
+
+    // 数据阶段不在此读取：RET_SUBMIT 的头部不含方向信息（服务端回包时清零），
+    // 无法判断数据阶段是否存在——actual_length 对 OUT 传输只是已接收字节数，
+    // 内核 stub 对 OUT 响应不回发数据（stub_tx.c 只在 usb_pipein 时发 buffer）。
+    // 内核 vhci 用 seqnum 匹配自己发出的 CMD_SUBMIT，按 URB 方向决定是否读数据
+    // （usbip_recv_xbuff 对 OUT 直接跳过）。需要数据阶段的调用方应基于自己的
+    // 传输方向，通过 transfer 的 recv_transfer_data 显式读取
 }
 
 
@@ -330,7 +369,12 @@ void UsbIpResponse::UsbIpRetUnlink::to_socket(asio::ip::tcp::socket &sock, error
 }
 
 void usbipdcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock) {
-    return;
+    // 与 to_bytes 对称：header 20 字节 + status 4 字节 + 24 字节 padding，
+    // 凑齐内核 usbip_header 的 48 字节（ret_unlink 在 union 中只占 4 字节）。
+    // command 由本函数设置，不读
+    unsigned_integral_and_array_read_from_socket<24>(sock, header.seqnum, header.devid, header.direction, header.ep,
+                                                     status);
+    header.command = USBIP_RET_UNLINK;
 }
 
 usbipdcpp::UsbIpResponse::UsbIpRetUnlink

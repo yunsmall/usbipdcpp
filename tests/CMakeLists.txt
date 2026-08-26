@@ -56,6 +56,10 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_network_vdev)
     target_link_libraries(test_network_vdev PRIVATE usbipdcpp_virtual_device)
 
+    # 通用管道虚拟设备（PipeDeviceHandler）的端到端测试
+    add_test_file(test_pipe_device_handler)
+    target_link_libraries(test_pipe_device_handler PRIVATE usbipdcpp_virtual_device)
+
     # 传输调度器（vudc 帧调度等价物）测试
     add_test_file(test_transfer_scheduler)
     target_link_libraries(test_transfer_scheduler PRIVATE usbipdcpp_virtual_device)

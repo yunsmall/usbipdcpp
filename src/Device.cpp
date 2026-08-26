@@ -1,5 +1,6 @@
 #include "usbipdcpp/Device.h"
 
+#include <cstring>
 #include <ranges>
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
@@ -34,7 +35,25 @@ array_data_type<UsbDevice::bytes_without_interfaces_num> usbipdcpp::UsbDevice::t
 }
 
 void UsbDevice::from_socket(asio::ip::tcp::socket &sock) {
-    return;
+    // 与 to_bytes() 对称（固定 312 字节）：path/busid 是 NUL 结尾的原始字节
+    // 字符串，其余为网络序整数，最后 1 字节是接口计数。接口体不在此读取：
+    // import 响应的设备部分不含接口体（服务端只发 to_bytes()），devlist 响应
+    // 由 OpRepDevlist::from_socket 按此计数另行读取
+    array_data_type<256> path_buffer{};
+    array_data_type<32> busid_buffer{};
+    std::uint16_t device_bcd_raw = 0;
+    std::uint8_t interface_count = 0;
+    unsigned_integral_and_array_read_from_socket(sock, path_buffer, busid_buffer, bus_num, dev_num, speed,
+                                                 vendor_id, product_id, device_bcd_raw, device_class,
+                                                 device_subclass, device_protocol, configuration_value,
+                                                 num_configurations, interface_count);
+    device_bcd = Version(device_bcd_raw);
+    // NUL 结尾字符串：截断到第一个 \0
+    path = std::string(reinterpret_cast<const char *>(path_buffer.data()),
+                       strnlen(reinterpret_cast<const char *>(path_buffer.data()), path_buffer.size()));
+    busid = std::string(reinterpret_cast<const char *>(busid_buffer.data()),
+                        strnlen(reinterpret_cast<const char *>(busid_buffer.data()), busid_buffer.size()));
+    interfaces.resize(interface_count);
 }
 
 std::optional<std::pair<usbipdcpp::UsbEndpoint, std::optional<usbipdcpp::UsbInterface>>>

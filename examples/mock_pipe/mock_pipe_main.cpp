@@ -1,0 +1,113 @@
+#include <atomic>
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <thread>
+
+#include "../example_utils.h"
+#include "usbipdcpp/Server.h"
+#include "usbipdcpp/virtual_device/PipeDeviceHandler.h"
+
+using namespace usbipdcpp;
+
+int main(int argc, char **argv) {
+    auto opts = make_example_options("mock_pipe", "USB/IP virtual generic pipe device (read/write)");
+    auto result = parse_example_args(opts, argc, argv);
+    auto port = result["port"].as<std::uint16_t>();
+    auto busid = result["busid"].as<std::string>();
+
+    spdlog::set_level(spdlog::level::info);
+
+    StringPool string_pool;
+
+    // vendor 类接口：bulk IN + bulk OUT（通用管道，无类特定协议）
+    std::vector<UsbInterface> interfaces = {
+            UsbInterface{
+                    .interface_class = 0xFF, // vendor specific
+                    .interface_subclass = 0x00,
+                    .interface_protocol = 0x00,
+                    .endpoints = {{
+                            UsbEndpoint{
+                                    .address = 0x81, // IN
+                                    .attributes = 0x02, // Bulk
+                                    .max_packet_size = 64,
+                                    .interval = 0,
+                            },
+                            UsbEndpoint{
+                                    .address = 0x02, // OUT
+                                    .attributes = 0x02, // Bulk
+                                    .max_packet_size = 64,
+                                    .interval = 0,
+                            },
+                    }},
+            },
+    };
+
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+            .path = "/usbipdcpp/mock_pipe",
+            .busid = busid,
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5690,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+    });
+    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    pipe->setup_interface_handlers();
+
+    Server server;
+    server.add_device(std::move(device));
+
+    asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
+
+    SPDLOG_INFO("Mock pipe device started on port {}, busid {}", port, busid);
+    SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
+    SPDLOG_INFO("Press Enter to exit...");
+
+    // 业务线程使用短超时轮询：退出顺序必须是"业务线程先退出、再 server.stop()"，
+    // 否则 handler 随会话析构时业务线程还阻塞在 read/write 上（use-after-free）。
+    // 正常通信时 read/write 立即返回，超时轮询不影响使用
+    std::atomic<bool> running{true};
+
+    // 回显线程：收到的 OUT 数据原样发回（阻塞 read）
+    std::thread echo_thread([&]() {
+        PipeXfer xfer;
+        while (running) {
+            if (pipe->read(xfer, 200)) {
+                SPDLOG_INFO("收到 {} 字节（ep {:02x}），回显", xfer.data.size(), xfer.ep);
+                pipe->write(PipeXfer{.ep = 0x81, .data = std::move(xfer.data)}, 200);
+            }
+        }
+    });
+
+    // 周期发送线程：每 2 秒发送一条计数消息（演示阻塞 write）
+    std::thread sender_thread([&]() {
+        std::uint32_t count = 0;
+        while (running) {
+            auto msg = "message " + std::to_string(count++) + "\r\n";
+            pipe->write(PipeXfer{.ep = 0x81, .data = data_type(msg.begin(), msg.end())}, 200);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+    });
+
+    std::cin.get();
+
+    running = false;
+    echo_thread.join();
+    sender_thread.join();
+    server.stop();
+    return 0;
+}

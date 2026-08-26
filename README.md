@@ -489,7 +489,34 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    A demonstration of a composite USB device combining **two HID interfaces** (mouse + keyboard) on a single device.
    Shows how to create multi-interface virtual devices using `SimpleVirtualDeviceHandler`.
 
-15. libusb_windows_service
+15. mock_pipe
+
+   A generic virtual pipe device (vendor-specific class, bulk IN + bulk OUT). Demonstrates the
+   `PipeDeviceHandler` API: blocking `read()` / `write()` like a file stream over the virtual
+   device's endpoints (FunctionFS-style FIFO semantics; control requests are also delivered
+   through `read()` as `PipeXfer` with `setup_req`).
+
+16. mock_pipe_hid
+
+   A HID keyboard implemented with the generic `PipeDeviceHandler` (no `KeyboardHandler` needed) —
+   the tutorial example for "implement any bulk/interrupt device with read/write only".
+   The key steps for a HID device:
+
+   ```cpp
+   // 1. HID interface descriptor (Boot keyboard, interrupt IN endpoint)
+   auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+   // 2. HID descriptor (0x21) appended after the interface descriptor — required by drivers
+   pipe->set_class_specific_descriptor({0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00});
+   // 3. Report descriptor (0x22) served on GET_DESCRIPTOR
+   pipe->set_custom_descriptor(0x22, keyboard_report_descriptor);
+   // 4. Data plane: blocking read/write on the endpoint
+   pipe->write(PipeXfer{.ep = 0x81, .data = {0x00, 0x00, 0x04, 0, 0, 0, 0, 0}}); // press 'A'
+   ```
+
+   Control requests (GET_REPORT / SET_REPORT etc.) arrive through `read()` as `PipeXfer` with
+   `setup_req`; answer IN requests with `write(PipeXfer{.ep = 0, .data = ...})`.
+
+17. libusb_windows_service
 
    A **Windows Service** wrapper for the libusb server (Windows only). Uses the Windows SCM API to run
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
