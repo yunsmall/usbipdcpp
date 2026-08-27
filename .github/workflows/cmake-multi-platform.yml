@@ -148,16 +148,37 @@ jobs:
         shell: bash
         working-directory: build
         run: |
+          # tee 保持实时日志输出；失败时在 runner 上就地符号化崩溃栈
+          # （二进制还在，tools/addr2line_crash.sh 解析日志里的偏移），
+          # 否则地址离开 runner 后永远无法解析
+          set +e
           ctest --build-config Release --repeat until-fail:50 --timeout 120 --output-on-failure \
-            -R "TestNetworkConnection\.(ServerCanRestartAfterStop|ManyQuickConnections|StopWithMultipleClients|StopDuringClientConnectRace)"
+            -R "TestNetworkConnection\.(ServerCanRestartAfterStop|ManyQuickConnections|StopWithMultipleClients|StopDuringClientConnectRace)" \
+            2>&1 | tee /tmp/stress.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ $status -ne 0 ]; then
+              echo "=== 符号化崩溃栈 ==="
+              bash ${{ github.workspace }}/tools/addr2line_crash.sh /tmp/stress.log || true
+              exit $status
+          fi
 
       - name: Stress test (TestNetworkVdev)
         if: matrix.vdev == 'ON'
         shell: bash
         working-directory: build
         run: |
+          set +e
           ctest --build-config Release --repeat until-fail:50 --timeout 120 --output-on-failure \
-            -R "TestNetworkVdev\.(ServerCanStopWithImportedDevice|ClientDisconnectsDuringUrbTransfer)"
+            -R "TestNetworkVdev\.(ServerCanStopWithImportedDevice|ClientDisconnectsDuringUrbTransfer)" \
+            2>&1 | tee /tmp/stress_vdev.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ $status -ne 0 ]; then
+              echo "=== 符号化崩溃栈 ==="
+              bash ${{ github.workspace }}/tools/addr2line_crash.sh /tmp/stress_vdev.log || true
+              exit $status
+          fi
 
   # Termux (Android) 编译验证。
   # Termux rootfs 无 glibc，actions 的 node 程序（含 actions/checkout）无法在容器内运行，
