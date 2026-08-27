@@ -27,7 +27,7 @@ usbipdcpp::Server::Server(std::vector<UsbDevice> &&devices, ServerNetworkConfig 
     }
 }
 
-usbipdcpp::error_code usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
+usbipdcpp::error_code usbipdcpp::Server::start(const asio::ip::tcp::endpoint &ep) {
     // 幂等防御：已在运行时直接返回成功（正常用法应避免 start 后再 start）
     if (running) {
         return {};
@@ -80,9 +80,6 @@ usbipdcpp::error_code usbipdcpp::Server::start(asio::ip::tcp::endpoint &ep) {
             return ep_ec;
         }
     }
-    // 把入参更新为实际监听端点：端口 0 启动时，调用方持有的 ep 在这里变成
-    // 系统分配的实际端口，可直接用于连接；固定端口启动时 ep 不变
-    ep = actual_endpoint;
     spdlog::info("Listening on {}:{}", actual_endpoint.address().to_string(), actual_endpoint.port());
 
     // 复用 io_context：上一次 stop() 的 run() 返回后它处于停止状态，必须

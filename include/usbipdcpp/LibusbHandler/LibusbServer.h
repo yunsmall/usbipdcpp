@@ -148,7 +148,7 @@ public:
      *
      * @thread_safety 不可并发调用。至多调用一次（需先 stop() 才能再次调用）。
      */
-    usbipdcpp::error_code start(asio::ip::tcp::endpoint &ep);
+    usbipdcpp::error_code start(const asio::ip::tcp::endpoint &ep);
 
     /**
      * @brief Stop the server.

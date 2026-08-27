@@ -69,8 +69,8 @@ public:
      * @brief 不阻塞地启动一个服务器（幂等：已运行时直接返回成功），内部
      * 启动网络线程运行协程式 accept 循环（async_accept）。在start前后调用
      * add_device都可以。
-     * @param ep 监听地址。若端口为 0（由系统分配），start 返回后 ep 会被更新
-     * 为实际监听端点，可直接用 ep 发起连接；也可用 endpoint() 查询实际端点。
+     * @param ep 监听地址。若端口为 0（由系统分配），start 返回后用
+     * endpoint() 查询实际监听端点（含系统分配的端口）。
      * @return 启动失败时返回错误（如端口被占），成功时无错误。不抛异常，
      * 便于无异常环境的嵌入式平台使用
      *
@@ -78,7 +78,7 @@ public:
      * （已在运行时直接返回，不会重新监听）。
      * @thread_safety 不可并发调用。stop() 之后可再次调用以重启。
      */
-    usbipdcpp::error_code start(asio::ip::tcp::endpoint &ep);
+    usbipdcpp::error_code start(const asio::ip::tcp::endpoint &ep);
     /**
      * @brief 当前实际监听端点。start() 用端口 0（由系统分配）启动后，
      *        用这个函数查询实际端点（含地址和端口）；未 start 时返回空端点。
@@ -287,8 +287,12 @@ private:
         {
             std::lock_guard lock(session_list_mutex);
             active_sessions.fetch_sub(1);
+            // notify 必须在锁内完成：锁释放后 stop() 可能立即返回并析构
+            // Server（销毁 reap_cv），锁外的 notify 会与 condvar 销毁并发
+            // （未定义行为，TSan 实测命中）。锁释放/获取建立 happens-before，
+            // 保证通知先于 stop() 唤醒后的任何 Server 析构
+            reap_cv.notify_all();
         }
-        reap_cv.notify_all();
     }
 
     std::list<std::function<void()>> session_exit_callbacks;

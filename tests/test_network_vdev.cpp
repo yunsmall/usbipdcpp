@@ -80,13 +80,15 @@ TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
 
     for (int round = 0; round < 2; round++) {
         ASSERT_FALSE(server.start(ep));
+        // 端口 0 启动，实际监听端点（含系统分配的端口）用 endpoint() 查询
+        auto actual_ep = server.endpoint();
 
         // 连接服务器，轮询等待监听就绪
         asio::ip::tcp::socket client(io);
         bool connected = false;
         for (int i = 0; i < 200; i++) {
             std::error_code ec;
-            client.connect(ep, ec);
+            client.connect(actual_ep, ec);
             if (!ec) {
                 connected = true;
                 break;
@@ -155,7 +157,7 @@ TEST(TestNetworkVdev, ClientRstWithoutAnyData) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         rst_disconnect(client);
     }
     // session 线程要在客户端断开后自行清理
@@ -173,7 +175,7 @@ TEST(TestNetworkVdev, ClientSendsHalfOpThenDisconnects) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         const std::array<std::uint8_t, 1> half_header = {0x01};
         asio::write(client, asio::buffer(half_header));
         client.close();
@@ -196,7 +198,7 @@ TEST(TestNetworkVdev, ClientDisconnectsRightAfterImportRequest) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
 
         UsbIpCommand::OpReqImport req{.status = 0, .busid = {}};
         const std::string busid = "1-1";
@@ -214,7 +216,7 @@ TEST(TestNetworkVdev, ClientDisconnectsRightAfterImportRequest) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         client.close();
     }
@@ -237,7 +239,7 @@ TEST(TestNetworkVdev, ClientDisconnectsAfterSuccessfulImport) {
         ASSERT_FALSE(server.start(ep));
         {
             asio::ip::tcp::socket client(io);
-            ASSERT_TRUE(connect_with_retry(client, ep));
+            ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
             ASSERT_EQ(import_device(client, "1-1"), 0u);
             client.close(); // 传输中优雅断开
         }
@@ -259,7 +261,7 @@ TEST(TestNetworkVdev, ClientRstDuringTransfer) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         rst_disconnect(client); // 传输中 RST
     }
@@ -270,7 +272,7 @@ TEST(TestNetworkVdev, ClientRstDuringTransfer) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         client.close();
     }
@@ -292,12 +294,12 @@ TEST(TestNetworkVdev, TwoClientsContendForSameDevice) {
 
     // A 先 import 成功
     asio::ip::tcp::socket client_a(io);
-    ASSERT_TRUE(connect_with_retry(client_a, ep));
+    ASSERT_TRUE(connect_with_retry(client_a, server.endpoint()));
     ASSERT_EQ(import_device(client_a, "1-1"), 0u);
 
     // B import 同一设备 → NA
     asio::ip::tcp::socket client_b(io);
-    ASSERT_TRUE(connect_with_retry(client_b, ep));
+    ASSERT_TRUE(connect_with_retry(client_b, server.endpoint()));
     ASSERT_EQ(import_device(client_b, "1-1"), static_cast<std::uint32_t>(OperationStatuType::NA));
 
     // A 断开，设备释放
@@ -306,7 +308,7 @@ TEST(TestNetworkVdev, TwoClientsContendForSameDevice) {
 
     // C 再 import 成功
     asio::ip::tcp::socket client_c(io);
-    ASSERT_TRUE(connect_with_retry(client_c, ep));
+    ASSERT_TRUE(connect_with_retry(client_c, server.endpoint()));
     ASSERT_EQ(import_device(client_c, "1-1"), 0u);
 
     client_c.close();
@@ -324,7 +326,7 @@ TEST(TestNetworkVdev, ClientSendsGarbageThenDisconnects) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         const std::array<std::uint8_t, 16> garbage = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03,
                                                       0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B};
         asio::write(client, asio::buffer(garbage));
@@ -348,7 +350,7 @@ TEST(TestNetworkVdev, StopRightAfterImportRequest) {
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
     {
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
 
         UsbIpCommand::OpReqImport req{.status = 0, .busid = {}};
         const std::string busid = "1-1";
@@ -365,7 +367,7 @@ TEST(TestNetworkVdev, StopRightAfterImportRequest) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         client.close();
     }
@@ -388,7 +390,7 @@ TEST(TestNetworkVdev, ClientDisconnectsDuringUrbTransfer) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
 
         // 构造键盘中断 IN 端点（逻辑 ep=1，服务器侧换算为 0x81）的 URB
@@ -416,7 +418,7 @@ TEST(TestNetworkVdev, ClientDisconnectsDuringUrbTransfer) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         client.close();
     }
@@ -437,7 +439,7 @@ TEST(TestNetworkVdev, ImportNonexistentDevice) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "9-9"), static_cast<std::uint32_t>(OperationStatuType::NoDev));
         client.close();
     }
@@ -448,7 +450,7 @@ TEST(TestNetworkVdev, ImportNonexistentDevice) {
     ASSERT_FALSE(server.start(ep));
     {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u);
         client.close();
     }
@@ -470,7 +472,7 @@ TEST(TestNetworkVdev, ClientReconnectLoop) {
     ASSERT_FALSE(server.start(ep));
     for (int round = 0; round < 10; round++) {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         ASSERT_EQ(import_device(client, "1-1"), 0u) << "第 " << round << " 轮 import 失败";
         if (round % 2 == 0) {
             client.close(); // 优雅断开

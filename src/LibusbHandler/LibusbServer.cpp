@@ -765,7 +765,7 @@ void LibusbServer::bind_existing_devices() {
     SPDLOG_INFO("扫描绑定完成: {} 个绑定, {} 个 hub 跳过", bound, skipped);
 }
 
-usbipdcpp::error_code LibusbServer::start(asio::ip::tcp::endpoint &ep) {
+usbipdcpp::error_code LibusbServer::start(const asio::ip::tcp::endpoint &ep) {
     start_hotplug_monitor();
 
     should_exit_libusb_event_thread = false;

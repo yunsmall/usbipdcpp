@@ -202,7 +202,7 @@ TEST(TestPipeDeviceHandler, OutDataReachesRead) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // 业务线程阻塞 read；主线程发 OUT 传输
@@ -240,7 +240,7 @@ TEST(TestPipeDeviceHandler, InWriteServesPendingRequests) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // 先挂两个 IN 请求（每个期望 8 字节）
@@ -281,7 +281,7 @@ TEST(TestPipeDeviceHandler, ControlRequestDeliveredToRead) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     const SetupPacket setup{
@@ -332,7 +332,7 @@ TEST(TestPipeDeviceHandler, DisconnectUnblocksReadWrite) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // read 无限等待；stop() 时 handler 断连清理并唤醒
@@ -364,7 +364,7 @@ TEST(TestPipeDeviceHandler, FifoFullBlocksWriteUntilHostConsumes) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     const data_type payload = [] {
@@ -417,7 +417,7 @@ TEST(TestPipeDeviceHandler, CustomDescriptorServedToHost) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // GET_DESCRIPTOR(Report)：IN | Standard | Interface，wValue 高字节=0x22
@@ -453,7 +453,7 @@ TEST(TestPipeDeviceHandler, ControlOutRequestDeliveredToRead) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // Vendor+Interface+OUT 控制请求，携带 3 字节数据（如 HID SET_REPORT）
@@ -501,7 +501,7 @@ TEST(TestPipeDeviceHandler, ReadWriteTimeout) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // read 超时：无数据时 100ms 后返回 false
@@ -533,7 +533,7 @@ TEST(TestPipeDeviceHandler, UnlinkPendingRequest) {
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "1-1"), 0u);
 
     // IN 请求挂起（FIFO 无数据）

@@ -105,7 +105,9 @@ If you need a package without waiting for a release, or want to build from a spe
 
 ### Compiler Requirements
 
-Compiling requires a C++23-capable compiler. With gcc, the minimum version is **gcc13** — gcc14's C++23 support is incomplete (`std::format`/`std::println` don't fully work), so gcc13 is recommended. clang (Termux, macOS) and MSVC are not affected.
+If compiled with gcc, the minimum gcc version is **gcc13**. gcc13 supports C++23, but
+`std::println` was only introduced in gcc14 — with gcc13 you have to use `std::format` instead.
+For gcc13 compatibility, the library code consistently uses `std::format` and avoids `std::println`.
 
 ### CMake Options
 

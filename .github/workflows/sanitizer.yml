@@ -1,0 +1,101 @@
+# Sanitizer 测试（ASan+UBSan / TSan）
+# 触发：push/PR 到 main（含 workflow 自身的改动），也可手动 workflow_dispatch
+# ASan+UBSan 抓越界/UB：Debug + sanitizer 跑全量测试，再跑一轮竞态 stress
+# （竞态路径最容易踩内存）。TSan 与 ASan 运行时互斥，必须独立 job：只跑
+# 并发聚焦测试（避免 spdlog 等未插桩第三方库的噪音，且 TSan 全量太慢）。
+# 只在 Linux 跑（UBSan/TSan 在 Windows 上支持不完整）；静态库避免 shared +
+# sanitizer 的运行时加载问题。TSan 在 6.8+ 内核（mmap_rnd_bits=32）上会
+# "unexpected memory mapping"（GCC libtsan 不支持），CI 用 clang 且用
+# setarch -R 禁用 ASLR 兜底（本地 WSL 实测通过）
+
+name: Sanitizer (ASan + UBSan + TSan)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  sanitizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasio-dev libspdlog-dev libgtest-dev libcxxopts-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=OFF \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
+            -S ${{ github.workspace }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      # 竞态路径最容易踩内存：ASan 下再跑一轮连接/停止竞态 stress
+      - name: Stress test (TestNetworkConnection)
+        shell: bash
+        working-directory: build
+        run: |
+          ctest --repeat until-fail:10 --timeout 120 --output-on-failure \
+            -R "TestNetworkConnection\.(ServerCanRestartAfterStop|StopWithMultipleClients|StopDuringClientConnectRace)"
+
+  # TSan：独立 job（与 ASan 运行时互斥）。只跑并发聚焦测试——连接/停止竞态、
+  # 虚拟设备传输、管道设备、传输调度器都是并发重点。setarch -R 禁用 ASLR：
+  # 内核 mmap 随机化位数过高时 TSan 映射失败（见文件头注释）
+  tsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasio-dev libspdlog-dev libgtest-dev libcxxopts-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=OFF \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=OFF \
+            -DUSBIPDCPP_BUILD_EXAMPLES=OFF \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
+            -S ${{ github.workspace }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # TSan 是动态检测，竞态需两线程真正并发访问才报——单次可能恰好调度
+      # 串行化而漏报，重复 10 轮提高调度覆盖率（TSan 慢，只能到此为止）
+      - name: Test (concurrency-focused)
+        shell: bash
+        working-directory: build
+        run: |
+          setarch $(uname -m) -R ctest --repeat until-fail:10 --timeout 120 --output-on-failure \
+            -R "TestNetworkConnection\.|TestNetworkVdev\.|TestPipeDeviceHandler\.|TransferSchedulerTest\."

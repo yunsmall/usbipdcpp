@@ -40,6 +40,8 @@ TEST(TestNetworkConnection,ServerCanRestartAfterStop) {
 
     for (int round = 0; round < 2; round++) {
         ASSERT_FALSE(server.start(ep));
+        // 端口 0 启动，实际监听端点（含系统分配的端口）用 endpoint() 查询
+        auto actual_ep = server.endpoint();
 
         // acceptor 在 start() 内同步 bind，返回时监听已就绪，轮询仅为防御性
         // 等待。超时给 4 秒：覆盖率插桩等慢速构建下服务器启动可能超过 1 秒
@@ -47,7 +49,7 @@ TEST(TestNetworkConnection,ServerCanRestartAfterStop) {
         bool connected = false;
         for (int i = 0; i < 200; i++) {
             std::error_code ec;
-            probe_sock.connect(ep, ec);
+            probe_sock.connect(actual_ep, ec);
             if (!ec) {
                 connected = true;
                 break;
@@ -219,7 +221,7 @@ TEST(TestNetworkConnection,ServerCanRestartAfterAcceptError) {
 
     // 新客户端连接 + devlist 请求得到正常回复 = accept 循环活着
     asio::ip::tcp::socket client2(io);
-    ASSERT_TRUE(connect_with_retry(client2, ep));
+    ASSERT_TRUE(connect_with_retry(client2, server.endpoint()));
     usbipdcpp::error_code send_ec;
     asio::write(client2, asio::buffer(UsbIpCommand::OpReqDevlist{}.to_bytes()), send_ec);
     ASSERT_FALSE(send_ec);
@@ -242,7 +244,7 @@ TEST(TestNetworkConnection,StopWithSilentClient) {
     usbipdcpp::Server server;
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
-    ASSERT_TRUE(connect_with_retry(client, ep));
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
 
     server.stop(); // 客户端还静默挂着，直接 stop
 
@@ -261,7 +263,7 @@ TEST(TestNetworkConnection,StopWithMultipleClients) {
     std::vector<asio::ip::tcp::socket> clients;
     for (int i = 0; i < 10; i++) {
         clients.emplace_back(io);
-        ASSERT_TRUE(connect_with_retry(clients.back(), ep));
+        ASSERT_TRUE(connect_with_retry(clients.back(), server.endpoint()));
     }
 
     server.stop(); // 10 个 session 同时被打断
@@ -282,7 +284,7 @@ TEST(TestNetworkConnection,DisconnectRightAfterDevlistRequest) {
 
     for (int i = 0; i < 5; i++) {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         usbipdcpp::error_code send_ec;
         asio::write(client, asio::buffer(UsbIpCommand::OpReqDevlist{}.to_bytes()), send_ec);
         ASSERT_FALSE(send_ec);
@@ -306,14 +308,21 @@ TEST(TestNetworkConnection,StopDuringClientConnectRace) {
 
     usbipdcpp::Server server;
     std::atomic_bool stop_flag = false;
+    // 实际端口（端口 0 启动，由系统分配）在 start 返回后用 endpoint() 查询，
+    // 经原子变量传给客户端线程；直接让客户端线程读 ep/endpoint() 会与
+    // start 期间的回写并发（TSan 实测命中）
+    std::atomic<std::uint16_t> target_port = 0;
 
     std::thread client_thread([&]() {
         while (!stop_flag) {
-            asio::ip::tcp::socket client(io);
-            std::error_code ec;
-            client.connect(ep, ec);
-            if (!ec) {
-                client.close(); // 连上就断，模拟短暂的连接
+            auto port = target_port.load();
+            if (port != 0) {
+                asio::ip::tcp::socket client(io);
+                std::error_code ec;
+                client.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port), ec);
+                if (!ec) {
+                    client.close(); // 连上就断，模拟短暂的连接
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -321,8 +330,10 @@ TEST(TestNetworkConnection,StopDuringClientConnectRace) {
 
     for (int round = 0; round < 50; round++) {
         ASSERT_FALSE(server.start(ep));
+        target_port.store(server.endpoint().port());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         server.stop();
+        target_port.store(0);
     }
 
     stop_flag = true;
@@ -340,7 +351,7 @@ TEST(TestNetworkConnection,ManyQuickConnections) {
 
     for (int i = 0; i < 50; i++) {
         asio::ip::tcp::socket client(io);
-        ASSERT_TRUE(connect_with_retry(client, ep));
+        ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
         switch (i % 3) {
             case 0:
                 client.close(); // 优雅断开（FIN）

@@ -108,7 +108,9 @@ int main() {
 
 ### 编译器要求
 
-编译需要支持 C++23 的编译器。若使用 gcc，最低版本为 **gcc13**——gcc14 的 C++23 支持不完整（`std::format`/`std::println` 不能完全正常工作），推荐使用 gcc13。clang（Termux、macOS）和 MSVC 不受影响。
+若使用gcc编译，最低gcc版本为**gcc13**。gcc13 虽然支持 C++23，但
+`std::println` 是从 gcc14 才开始支持的，gcc13 下只能用 `std::format`。
+为了兼容 gcc13，本库代码统一使用 `std::format`，不用 `std::println`。
 
 ### CMake 选项
 
