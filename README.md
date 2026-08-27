@@ -718,7 +718,7 @@ This project is licensed under [LGPLv3](LICENSE).
 > This product uses usbipdcpp (https://github.com/yunsmall/usbipdcpp), licensed under LGPLv3.
 > ```
 
-For closed-source or proprietary use, please contact: yun_small@163.com
+If you modify this library and wish to distribute it closed-source, please contact: yun_small@163.com
 
 ---
 

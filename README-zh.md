@@ -706,7 +706,7 @@ AbstDeviceHandler
 > 本产品使用了 usbipdcpp（https://github.com/yunsmall/usbipdcpp），遵循 LGPLv3 许可证。
 > ```
 
-如需闭源或商业授权，请联系：yun_small@163.com
+修改本库代码后如需以闭源方式分发，请联系：yun_small@163.com
 
 ---
 
