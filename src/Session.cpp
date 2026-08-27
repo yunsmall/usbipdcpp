@@ -36,7 +36,7 @@ void usbipdcpp::Session::enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unli
 
 void usbipdcpp::Session::wakeup_sender() {
     has_data.store(true, std::memory_order_release);
-    data_available_cv.notify_one();
+    data_available_cv.notify_all();
 }
 
 void usbipdcpp::Session::submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
@@ -269,13 +269,19 @@ close_socket:
 }
 
 void usbipdcpp::Session::immediately_stop() {
-    if (should_immediately_stop.exchange(true)) {
-        // 幂等：只处理一次。置位即保证 socket 已由本函数处理（shutdown+cancel
-        // 打断阻塞读），无需重复操作。注意置位路径不只有本函数——receiver /
-        // sender 退出时也会置位（它们只是退出标志，不操作 socket）；真正操作
-        // socket 的只有本函数与收尾的 close_socket（socket_mutex 互斥），
-        // 不存在"置位但无人操作 socket"的路径
-        return;
+    {
+        // 置位须持 swap_mutex（理由同 receiver 收尾处注释）：sender 的
+        // 455 wait 谓词在锁内检查 should_immediately_stop，无锁置位会
+        // 造成丢失唤醒（lost wakeup）
+        std::lock_guard lock(swap_mutex);
+        if (should_immediately_stop.exchange(true)) {
+            // 幂等：只处理一次。置位即保证 socket 已由本函数处理（shutdown+cancel
+            // 打断阻塞读），无需重复操作。注意置位路径不只有本函数——receiver /
+            // sender 退出时也会置位（它们只是退出标志，不操作 socket）；真正操作
+            // socket 的只有本函数与收尾的 close_socket（socket_mutex 互斥），
+            // 不存在"置位但无人操作 socket"的路径
+            return;
+        }
     }
 
     std::error_code ignore_ec;
@@ -301,7 +307,7 @@ void usbipdcpp::Session::immediately_stop() {
         socket.cancel(ignore_ec);
     }
     // 唤醒 sender 线程，否则它卡在 data_available_cv.wait() 上直到 receiver 退出。
-    data_available_cv.notify_one();
+    data_available_cv.notify_all();
     SPDLOG_INFO("成功调用shutdown");
 }
 
@@ -341,7 +347,7 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
             // 线程退出标记：唤醒 transfer_loop 的限时等待（sender 函数
             // 正常路径末尾已置位，此处为异常路径兜底，重复置位无害）
             sender_done.store(true);
-            data_available_cv.notify_one();
+            data_available_cv.notify_all();
         });
     } catch (...) {
         SPDLOG_ERROR("sender 线程创建失败，断开本次连接");
@@ -389,6 +395,14 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
         } catch (...) {
             SPDLOG_ERROR("on_disconnection 异常");
         }
+        // 补齐置位与唤醒：receiver 异常退出时正常收尾的置位+notify（572-573）
+        // 未执行，sender 还卡在 data_available_cv.wait 上，不置位不 notify
+        // 会让 transfer_loop 的限时等待超时后 join 永久卡死
+        {
+            std::lock_guard lock(swap_mutex);
+            should_immediately_stop = true;
+        }
+        data_available_cv.notify_all();
         if (current_handler->is_device_removed()) {
             std::lock_guard lock(server.get_devices_mutex());
             server.get_using_devices().erase(*current_import_device_id);
@@ -568,9 +582,16 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     // 传输回调完成（cancel 后回调必触发），期间 sender 仍可能消费队列
     // 并向已失效的 socket 发送（失败即退出），这是设计允许的
     current_handler->on_disconnection(receiver_ec);
-    // 然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错
-    should_immediately_stop = true;
-    data_available_cv.notify_one();
+    // 然后再关闭发送线程，防止先关闭了但设备因还未被通知到关闭而报错。
+    // 置位必须在 swap_mutex 锁内：sender 的 455 wait 谓词在锁内检查
+    // should_immediately_stop，无锁置位会让 notify 落在 sender 检查谓词
+    // 与挂入 cond_wait 队列之间的窗口里，唤醒丢失（lost wakeup），sender
+    // 无限 wait 永久挂起
+    {
+        std::lock_guard lock(swap_mutex);
+        should_immediately_stop = true;
+    }
+    data_available_cv.notify_all();
 
     /* 这里先标记为可用是可行的
      * 一是设备on_disconnection需要阻塞，把自身断连需要做的事全处理掉
@@ -666,5 +687,5 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
     }
     // 线程退出标记：唤醒 transfer_loop 的限时等待（见 transfer_loop 注释）
     sender_done.store(true);
-    data_available_cv.notify_one();
+    data_available_cv.notify_all();
 }
