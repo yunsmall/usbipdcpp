@@ -45,6 +45,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MOUSE "Build example mock mouse applications
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_KEYBOARD "Build example mock keyboard applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_GAMEPAD "Build example mock gamepad applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_ACM "Build example mock CDC ACM (virtual serial port) applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_CDC_THROTTLE "Build example throttled CDC ACM (OUT NAK) virtual serial applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_MSC "Build example mock MSC (virtual USB flash drive) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_UVC "Build example mock UVC (virtual USB camera) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_AUDIO "Build example mock UAC (virtual USB microphone) applications" ${IS_TOP_LEVEL})

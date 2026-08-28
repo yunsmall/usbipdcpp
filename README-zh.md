@@ -390,10 +390,16 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 5. mock_cdc_acm
 
    虚拟串口（CDC ACM）示例，展示 USB Bulk 端点的双向数据传输。
-6. multi_devices
+6. mock_cdc_throttle
+
+   限流虚拟串口（CDC ACM）示例，演示 **OUT NAK 背压**：固定窗口 `--window-sec` 秒内最多接收
+   `--limit-bytes` 字节；额度用完即停止接收（OUT NAK——主机 URB 挂起），窗口结束恢复并排空
+   挂起的请求。数据处理器同时统计收到的 `'1'` 字符数，每半个窗口把累计数发回主机
+   （`<数字>\n`）。使用：`mock_cdc_throttle -l 64 -w 5`。
+7. multi_devices
 
    包含10个虚拟HID设备的示例。展示了如何使用工厂模式创建多个设备。
-7. absolute_mouse
+8. absolute_mouse
 
    绝对坐标鼠标虚拟设备示例，提供完整的鼠标操作API：
    - **屏幕坐标API**：使用像素坐标定位，通过 `set_screen_bounds()` 设置屏幕边界
@@ -407,11 +413,11 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    - 屏幕坐标通过线性映射转换为 HID 坐标 [0, 32767]
    - 超出 bounds 的坐标会被 clamp 到边界值
    - 注意：Windows 主机不接受 HID (0, 0)，建议屏幕坐标避开 (x1, y1) 边界
-8. libusb_server
+9. libusb_server
 
    转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
    通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
-9. mock_msc
+10. mock_msc
 
    虚拟 USB 大容量存储（U盘）设备，用磁盘镜像文件作为存储介质。
    支持 BOT (Bulk-Only Transport) 协议和常见 SCSI 命令（INQUIRY、READ CAPACITY、
@@ -440,13 +446,13 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    启用后通过 `sudo fstrim -v /mountpoint` 手动触发 discard，
    或 `sudo systemctl enable fstrim.timer` 开启定时 trim。
 
-10. mock_uvc
+11. mock_uvc
 
    虚拟 UVC 摄像头，使用 `ColorBarSource` 输出 320×240 YUY2 彩条测试图。
    演示如何实现 `UvcVideoControlHandler` + `UvcVideoStreamingHandler` + `VideoSource` 组合。
    Linux 和 Windows 均可使用。
 
-11. mock_uvc_ffmpeg
+12. mock_uvc_ffmpeg
 
    虚拟 UVC 摄像头，通过 FFmpeg 读取视频文件作为视频源。支持 FFmpeg 能解码的所有格式
    （MP4、MKV、AVI 等），可选 MJPEG/H264 透传模式。
@@ -455,7 +461,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    需要 FFmpeg 库（libavformat、libavcodec、libswscale、libavutil）。
 
-12. mock_audio
+13. mock_audio
 
    虚拟 USB 麦克风（UAC 1.0）。演示
    `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` 组合
@@ -469,7 +475,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    使用：`mock_audio --rates 48000,16000,8000`（采样率需为 8000 的整数倍，首个为初始采样率）
 
-13. termux_libusb_server
+14. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
@@ -479,18 +485,18 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    termux-usb的使用可查看termux官方的相关文档
 
-14. multi_interface_hid
+15. multi_interface_hid
 
    复合 USB 设备示例，在单个设备上同时实现**两个 HID 接口**（鼠标 + 键盘）。
    展示如何使用 `SimpleVirtualDeviceHandler` 创建多接口虚拟设备。
 
-15. mock_pipe
+16. mock_pipe
 
    通用虚拟管道设备（vendor 类接口，bulk IN + bulk OUT）。展示 `PipeDeviceHandler` 的
    read()/write() 接口：像读写文件一样操作虚拟设备的端点数据流（FunctionFS 风格的
    FIFO 阻塞语义；非标准控制请求也通过 read() 以带 setup_req 的 PipeXfer 返回）。
 
-16. mock_pipe_hid
+17. mock_pipe_hid
 
    用通用 `PipeDeviceHandler` 实现的 **HID 键盘**（无需 `KeyboardHandler`）——"任意
    bulk/interrupt 设备只需 read/write 就能实现"的教程示例。HID 设备的关键步骤：
@@ -509,7 +515,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    控制请求（GET_REPORT / SET_REPORT 等 class 请求）经 read() 以带 setup_req 的
    PipeXfer 返回，IN 方向用 `write(PipeXfer{.ep = 0, .data = ...})` 应答。
 
-17. libusb_windows_service
+18. libusb_windows_service
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或

@@ -28,3 +28,14 @@ push前先提交代码，push和提交请分别执行不要放在一起
 假设有个usbip服务器在本机的53240端口监听，请你attach或者list时使用
 `usbip -t 53240 attach/list ...`这种命令，注意-t必须紧跟usbip的后面，
 处于attach list等所有子命令的前面
+
+## mock 设备本地验证的坑
+
+在 WSL 里起 mock 服务器并 attach 验证时，两个坑容易踩到：
+
+- **mock 服务器依赖 `std::cin.get()` 等回车**：直接 `< /dev/null` 会让
+  stdin 立即 EOF，server 秒退。必须用管道把 stdin 挂住才能常驻，例如
+  `setsid nohup bash -c 'sleep infinity | ./mock_xxx -p 53240' < /dev/null > log 2>&1 &`
+- **清理旧进程时禁用 `pkill -f mock_xxx`**：`-f` 按整条命令行匹配，
+  会把自己的 shell（bash -lc 命令串里含 "mock_xxx"）杀掉。改用精确
+  进程名 `pkill -x mock_xxx`（可执行名，不含路径/参数）
