@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <thread>
@@ -59,6 +60,13 @@ public:
         return pull ? pull(length) : data_type{};
     }
 
+    void send_pulled_locked(std::uint8_t ep, std::uint32_t seqnum, std::uint32_t length, TransferHandle transfer,
+                            data_type pulled) {
+        // 与 MessageInChannel 一致：整条入缓冲后由本次请求消费
+        push_locked(std::move(pulled));
+        try_send_one(ep, seqnum, length, std::move(transfer));
+    }
+
     void push_locked(data_type data) {
         buffer.emplace_back(std::move(data));
     }
@@ -78,6 +86,8 @@ public:
 
     std::vector<Sent> sent;
     RingBuffer buffer{64 * 1024};
+    std::function<data_type(std::uint32_t)> pull; // 可选 pull，模拟 try_pull_data
+    int pull_calls = 0;
 
     void write(const std::uint8_t *data, std::size_t size) {
         std::lock(channel_mutex, requests_mutex);
@@ -100,7 +110,18 @@ public:
     }
 
     data_type try_pull_data(std::uint32_t length) {
-        return {};
+        pull_calls++;
+        return pull ? pull(length) : data_type{};
+    }
+
+    void send_pulled_locked(std::uint8_t ep, std::uint32_t seqnum, std::uint32_t length, TransferHandle transfer,
+                            data_type pulled) {
+        // 与 ByteStreamInChannel 一致：本次请求优先发 min 部分，剩余入缓冲
+        std::size_t send_len = std::min(pulled.size(), static_cast<std::size_t>(length));
+        sent.push_back({seqnum, static_cast<std::uint32_t>(send_len)});
+        if (pulled.size() > send_len) {
+            buffer.write(pulled.data() + send_len, pulled.size() - send_len);
+        }
     }
 
     void push_locked(data_type data) {
@@ -265,6 +286,65 @@ TEST(TestInEndpointChannel, PullNotCalledWhenSameEndpointHasPending) {
     EXPECT_EQ(channel.pull_calls, 2);
     // A 仍是挂起状态（pull 空数据未消费请求）
     EXPECT_TRUE(channel.sent.empty());
+}
+
+TEST(TestInEndpointChannel, ByteStreamPullPrefersCurrentRequest) {
+    ShardChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+
+    // pull 生成 10 字节，请求只要 4：本次请求发满 4，剩余 6 留在缓冲
+    channel.pull = [](std::uint32_t length) { return data_type{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}; };
+    channel.on_in_request(0x81, 70, 4, maker.make());
+
+    ASSERT_EQ(channel.sent.size(), 1u);
+    EXPECT_EQ(channel.sent[0].seqnum, 70u);
+    EXPECT_EQ(channel.sent[0].length, 4u);
+    EXPECT_EQ(channel.buffer.size(), 6u);
+
+    // 后续请求消费剩余部分
+    channel.on_in_request(0x81, 71, 8, maker.make());
+    ASSERT_EQ(channel.sent.size(), 2u);
+    EXPECT_EQ(channel.sent[1].length, 6u);
+    EXPECT_TRUE(channel.buffer.empty());
+}
+
+TEST(TestInEndpointChannel, ByteStreamPullAllSentWhenFits) {
+    ShardChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+
+    // pull 数据 ≤ 请求长度：全部发走，缓冲不残留
+    channel.pull = [](std::uint32_t length) { return data_type{1, 2, 3}; };
+    channel.on_in_request(0x81, 72, 8, maker.make());
+
+    ASSERT_EQ(channel.sent.size(), 1u);
+    EXPECT_EQ(channel.sent[0].length, 3u);
+    EXPECT_TRUE(channel.buffer.empty());
+}
+
+TEST(TestInEndpointChannel, ByteStreamChannelLifecycle) {
+    // 真实字节流通道：实例化 + 连接生命周期 + 写读，不触发 session 使用
+    // （完整挂起-应答路径由端到端测试覆盖）
+    ByteStreamInChannel channel;
+
+    channel.set_capacity(1024);
+    EXPECT_EQ(channel.capacity(), 1024u);
+    EXPECT_EQ(channel.size(), 0u);
+
+    // 初始断连：write_nb 直接拒绝
+    const std::uint8_t data[] = {1, 2, 3};
+    EXPECT_EQ(channel.write_nb(data, 3), 0u);
+
+    // 连接后可写，查询正确
+    channel.on_new_connection();
+    EXPECT_EQ(channel.write_nb(data, 3), 3u);
+    EXPECT_EQ(channel.size(), 3u);
+    EXPECT_EQ(channel.available(), 1021u);
+
+    // 断连清空缓冲
+    channel.on_disconnection();
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, EmptyMessagePushed) {
@@ -652,4 +732,62 @@ TEST(TestInEndpointChannel, ConcurrentRequestsAndDisconnect) {
     running = false;
     requester.join();
     // 不崩溃即可
+}
+
+// ===== 真实 ByteStreamInChannel 的阻塞写路径（write 两阶段：等空间 → 写 → 应答） =====
+// 这些测试不触发 try_send_one（不产生应答），因此不需要真实 Session：
+// "阻塞写被宿主 IN 请求取走唤醒" 依赖 session->submit_ret_submit，由端到端
+// （Pipe → ByteStreamInChannel）测试覆盖。
+
+TEST(TestInEndpointChannel, RealByteStreamBlockingWriteSucceedsWhenSpaceAvailable) {
+    ByteStreamInChannel channel;
+    channel.set_capacity(16);
+    channel.on_new_connection();
+
+    // 缓冲空：阻塞写直接填满不阻塞
+    std::uint8_t payload[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    auto n = channel.write(payload, 8);
+    EXPECT_EQ(n, 8u);
+    EXPECT_EQ(channel.size(), 8u);
+    EXPECT_EQ(channel.available(), 8u);
+}
+
+TEST(TestInEndpointChannel, RealByteStreamBlockingWriteUnblockedByDisconnect) {
+    ByteStreamInChannel channel;
+    channel.set_capacity(16);
+    channel.on_new_connection();
+
+    std::uint8_t payload[32] = {};
+    // 先占 8 字节：write(32) 前 8 字节能进缓冲，剩余 24 阻塞等空间
+    EXPECT_EQ(channel.write_nb(payload, 8), 8u);
+
+    std::uint32_t written = 0xFFFFFFFF;
+    std::thread writer([&]() {
+        written = channel.write(payload, 32);
+    });
+    // 等写者进入等待（已写 8、剩 24 阻塞）
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // 断连：space_cv 唤醒阻塞写者，返回已写入量（8），不再继续
+    channel.on_disconnection();
+    writer.join();
+    EXPECT_EQ(written, 8u);
+}
+
+TEST(TestInEndpointChannel, RealByteStreamBlockingWriteTimesOut) {
+    ByteStreamInChannel channel;
+    channel.set_capacity(16);
+    channel.on_new_connection();
+
+    std::uint8_t payload[32] = {};
+    // 占满 16 字节，无宿主取走：阻塞超时返回 0
+    EXPECT_EQ(channel.write_nb(payload, 16), 16u);
+    EXPECT_EQ(channel.available(), 0u);
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto n = channel.write(payload, 32, 30);
+    auto waited = std::chrono::steady_clock::now() - t0;
+    EXPECT_EQ(n, 0u);
+    // 确实阻塞了约 30ms（而非立即返回）
+    EXPECT_GE(waited, std::chrono::milliseconds(20));
+    EXPECT_EQ(channel.size(), 16u);  // 已占数据未被写者改动
 }

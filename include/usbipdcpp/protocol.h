@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstdint>
 #include <system_error>
 #include <variant>
@@ -147,6 +148,23 @@ struct USBIPDCPP_API UsbIpIsoPacketDescriptor {
 
 static_assert(Serializable<UsbIpIsoPacketDescriptor>);
 
+/**
+ * @brief 传输对象类型约束：能把 handle 指针取回为 TransferType*
+ *
+ * @tparam TransferType 传输对象类型（TransferHandle 持有的具体类型，
+ *          如 GenericTransfer、StorageIoTransfer）
+ * @tparam FromHandleProvider 提供静态 from_handle(void *) 返回 TransferType*
+ *          的类型。通常与 TransferType 相同（类型自身提供 from_handle），
+ *          但也可分离：如第三方 C 类型（libusb_transfer）不能添加成员函数，
+ *          from_handle 由包装类型提供。项目约定：所有自定义 transfer 类型
+ *          定义后 static_assert 此约束，防止依赖 handle 具体类型的代码
+ *          强转取回时 UB
+ */
+template <typename TransferType, typename FromHandleProvider>
+concept FromHandleTransfer = requires(void *ptr) {
+    { FromHandleProvider::from_handle(ptr) } -> std::same_as<TransferType *>;
+};
+
 // 通用传输结构，虚拟设备使用
 struct GenericTransfer {
     std::vector<std::uint8_t> data;
@@ -158,6 +176,9 @@ struct GenericTransfer {
         return static_cast<GenericTransfer *>(ptr);
     }
 };
+
+// 自定义 transfer 类型定义后按项目约定 static_assert（见 FromHandleTransfer 注释）
+static_assert(FromHandleTransfer<GenericTransfer, GenericTransfer>);
 
 /**
  * @brief RAII 包装类，管理 transfer_handle 的生命周期

@@ -5,6 +5,7 @@
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/utils/utils.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -151,10 +152,9 @@ private:
             pipe->on_pipe_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
         }
         else {
-            // OUT：主机发来数据，取出负载交给设备级（回 OK 由设备级完成）
-            auto *trx = GenericTransfer::from_handle(transfer.get());
-            auto received_size = static_cast<std::uint32_t>(trx->data.size());
-            pipe->on_pipe_out_transfer(ep.address, seqnum, received_size, std::move(trx->data));
+            // OUT：整个请求挂起（数据留在 transfer），设备级 read() 取走时应答
+            // （NAK 背压：业务层不读则主机 URB 挂着，对齐内核 vudc）
+            pipe->on_pipe_out_transfer(ep.address, seqnum, std::move(transfer));
         }
     }
 
@@ -179,25 +179,57 @@ void PipeDeviceHandler::setup_interface_handlers() {
 }
 
 bool PipeDeviceHandler::read(PipeXfer &xfer, std::uint32_t timeout_ms) {
+    // 从各端点 OUT 通道取（挂起的请求取走时应答）。取回的数据包括：
+    // bulk OUT 负载、控制 OUT 数据（带 setup_req）、控制 IN 的纯通知
+    // （带 setup_req、无数据）。取序 = 主机请求的全局到达顺序：内核 vhci
+    // 的 seqnum 全局单调递增，跨端点取 seqnum 最旧的那条（seqnum_newer
+    // 环形比较防回绕，每端点内严格 FIFO）
     std::unique_lock lock(pipe_mutex);
-    // 等待数据或断连（断连时把已排队的数据消费完再返回 false）
-    while (out_queue.empty() && !disconnected) {
+    auto take_one = [&]() -> bool {
+        // 找到 seqnum 最旧的通道（全局最旧请求）
+        OutEndpointChannel *oldest = nullptr;
+        for (auto &[ep, ch]: out_channels) {
+            auto sn = ch.front_seqnum();
+            if (!sn) {
+                continue;
+            }
+            if (!oldest || seqnum_newer(*oldest->front_seqnum(), *sn)) {
+                oldest = &ch;
+            }
+        }
+        if (!oldest) {
+            return false;
+        }
+        auto p = oldest->try_take();
+        if (p) {
+            xfer.ep = p->ep;
+            xfer.setup_req = p->setup_req;
+            xfer.data = std::move(p->data);
+            return true;
+        }
+        return false;
+    };
+
+    while (!disconnected) {
+        if (take_one()) {
+            return true;
+        }
+        // 等待数据或断连（断连时把已排队的消费完再返回 false）
         if (timeout_ms == 0) {
-            read_cv.wait(lock);
+            out_cv.wait(lock);
         }
         else {
-            if (read_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) == std::cv_status::timeout) {
+            if (out_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) == std::cv_status::timeout) {
                 // 超时时刻数据可能恰好入队：跳出循环走统一判断，避免丢数据
                 break;
             }
         }
     }
-    if (out_queue.empty()) {
-        return false; // 断连且无剩余数据
+    // 断连或超时：把已排队的数据消费完再返回 false
+    if (take_one()) {
+        return true;
     }
-    xfer = std::move(out_queue.front());
-    out_queue.pop_front();
-    return true;
+    return false;
 }
 
 std::size_t PipeDeviceHandler::write(const PipeXfer &xfer, std::uint32_t timeout_ms) {
@@ -206,66 +238,48 @@ std::size_t PipeDeviceHandler::write(const PipeXfer &xfer, std::uint32_t timeout
         // 数据会滞留 FIFO，属用户误用，防御性提示
         SPDLOG_WARN("PipeDeviceHandler::write 目标端点 {:02x} 不是 IN 端点", xfer.ep);
     }
-    const auto *data = xfer.data.data();
-    std::size_t size = xfer.data.size();
-    std::size_t total_written = 0;
-    std::size_t offset = 0;
-
-    while (offset < size) {
-        // 阶段1：等待 FIFO 有空间（对齐内核 FIFO 的阻塞写语义）
-        {
-            std::unique_lock lock(pipe_mutex);
-            if (disconnected) {
-                return total_written;
-            }
-            // 懒创建该端点的 FIFO（容量取当前配置）
-            auto &fifo = in_fifos.try_emplace(xfer.ep, fifo_capacity).first->second;
-
-            if (fifo.available() == 0) {
-                // 先尝试应答挂起的 IN 请求腾出空间
-                {
-                    std::lock_guard queue_lock(requests_mutex);
-                    try_send_pending_locked();
-                }
-                if (disconnected) {
-                    return total_written;
-                }
-                // 仍满则等待：宿主 IN 请求取走数据后由 send_from_fifo_locked 唤醒
-                while (fifo.available() == 0 && !disconnected) {
-                    if (timeout_ms == 0) {
-                        write_cv.wait(lock);
-                    }
-                    else {
-                        if (write_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) ==
-                            std::cv_status::timeout) {
-                            // 超时时刻空间可能恰好腾出：跳出循环走统一判断，
-                            // 能写则继续写，避免少写
-                            break;
-                        }
-                    }
-                }
-                if (disconnected) {
-                    return total_written;
-                }
-                if (fifo.available() == 0) {
-                    return total_written; // 超时且仍未腾出空间
-                }
-            }
-
-            std::size_t written = fifo.write(data + offset, size - offset);
-            total_written += written;
-            offset += written;
+    ByteStreamInChannel *channel;
+    {
+        // 只在取通道引用时持 pipe_mutex：阻塞写期间必须释放，否则宿主 IN
+        // 请求路径（on_pipe_in_request 也要 pipe_mutex）无法应答请求腾出
+        // 空间，写者永远等不到唤醒（死锁）
+        std::lock_guard lock(pipe_mutex);
+        if (disconnected) {
+            return 0;
         }
-
-        // 阶段2：FIFO 有数据了，尝试应答挂起的 IN 请求
-        {
-            std::lock(pipe_mutex, requests_mutex);
-            std::lock_guard lock1(pipe_mutex, std::adopt_lock);
-            std::lock_guard lock2(requests_mutex, std::adopt_lock);
-            try_send_pending_locked();
-        }
+        channel = &get_in_channel(xfer.ep);
     }
-    return total_written;
+    // 阻塞写：通道内部等空间（缓冲满时宿主取走，timeout_ms=0 无限等），断连
+    // 返回已写入量。引用稳定性：断连时 on_disconnection 先遍历通道置断连
+    // 标记并唤醒（写者醒来检查断连返回，不再访问通道），之后才清 map
+    return channel->write(xfer.data.data(), xfer.data.size(), timeout_ms);
+}
+
+ByteStreamInChannel &PipeDeviceHandler::get_in_channel(std::uint8_t ep_addr) {
+    // 调用者必须已持有 pipe_mutex
+    auto it = in_channels.find(ep_addr);
+    if (it == in_channels.end()) {
+        it = in_channels.try_emplace(ep_addr).first;
+        auto &ch = it->second;
+        // 新会话懒创建：容量取当前配置，绑定会话并重置断连状态
+        ch.set_capacity(fifo_capacity);
+        ch.bind_session(session);
+        ch.on_new_connection();
+    }
+    return it->second;
+}
+
+OutEndpointChannel &PipeDeviceHandler::get_out_channel(std::uint8_t ep_addr) {
+    // 调用者必须已持有 pipe_mutex
+    auto it = out_channels.find(ep_addr);
+    if (it == out_channels.end()) {
+        it = out_channels.try_emplace(ep_addr).first;
+        auto &ch = it->second;
+        // 新会话懒创建：绑定会话并重置断连状态
+        ch.bind_session(session);
+        ch.on_new_connection();
+    }
+    return it->second;
 }
 
 void PipeDeviceHandler::set_in_fifo_capacity(std::size_t capacity) {
@@ -287,119 +301,90 @@ void PipeDeviceHandler::on_new_connection(Session &current_session, error_code &
     if (ec) {
         return;
     }
-    // 新会话从干净状态开始：FIFO/队列由各端点按需重建
+    // 新会话从干净状态开始：IN/OUT 通道由端点首次访问时懒重建
     std::lock_guard lock(pipe_mutex);
     disconnected = false;
-    out_queue.clear();
-    in_fifos.clear();
+    in_channels.clear();
+    out_channels.clear();
 }
 
 void PipeDeviceHandler::on_disconnection(error_code &ec) {
     {
         std::lock_guard lock(pipe_mutex);
         disconnected = true;
-        out_queue.clear();
-        in_fifos.clear();
+        // 每通道清缓冲 + 挂起请求（TransferHandle 析构时自动释放）+ 唤醒
+        // 阻塞的写者让它们以断连返回
+        for (auto &[ep, ch]: in_channels) {
+            ch.on_disconnection();
+        }
+        for (auto &[ep, ch]: out_channels) {
+            ch.on_disconnection();
+        }
+        in_channels.clear();
+        out_channels.clear();
     }
-    {
-        std::lock_guard lock(requests_mutex);
-        // TransferHandle 析构时会自动释放
-        endpoint_requests.clear();
-    }
-    // 唤醒阻塞的 read/write，让它们以"断连"返回
-    read_cv.notify_all();
-    write_cv.notify_all();
+    // 唤醒阻塞的 read，让它以"断连"返回
+    out_cv.notify_all();
     // 父类遍历接口 on_disconnection 并清除 session 指针
     VirtualDeviceHandler::on_disconnection(ec);
 }
 
 void PipeDeviceHandler::on_pipe_in_request(std::uint8_t ep_addr, std::uint32_t seqnum, std::uint32_t length,
                                            TransferHandle transfer) {
-    std::lock(pipe_mutex, requests_mutex);
-    std::lock_guard lock1(pipe_mutex, std::adopt_lock);
-    std::lock_guard lock2(requests_mutex, std::adopt_lock);
-    // 请求先入队再尝试匹配 FIFO 数据：无数据时请求留在队列等待 write
-    endpoint_requests.enqueue(ep_addr, {seqnum, length, std::move(transfer)});
-    try_send_pending_locked();
+    std::lock_guard lock(pipe_mutex);
+    // 通道内部处理：缓冲有数据立即应答，否则挂起请求等待 write
+    get_in_channel(ep_addr).on_in_request(ep_addr, seqnum, length, std::move(transfer));
 }
 
 void PipeDeviceHandler::on_pipe_out_transfer(std::uint8_t ep_addr, std::uint32_t seqnum,
-                                             std::uint32_t received_size, data_type &&data) {
-    {
-        std::lock_guard lock(pipe_mutex);
-        out_queue.emplace_back(PipeXfer{.ep = ep_addr, .data = std::move(data)});
-    }
-    read_cv.notify_one();
-    // 数据已取出，transfer 由调用方析构释放，此处只回 OK
-    session->submit_ret_submit(
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
+                                             TransferHandle transfer) {
+    // 请求挂起到该端点通道（数据留在 transfer），read() 取走时读出并应答；
+    // 业务层不读则主机该端点 URB 挂着（NAK 背压，逐端点独立），读走后恢复
+    std::lock_guard lock(pipe_mutex);
+    get_out_channel(ep_addr).on_out_request(ep_addr, seqnum, std::move(transfer));
+    out_cv.notify_all();
 }
 
 void PipeDeviceHandler::on_pipe_control_request(const SetupPacket &setup, std::uint32_t seqnum,
                                                 std::uint32_t transfer_buffer_length, TransferHandle transfer) {
+    std::lock_guard lock(pipe_mutex);
     if (setup.is_out()) {
-        // OUT：数据已随控制传输到达，整体交给用户
-        auto *trx = GenericTransfer::from_handle(transfer.get());
-        data_type data(trx->data.begin(), trx->data.begin() + transfer_buffer_length);
-        {
-            std::lock_guard lock(pipe_mutex);
-            out_queue.emplace_back(PipeXfer{.ep = 0, .setup_req = setup, .data = std::move(data)});
-        }
-        read_cv.notify_one();
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
+        // OUT：数据已随控制传输到达，整体挂起（read() 取走时读数据并应答）
+        get_out_channel(0).on_out_request(0, seqnum, std::move(transfer), setup);
     }
     else {
-        // IN：请求挂起，用户 read() 拿到 setup_req 后 write({ep=0, data}) 应答
-        // （对齐 VirtualUSBDevice：ep0 IN 请求挂起，write(0, ...) 匹配发送）
-        {
-            std::lock_guard lock(requests_mutex);
-            endpoint_requests.enqueue(0, {seqnum, transfer_buffer_length, std::move(transfer)});
-        }
-        {
-            std::lock_guard lock(pipe_mutex);
-            out_queue.emplace_back(PipeXfer{.ep = 0, .setup_req = setup});
-        }
-        read_cv.notify_one();
+        // IN：请求挂起（等 write({ep=0, data}) 应答），并透出 setup 通知业务层：
+        // read() 取到纯通知（带 setup_req、无数据）后知道有控制请求待应答
+        get_in_channel(0).on_in_request(0, seqnum, transfer_buffer_length, std::move(transfer));
+        get_out_channel(0).on_out_request(0, seqnum, TransferHandle{}, setup);
     }
+    out_cv.notify_all();
 }
 
 void PipeDeviceHandler::on_pipe_unlink(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(requests_mutex);
-    bool cancelled = endpoint_requests.cancel_by_seqnum(unlink_seqnum);
+    bool cancelled = false;
+    {
+        // 挂起请求分两处：IN 请求按端点分散在各通道里，OUT 请求同理，
+        // 逐个尝试取消
+        std::lock_guard lock(pipe_mutex);
+        for (auto &[ep, ch]: in_channels) {
+            if (ch.cancel_pending(unlink_seqnum)) {
+                cancelled = true;
+                break;
+            }
+        }
+        if (!cancelled) {
+            for (auto &[ep, ch]: out_channels) {
+                if (ch.cancel_pending(unlink_seqnum)) {
+                    cancelled = true;
+                    break;
+                }
+            }
+        }
+    }
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 HID/CdcAcm 的 unlink 范本一致
     session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
-}
-
-void PipeDeviceHandler::try_send_pending_locked() {
-    // 调用者必须已持有 pipe_mutex 和 requests_mutex
-    // 按端点匹配：只服务 FIFO 有数据的端点，避免 dequeue_any 取到空 FIFO 端点的
-    // 请求放回队尾导致乱序（多端点场景下同端点请求必须保持 FIFO 顺序）
-    for (auto &[ep_addr, fifo]: in_fifos) {
-        while (!fifo.empty()) {
-            auto req_opt = endpoint_requests.dequeue(ep_addr);
-            if (!req_opt.has_value()) {
-                break;
-            }
-            auto &req = req_opt.value();
-            send_from_fifo_locked(fifo, req.seqnum, req.length, std::move(req.transfer));
-        }
-    }
-}
-
-void PipeDeviceHandler::send_from_fifo_locked(RingBuffer &fifo, std::uint32_t seqnum, std::uint32_t max_length,
-                                              TransferHandle transfer) {
-    // 调用者必须已持有 pipe_mutex 和 requests_mutex，且 fifo 非空
-    std::size_t send_len = std::min(fifo.size(), static_cast<std::size_t>(max_length));
-    auto *trx = GenericTransfer::from_handle(transfer.get());
-    trx->data.resize(send_len);
-    fifo.read(trx->data.data(), send_len);
-    trx->actual_length = send_len;
-    // FIFO 腾出空间，唤醒阻塞等待的 write
-    write_cv.notify_one();
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-            seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
 }

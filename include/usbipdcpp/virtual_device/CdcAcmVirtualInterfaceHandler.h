@@ -1,16 +1,13 @@
 #pragma once
 
 #include <array>
-#include <condition_variable>
-#include <deque>
-#include <mutex>
 #include <string_view>
 #include <vector>
 #include "usbipdcpp/virtual_device/CdcAcmConstants.h"
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/RingBuffer.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 namespace usbipdcpp {
@@ -365,46 +362,21 @@ public:
 
 protected:
     /**
-     * @brief TX 缓冲区（设备→主机）
+     * @brief TX 通道（字节流模式）
+     *
+     * 封装「挂起-应答」+ 阻塞写：主机 bulk IN 请求先挂起，send_data /
+     * send_data_blocking 写入数据时匹配应答；缓冲满时阻塞等待宿主取走。
+     * on_data_requested 通过 set_pull_callback 接入（锁内调用，与原来的
+     * handle_bulk_transfer 双锁内调用语义一致）
      */
-    RingBuffer tx_buffer_;
+    ByteStreamInChannel tx_channel;
 
     std::size_t tx_high_watermark_ = 48 * 1024;
     std::size_t tx_low_watermark_ = 16 * 1024;
 
     /**
-     * @brief 保护 tx_buffer_ 的互斥锁
-     */
-    mutable std::mutex tx_mutex_;
-
-    /**
-     * @brief 条件变量，用于阻塞发送时等待缓冲区有空间
-     */
-    std::condition_variable tx_cv_;
-
-    /**
-     * @brief 断开连接标志，用于让阻塞发送提前返回
-     */
-    bool disconnected_ = true;
-
-    /**
      * @brief 关联的通信接口处理器
      */
     CdcAcmCommunicationInterfaceHandler *comm_handler_ = nullptr;
-
-    /**
-     * @brief 从 TX 缓冲区读取数据并发送
-     * @param seqnum 请求序号
-     * @param max_length 最大发送长度
-     * @param transfer 传输句柄
-     * @note 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_，且确保 tx_buffer_ 不为空
-     */
-    void send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length, TransferHandle transfer);
-
-    /**
-     * @brief 尝试发送等待的数据
-     * @note 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_
-     */
-    void try_send_pending_locked();
 };
 } // namespace usbipdcpp

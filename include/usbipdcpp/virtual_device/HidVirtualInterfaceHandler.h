@@ -1,15 +1,13 @@
 #pragma once
 
 
-#include <deque>
-#include <mutex>
-
 #include <asio.hpp>
 
 #include "usbipdcpp/virtual_device/HidConstants.h"
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 
@@ -23,6 +21,8 @@ class USBIPDCPP_API HidVirtualInterfaceHandler : public VirtualInterfaceHandler 
 public:
     HidVirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         VirtualInterfaceHandler(handle_interface, string_pool) {
+        // 报告堆积上限：主机长期不读中断 IN 时防止内存无限增长（超限丢最旧）
+        input_channel.set_max_pending(MAX_PENDING_INPUT_REPORTS);
     }
 
     // ========== 内部实现（子类无需关心） ==========
@@ -196,27 +196,29 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
+    void on_new_connection(Session &current_session, error_code &ec) override;
+
     void on_disconnection(std::error_code &ec) override;
 
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
 protected:
     /**
-     * @brief 保护 pending_input_report_ 的互斥锁
+     * @brief IN 输入报告通道（消息模式）
+     *
+     * 封装「挂起-应答」：主机 IN 请求先挂起，send_input_report() 推入数据
+     * 时匹配应答；缓冲超上限丢最旧（见 MAX_PENDING_INPUT_REPORTS）
      */
-    mutable std::mutex input_mutex_;
+    MessageInChannel input_channel;
 
     /**
-     * @brief 待发送的输入报告队列
-     *
-     * 主机长期不发起中断 IN 请求时报告会堆积，超过上限丢最旧（见 send_input_report）
+     * @brief 待发送输入报告上限，超过丢最旧（主机长期不发起中断 IN 请求时
+     * 报告会堆积，防止内存无限增长）
      */
     static constexpr std::size_t MAX_PENDING_INPUT_REPORTS = 1024;
-    std::deque<data_type> pending_input_reports_;
 
     bool has_pending_input_reports() const {
-        std::lock_guard<std::mutex> lock(input_mutex_);
-        return !pending_input_reports_.empty();
+        return input_channel.size() != 0;
     }
 };
 } // namespace usbipdcpp

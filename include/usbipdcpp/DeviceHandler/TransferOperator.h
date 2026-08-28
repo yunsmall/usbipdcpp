@@ -8,6 +8,7 @@
 
 #include "usbipdcpp/Export.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/type.h"
 
 namespace usbipdcpp {
 
@@ -29,6 +30,46 @@ public:
 
     virtual UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) = 0;
     virtual void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) = 0;
+
+    /**
+     * @brief 把数据填入 handle（IN 应答数据准备，如虚拟设备的挂起-应答）
+     *
+     * 由 InEndpointChannel 等组件的应答路径调用：缓冲里的数据经此方法写入
+     * 私有 transfer（按 max_length 截断，实际填入量由 transfer 容量决定，
+     * 一般等于 min(data.size(), max_length)），并更新 actual_length。
+     * 调用者保证 handle 是本 operator 的 alloc_transfer_handle 创建的。
+     *
+     * 实现各自处理 transfer 内部结构（GenericTransfer 填 data vector，
+     * libusb_transfer 填 buffer），组件不假设字段。
+     *
+     * 默认空实现返回 0：仅 libusb 等不参与挂起-应答的 op 使用（它们的数据
+     * 路径不经过 InEndpointChannel）；需要真实填充的 op（如
+     * GenericTransferOperator）必须 override
+     *
+     * @return 实际填入字节数（默认实现 0）
+     */
+    virtual std::size_t set_transfer_data(void *handle, const data_type &data, std::size_t max_length) {
+        return 0;
+    }
+
+    /**
+     * @brief 从 handle 读出已接收的数据，追加到 out 末尾（OUT 数据消费）
+     *
+     * 由 OutEndpointChannel 等组件的消费路径调用：挂起的 OUT 请求在业务侧
+     * 取走时经此方法读出数据（追加写入，长度以实际接收为准）。
+     * 调用者保证 handle 是本 operator 的 alloc_transfer_handle 创建的。
+     *
+     * 默认实现置 supported=false（不参与挂起-消费，仅 libusb 等 op 使用）；
+     * 需要真实读取的 op（如 GenericTransferOperator）置 supported=true 并追加
+     *
+     * @param out 输出缓冲，数据追加到末尾
+     * @param supported 出参：本 op 是否支持读取
+     * @return 追加的字节数
+     */
+    virtual std::size_t get_transfer_data(void *handle, data_type &out, bool &supported) {
+        supported = false;
+        return 0;
+    }
 
     /**
      * @brief 发送传输数据（IN 方向：server → client）
@@ -105,6 +146,9 @@ public:
 
     UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) override;
     void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override;
+
+    std::size_t set_transfer_data(void *handle, const data_type &data, std::size_t max_length) override;
+    std::size_t get_transfer_data(void *handle, data_type &out, bool &supported) override;
 
     void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                             std::error_code &ec) override;

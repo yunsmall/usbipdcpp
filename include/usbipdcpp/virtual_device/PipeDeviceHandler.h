@@ -2,15 +2,16 @@
 
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
 
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/type.h"
-#include "usbipdcpp/utils/RingBuffer.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
+#include "usbipdcpp/virtual_device/OutEndpointChannel.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
@@ -135,29 +136,30 @@ private:
     // 接口 handler 转发入口（session receiver 线程调用）
     void on_pipe_in_request(std::uint8_t ep_addr, std::uint32_t seqnum, std::uint32_t length,
                             TransferHandle transfer);
-    void on_pipe_out_transfer(std::uint8_t ep_addr, std::uint32_t seqnum, std::uint32_t received_size,
-                              data_type &&data);
+    void on_pipe_out_transfer(std::uint8_t ep_addr, std::uint32_t seqnum, TransferHandle transfer);
     void on_pipe_control_request(const SetupPacket &setup, std::uint32_t seqnum,
                                  std::uint32_t transfer_buffer_length, TransferHandle transfer);
     void on_pipe_unlink(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
 
-    // 调用者必须已持有 pipe_mutex 和 requests_mutex
-    void try_send_pending_locked();
-    void send_from_fifo_locked(RingBuffer &fifo, std::uint32_t seqnum, std::uint32_t max_length,
-                               TransferHandle transfer);
+    /// 获取端点 IN 通道（懒创建：首次访问时按 fifo_capacity 建通道并绑定会话）。
+    /// 调用者必须已持有 pipe_mutex
+    ByteStreamInChannel &get_in_channel(std::uint8_t ep_addr);
 
-    // 保护 out_queue / in_fifos / disconnected
+    /// 获取端点 OUT 通道（懒创建：首次访问时绑定会话并重置断连状态）。
+    /// 调用者必须已持有 pipe_mutex
+    OutEndpointChannel &get_out_channel(std::uint8_t ep_addr);
+
+    // 保护 out_channels / in_channels / disconnected
     mutable std::mutex pipe_mutex;
-    std::condition_variable read_cv;  // out_queue 非空或断连
-    std::condition_variable write_cv; // in_fifo 腾出空间或断连
-    std::deque<PipeXfer> out_queue;
-    // 每端点 IN FIFO，键 = 端点地址（含方向位）；控制应答（ep==0）也走这里
-    std::unordered_map<std::uint8_t, RingBuffer> in_fifos;
+    // 任一 OUT 通道非空或断连（read 的等待条件）；入队/断连时 notify
+    std::condition_variable out_cv;
+    // 每端点 OUT 通道（NAK 背压），键 = 端点地址（含方向位）；控制请求
+    // （ep==0）也走这里。挂起的请求由 read() 取走时应答
+    std::map<std::uint8_t, OutEndpointChannel> out_channels;
+    // 每端点 IN 通道（字节流模式），键 = 端点地址（含方向位）；控制应答
+    // （ep==0）也走这里。挂起-应答/阻塞写在通道内部
+    std::unordered_map<std::uint8_t, ByteStreamInChannel> in_channels;
     bool disconnected = true;
-
-    // 保护 endpoint_requests
-    mutable std::mutex requests_mutex;
-    EndpointRequestQueue endpoint_requests; // 挂起的 IN 传输请求（含控制）
 
     std::size_t fifo_capacity = 64 * 1024;
 

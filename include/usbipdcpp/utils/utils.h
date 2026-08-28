@@ -9,6 +9,18 @@
 #include "usbipdcpp/type.h"
 
 namespace usbipdcpp {
+
+/**
+ * @brief 环形序号比较（RFC 1982，TCP 序号同款）：a 是否比 b 新
+ *
+ * uint32_t 的 seqnum 在长时间运行下会回绕（如内核 vhci 的全局递增
+ * seqnum），回绕后简单的 < 比较会取错顺序；本函数在比较距离 < 2^31
+ * 内判定可靠（参与比较的挂起请求数不可能达到这个量级）
+ */
+inline bool seqnum_newer(std::uint32_t a, std::uint32_t b) {
+    return static_cast<std::int32_t>(a - b) > 0;
+}
+
 inline void if_has_value_than_rethrow(std::exception_ptr e) {
     if (e)
         std::rethrow_exception(e);

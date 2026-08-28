@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "usbipdcpp/protocol.h"
+
 namespace usbipdcpp {
 
 /**
@@ -106,5 +108,8 @@ struct StorageIoTransfer {
         return static_cast<StorageIoTransfer *>(handle);
     }
 };
+
+// 传输对象类型必须满足 FromHandleTransfer 约束（同 protocol.h 里 GenericTransfer 的检查）
+static_assert(FromHandleTransfer<StorageIoTransfer, StorageIoTransfer>);
 
 } // namespace usbipdcpp

@@ -67,4 +67,8 @@ if (TARGET usbipdcpp_virtual_device)
     # IN 数据通道组件（挂起-应答模式）测试
     add_test_file(test_in_endpoint_channel)
     target_link_libraries(test_in_endpoint_channel PRIVATE usbipdcpp_virtual_device)
+
+    # OUT 数据通道组件（NAK 背压模式）测试
+    add_test_file(test_out_endpoint_channel)
+    target_link_libraries(test_out_endpoint_channel PRIVATE usbipdcpp_virtual_device)
 endif ()

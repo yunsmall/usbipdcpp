@@ -125,8 +125,6 @@ if (auto ec = server.start(endpoint); ec) {
 
 ## 方法一：PipeDeviceHandler（通用管道）
 
-## 方法一：PipeDeviceHandler（通用管道）
-
 `PipeDeviceHandler` 把设备实现成一组 FIFO：**不需要实现任何 USB 协议细节**，所有端点自动管道化，标准控制请求自动处理。业务代码只面对两个阻塞函数：
 
 ```cpp
@@ -254,7 +252,7 @@ pipe->set_standard_request_handler(std::move(handler));
 
 ## 方法二：继承 VirtualInterfaceHandler（完全自定义）
 
-需要实现类特定协议时，继承接口级 handler。先看继承关系：
+**这是实现自定义设备的推荐方式。** 需要实现类特定协议时，继承接口级 handler。先看继承关系：
 
 ```
 AbstInterfaceHandler
@@ -302,78 +300,74 @@ GET_REPORT/SET_REPORT 是 class 请求，由 `HidVirtualInterfaceHandler` 在这
 
 ### 核心机制：IN 数据面的「挂起-应答」模式
 
-USB 设备协议是**异步**的：主机发 IN 请求时设备可能没有数据，设备有数据时主机可能没在请求。基类提供了 `EndpointRequestQueue` 来管理这种错峰：
+USB 设备协议是**异步**的：主机发 IN 请求时设备可能没有数据，设备有数据时主机可能没在请求。库提供 `InEndpointChannel` 组件（`include/usbipdcpp/virtual_device/InEndpointChannel.h`）封装这种错峰：
 
 ```
 主机发 IN 请求（handle_bulk_transfer，ep 是 IN）
   ├─ 数据缓冲非空 → 立即填 transfer 回 RET_SUBMIT
-  └─ 无数据 → 请求挂进 endpoint_requests_（按端点排队），等数据
+  └─ 无数据 → 请求挂起（按端点排队），等数据
 
-业务线程产生数据（如发送线程）
-  ├─ 有挂起的请求 → 从队列取出应答（dequeue_any）
-  └─ 无挂起请求 → 数据进自己的缓冲，等主机下次请求
+业务线程产生数据（push / write）
+  ├─ 有挂起的请求 → 从队列取出应答
+  └─ 无挂起请求 → 数据进缓冲，等主机下次请求
 ```
+
+组件内部完成请求排队/应答、双锁（数据侧阻塞等空间时不占用请求队列锁）、断连
+清理与唤醒；数据填充走 `TransferHandle` 持有的 `TransferOperator::set_transfer_data`
+（组件不假设 transfer 内部结构，GenericTransfer / libusb 等任意实现都可以）。
+按消费语义分两种模式：
+
+| 模式 | 类 | 适用场景 | 生产数据入口 |
+|---|---|---|---|
+| 消息模式 | `MessageInChannel` | 一条数据 = 一个完整消息：HID 输入报告、UVC 状态通知 | `push(data)` 非阻塞，缓冲超上限丢最旧 |
+| 字节流模式 | `ByteStreamInChannel` | 数据是连续字节流按请求长度分片：CDC 数据接口、通用管道 | `write(data, timeout_ms)` 阻塞，缓冲满等宿主取走（对齐内核 FIFO） |
 
 **完整示例：一个回显接口 handler**（OUT 收什么，IN 还什么，顺带响应一个 vendor 控制请求）：
 
 ```cpp
-#include <deque>
-#include <mutex>
-#include <condition_variable>
-
 #include "usbipdcpp/Session.h"
-#include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 // 以上是接口 handler 类所需的 includes；整个程序还需要第一步的 includes
 // （StringPool / Device / Server）
 
 class EchoInterfaceHandler : public VirtualInterfaceHandler {
 public:
     EchoInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        VirtualInterfaceHandler(handle_interface, string_pool) {}
+        VirtualInterfaceHandler(handle_interface, string_pool) {
+        // 缓冲上限：主机长期不读时丢最旧保最新，防止内存无限增长
+        echo_channel.set_max_pending(1024);
+    }
 
-    // ===== OUT：主机发来数据 =====
+    // ===== 生命周期：会话绑定与断连清理（通道内部状态必须在这两个回调里维护） =====
+    void on_new_connection(Session &current_session, error_code &ec) override {
+        // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
+        VirtualInterfaceHandler::on_new_connection(current_session, ec);
+        echo_channel.bind_session(&current_session);
+        echo_channel.on_new_connection();
+    }
+
+    void on_disconnection(error_code &ec) override {
+        // 先清通道（缓冲 + 挂起请求，TransferHandle 析构时自动释放），再调父类清 session
+        echo_channel.on_disconnection();
+        VirtualInterfaceHandler::on_disconnection(ec);
+    }
+
+    // ===== 数据面 =====
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                               std::uint32_t transfer_buffer_length, TransferHandle transfer,
                               error_code &ec) override {
         if (ep.is_in()) {
-            // ===== IN：主机请求数据 =====
-            std::lock_guard lock(data_mutex_);
-            if (!pending_data_.empty()) {
-                // 有数据 → 立即应答
-                auto *trx = GenericTransfer::from_handle(transfer.get());
-                auto send_len = std::min(pending_data_.front().size(),
-                                         static_cast<std::size_t>(transfer_buffer_length));
-                trx->data.assign(pending_data_.front().begin(), pending_data_.front().begin() + send_len);
-                trx->actual_length = send_len;
-                pending_data_.pop_front();
-                session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
-            }
-            else {
-                // 无数据 → 请求挂起，等 send_data() 应答
-                endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-            }
+            // ===== IN：主机请求数据，全部交给通道（有数据立即应答，无数据挂起等 push） =====
+            echo_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
         }
         else {
-            // ===== OUT：取出主机数据，入队待回显 =====
+            // ===== OUT：取出主机数据 =====
             auto *trx = GenericTransfer::from_handle(transfer.get());
-            {
-                std::lock_guard lock(data_mutex_);
-                pending_data_.emplace_back(trx->data.begin(), trx->data.end());
-            }
-            // 先应答挂起的 IN 请求（可能已在等），再回 OUT 的完成
-            if (auto req_opt = endpoint_requests_.dequeue_any(); req_opt.has_value()) {
-                auto &[ep_addr, req] = req_opt.value();
-                auto *req_trx = GenericTransfer::from_handle(req.transfer.get());
-                auto &front = pending_data_.front();
-                auto send_len = std::min(front.size(), static_cast<std::size_t>(req.length));
-                req_trx->data.assign(front.begin(), front.begin() + send_len);
-                req_trx->actual_length = send_len;
-                pending_data_.pop_front();
-                session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
-            }
+            // 主机的 OUT 请求变成了设备要产生的数据，故需要通过 IN 请求发回
+            // （有挂起请求时通道直接应答）
+            echo_channel.push(data_type(trx->data.begin(), trx->data.end()));
             session->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
         }
@@ -400,28 +394,31 @@ public:
 
     // ===== UNLINK：主机取消挂起的传输 =====
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {
-        std::lock_guard lock(endpoint_requests_mutex_);
-        bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+        bool cancelled = echo_channel.cancel_pending(unlink_seqnum);
         session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
                 cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
     }
 
-    // ===== 断连清理 =====
-    void on_disconnection(error_code &ec) override {
-        {
-            std::lock_guard lock(endpoint_requests_mutex_);
-            endpoint_requests_.clear();  // TransferHandle 析构自动释放
-        }
-        VirtualInterfaceHandler::on_disconnection(ec);
-    }
-
 private:
-    std::mutex data_mutex_;
-    std::deque<data_type> pending_data_;  // 等待 IN 请求的数据（示例用最简容器）
+    // 回显通道（消息模式）：OUT 收到的数据经它发回，一条 OUT 数据 = 一条消息
+    MessageInChannel echo_channel;
 };
 ```
 
-> 注意：示例为讲清楚模式做了简化。实际项目中 `endpoint_requests_` 的操作要持 `endpoint_requests_mutex_`（基类成员），`send_input_report` 这种业务线程入口还要防止数据队列无限增长（参考 `HidVirtualInterfaceHandler::send_input_report` 的 `MAX_PENDING_INPUT_REPORTS` 上限）。示例的锁组合（`std::lock` 双锁）见 HID 实现。
+> 注意：
+> - **生命周期回调是必须的**：`on_new_connection` 里绑定会话并重置断连状态，
+>   `on_disconnection` 里清缓冲与挂起请求（漏掉会用悬垂 session 指针或残留
+>   上一会话的状态）
+> - 多端点场景：一个通道管一个端点（`on_in_request` 传端点地址，同端点的请求
+>   保持 FIFO 顺序），按端点懒建通道的参考见 `PipeDeviceHandler::get_in_channel`
+> - 字节流模式：把上面的 `MessageInChannel` 换成 `ByteStreamInChannel`、`push`
+>   换成 `write`（可带 `timeout_ms` 阻塞等宿主取走）即可。字节流还支持 pull
+>   模型：`set_pull_callback` 在 IN 请求到达且缓冲/队列全空时现场生成数据
+>   （CDC 数据接口的 `on_data_requested` 就是这个用途）。回调在锁内调用，
+>   回调里不要再调用本通道的写方法（会死锁）
+> - 完整参照：`src/virtual_device/HidVirtualInterfaceHandler.cpp`（消息模式 +
+>   push）、`src/virtual_device/CdcAcmVirtualInterfaceHandler.cpp`（字节流模式 +
+>   阻塞写 + pull）、`src/virtual_device/PipeDeviceHandler.cpp`（按端点懒建通道）
 
 ### 完整文件：绑定与使用
 
@@ -437,15 +434,13 @@ private:
 接口；数据面在接口 handler 内部，设备不需要业务线程）：
 
 ```cpp
-#include <deque>
-#include <mutex>
-
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 
 using namespace usbipdcpp;
 
@@ -481,8 +476,8 @@ int main() {
 |---|---|
 | `include/usbipdcpp/virtual_device/devices/KeyboardHandler.h` + 实现 | 继承 `HidVirtualInterfaceHandler` 的完整设备：报告描述符、报告数据面、LED 状态、`wait_for_client` |
 | `examples/mock_keyboard/mock_keyboard_main.cpp` | 上述 handler 的完整用法（含 `press_key` 业务线程） |
-| `src/virtual_device/HidVirtualInterfaceHandler.cpp` | 中断端点的挂起-应答 + `send_input_report` push 数据 + UNLINK，最干净的参照 |
-| `src/virtual_device/CdcAcmVirtualInterfaceHandler.cpp` | 多端点 + 阻塞写（`send_data_blocking` 两阶段模式），接口有 alt 时的样例 |
+| `src/virtual_device/HidVirtualInterfaceHandler.cpp` | 中断端点的挂起-应答（`MessageInChannel`）+ `send_input_report` push 数据 + UNLINK，最干净的参照 |
+| `src/virtual_device/CdcAcmVirtualInterfaceHandler.cpp` | 多端点 + 阻塞写（`ByteStreamInChannel`，缓冲满等宿主取走）+ pull 回调（`on_data_requested`），接口有 alt 时的样例 |
 | `src/virtual_device/PipeDeviceHandler.cpp` | 设备级聚合多个接口 handler 的样例（也证明了 handler 可以转发给设备级） |
 
 ## 两种方法对比
@@ -494,6 +489,13 @@ int main() {
 | 控制请求 | 标准请求自动处理；非标准的经 read() 透出 | 完全自己实现（可精确应答每种 class/vendor 请求） |
 | 典型用途 | 通用管道、串口转发、简单回显、HID 快速原型 | HID/UAC/UVC/MSC 等真实 USB 类、带状态协商的设备 |
 | 主机驱动 | 默认 vendor 类无驱动；需类描述符时手动 set_* | 接口 class 正确 + 类描述符齐全，主机驱动直接加载 |
+
+**怎么选：实现自定义设备推荐方法二（继承 `VirtualInterfaceHandler`）**。
+方法一适合「整设备就是一个字节管道」的场景（如把虚拟设备当文件读写），
+一旦要按端点区分语义、或实现特定 USB 类协议（HID 报告、CDC 控制线状态、
+UVC 流协商等），管道模型就不够用——方法二的回调里可以精确控制每个端点的
+行为，标准请求仍由库消化。项目内所有类设备（HID / CDC ACM / UVC）都是
+方法二实现，`PipeDeviceHandler` 本身也是通过内部接口 handler 走同一套回调。
 
 ## 验证
 

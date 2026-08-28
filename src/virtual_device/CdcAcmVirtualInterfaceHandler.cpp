@@ -267,32 +267,30 @@ void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unl
 
 CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
     VirtualInterfaceHandler(handle_interface, string_pool) {
+    // pull 回调：主机请求数据且缓冲/队列都空时调用子类的 on_data_requested
+    // 现场生成数据。通道在锁内调用（与原来 handle_bulk_transfer 的双锁内
+    // 调用语义一致），故回调里不能调用 send_data 等函数（会死锁）
+    tx_channel.set_pull_callback([this](std::uint32_t length) {
+        return on_data_requested(static_cast<std::uint16_t>(length));
+    });
 }
 
 void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+    // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
-    std::lock_guard lock(tx_mutex_);
-    disconnected_ = false;
+    tx_channel.bind_session(&current_session);
+    tx_channel.on_new_connection();
 }
 
 void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
-    {
-        std::lock_guard lock(tx_mutex_);
-        disconnected_ = true;
-        tx_buffer_.clear();
-    }
-    {
-        std::lock_guard lock(endpoint_requests_mutex_);
-        // TransferHandle 析构时会自动释放
-        endpoint_requests_.clear();
-    }
-    tx_cv_.notify_all();
+    // 先清通道（缓冲 + 挂起请求，TransferHandle 析构时自动释放；唤醒阻塞
+    // 的写者让它们按断连返回），再调父类清 session
+    tx_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(endpoint_requests_mutex_);
-    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    bool cancelled = tx_channel.cancel_pending(unlink_seqnum);
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
@@ -305,51 +303,9 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, cons
                                                       std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                                       std::error_code &ec) {
     if (ep.is_in()) {
-        // Bulk IN：主机请求数据
-        // 同时锁 tx_mutex_ 和 endpoint_requests_mutex_，避免竞态条件
-        std::lock(tx_mutex_, endpoint_requests_mutex_);
-        std::lock_guard lock1(tx_mutex_, std::adopt_lock);
-        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-        if (tx_buffer_.empty() && endpoint_requests_.empty(ep.address)) {
-            // 缓冲区空且没有队列中的请求，回调子类获取数据
-            auto data = on_data_requested(transfer_buffer_length);
-            if (!data.empty()) {
-                if (data.size() <= transfer_buffer_length) {
-                    auto *trx = GenericTransfer::from_handle(transfer.get());
-                    trx->data = std::move(data);
-                    trx->actual_length = trx->data.size();
-                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                            seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-                }
-                else {
-                    // 数据大于请求长度，移动整个data，发送部分，剩余写入缓冲区
-                    auto *trx = GenericTransfer::from_handle(transfer.get());
-                    trx->data = std::move(data);
-                    trx->actual_length = transfer_buffer_length;
-
-                    // 剩余数据写入缓冲区
-                    tx_buffer_.write(trx->data.data() + transfer_buffer_length,
-                                     trx->data.size() - transfer_buffer_length);
-
-                    // 截断到发送长度
-                    trx->data.resize(transfer_buffer_length);
-
-                    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                            seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-                }
-            }
-            else {
-                // 没有数据可发送，将请求加入队列
-                endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-            }
-        }
-        else {
-            // 缓冲区有数据或有队列中的请求，将请求加入队列
-            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-            // 尝试发送
-            try_send_pending_locked();
-        }
+        // Bulk IN：主机请求数据。通道内部处理：缓冲有数据立即应答，否则先
+        // pull（on_data_requested 现场生成），再不行挂起请求等待 send_data
+        tx_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
         // Bulk OUT：接收主机发来的数据，直接回调子类处理
@@ -390,45 +346,11 @@ void CdcAcmDataInterfaceHandler::on_rts_changed(bool rts) {
     // 默认空实现，子类可重写
 }
 
-// ===== 内部函数 =====
-
-void CdcAcmDataInterfaceHandler::send_from_tx_buffer_locked(std::uint32_t seqnum, std::uint32_t max_length,
-                                                            TransferHandle transfer) {
-    // 调用者必须已持有 tx_mutex_ 且确保 tx_buffer_ 不为空
-    // 从 TX 缓冲区读取数据发送
-    std::size_t send_len = std::min(tx_buffer_.size(), static_cast<std::size_t>(max_length));
-    auto *trx = GenericTransfer::from_handle(transfer.get());
-    trx->data.resize(send_len);
-    tx_buffer_.read(trx->data.data(), send_len);
-    trx->actual_length = send_len;
-
-    // 通知阻塞等待的发送者：缓冲区有空间了
-    tx_cv_.notify_one();
-
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-            seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-
-    // 检查低水位线
-    if (tx_buffer_.size() <= tx_low_watermark_) {
-        // 可在此通知子类或设置 CTS
-    }
-}
-
 // ===== send_data 实现 =====
 
 std::size_t CdcAcmDataInterfaceHandler::send_data(const std::uint8_t *data, std::size_t size) {
-    // 同时锁两个 mutex
-    std::lock(tx_mutex_, endpoint_requests_mutex_);
-    std::lock_guard lock1(tx_mutex_, std::adopt_lock);
-    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-    // 写入 TX 缓冲区（非阻塞，满时只写入可用空间）
-    std::size_t written = tx_buffer_.write(data, size);
-
-    // 尝试发送等待的数据（已持有两个 mutex）
-    try_send_pending_locked();
-
-    return written;
+    // 非阻塞写入通道（满时只写入可用空间，断连返回 0），内部会应答挂起请求
+    return tx_channel.write_nb(data, size);
 }
 
 std::size_t CdcAcmDataInterfaceHandler::send_data(const data_type &data) {
@@ -445,70 +367,8 @@ std::size_t CdcAcmDataInterfaceHandler::send_data(std::string_view data) {
 
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const std::uint8_t *data, std::size_t size,
                                                            std::uint32_t timeout_ms) {
-    std::size_t total_written = 0;
-    std::size_t offset = 0;
-
-    while (offset < size) {
-        // 阶段1：等待缓冲区有空间
-        {
-            std::unique_lock tx_lock(tx_mutex_);
-
-            // 检查是否已断开连接
-            if (disconnected_) {
-                return total_written;
-            }
-
-            // 如果缓冲区满，先尝试发送
-            if (tx_buffer_.available() == 0) {
-                // 锁队列并发送
-                {
-                    std::lock_guard queue_lock(endpoint_requests_mutex_);
-                    try_send_pending_locked();
-                }
-
-                // 再次检查断开连接
-                if (disconnected_) {
-                    return total_written;
-                }
-
-                // 如果仍然满，等待条件变量
-                while (tx_buffer_.available() == 0 && !disconnected_) {
-                    if (timeout_ms == 0) {
-                        // 无限等待
-                        tx_cv_.wait(tx_lock);
-                    }
-                    else {
-                        // 带超时等待
-                        auto result = tx_cv_.wait_for(tx_lock, std::chrono::milliseconds(timeout_ms));
-                        if (result == std::cv_status::timeout) {
-                            // 超时，返回已写入量
-                            return total_written;
-                        }
-                    }
-                }
-
-                // 被唤醒后检查是否断开
-                if (disconnected_) {
-                    return total_written;
-                }
-            }
-
-            // 写入数据
-            std::size_t written = tx_buffer_.write(data + offset, size - offset);
-            total_written += written;
-            offset += written;
-        }
-
-        // 阶段2：尝试发送（锁两个 mutex）
-        {
-            std::lock(tx_mutex_, endpoint_requests_mutex_);
-            std::lock_guard lock1(tx_mutex_, std::adopt_lock);
-            std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-            try_send_pending_locked();
-        }
-    }
-
-    return total_written;
+    // 阻塞写入通道：缓冲满时等待宿主取走（timeout_ms=0 无限等），断连返回已写入量
+    return tx_channel.write(data, size, timeout_ms);
 }
 
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const data_type &data, std::uint32_t timeout_ms) {
@@ -526,8 +386,8 @@ std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(std::string_view data
 // ===== 缓冲区配置 =====
 
 void CdcAcmDataInterfaceHandler::set_tx_buffer_capacity(std::size_t capacity) {
-    std::lock_guard lock(tx_mutex_);
-    tx_buffer_.resize(capacity);
+    // 通道内部锁保护缓冲；水位线随容量联动（默认 3/4 与 1/4）
+    tx_channel.set_capacity(capacity);
     tx_high_watermark_ = capacity * 3 / 4;
     tx_low_watermark_ = capacity / 4;
 }
@@ -538,13 +398,11 @@ void CdcAcmDataInterfaceHandler::set_tx_watermarks(std::size_t high, std::size_t
 }
 
 std::size_t CdcAcmDataInterfaceHandler::get_tx_buffer_size() const {
-    std::lock_guard lock(tx_mutex_);
-    return tx_buffer_.size();
+    return tx_channel.size();
 }
 
 std::size_t CdcAcmDataInterfaceHandler::get_tx_buffer_available() const {
-    std::lock_guard lock(tx_mutex_);
-    return tx_buffer_.available();
+    return tx_channel.available();
 }
 
 // ===== 流控状态 =====
@@ -565,22 +423,6 @@ bool CdcAcmDataInterfaceHandler::get_rts() const {
 
 void CdcAcmDataInterfaceHandler::set_comm_handler(CdcAcmCommunicationInterfaceHandler *handler) {
     comm_handler_ = handler;
-}
-
-void CdcAcmDataInterfaceHandler::try_send_pending_locked() {
-    // 调用者必须已持有 tx_mutex_ 和 endpoint_requests_mutex_
-
-    // 检查是否有队列中的请求且有数据可发
-    while (!tx_buffer_.empty()) {
-        auto req_opt = endpoint_requests_.dequeue_any();
-        if (!req_opt.has_value()) {
-            break;
-        }
-
-        auto &[ep_addr, req] = req_opt.value();
-        // 从缓冲区读取并发送
-        send_from_tx_buffer_locked(req.seqnum, req.length, std::move(req.transfer));
-    }
 }
 
 // ==================== CdcAcmDataInterfaceHandler 默认实现 ====================

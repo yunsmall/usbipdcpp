@@ -1,7 +1,5 @@
 #include "usbipdcpp/virtual_device/HidVirtualInterfaceHandler.h"
 
-#include <algorithm>
-
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
@@ -15,30 +13,12 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(std::uint3
     if (ep.is_in()) {
         // 中断 IN：主机请求输入报告
         // 先让子类现场生成报告（pull 模型），子类可调用 send_input_report()
-        // 将数据推入 pending_input_reports_，后续走正常 push 流程
+        // 将数据推入通道，后续走正常 push 流程。
+        // 必须在锁外调用：子类实现里可能调用 send_input_report()
         on_input_report_requested(transfer_buffer_length);
 
-
-        // 同时锁两个 mutex，避免竞态条件
-        std::lock(input_mutex_, endpoint_requests_mutex_);
-        std::lock_guard lock1(input_mutex_, std::adopt_lock);
-        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-        // 如果队列空且有待发送的报告，立即响应
-        if (endpoint_requests_.empty(ep.address) && !pending_input_reports_.empty()) {
-            auto &front_report = pending_input_reports_.front();
-            auto *trx = GenericTransfer::from_handle(transfer.get());
-            auto send_len = std::min(front_report.size(), static_cast<std::size_t>(transfer_buffer_length));
-            trx->data.assign(front_report.begin(), front_report.begin() + send_len);
-            trx->actual_length = send_len;
-            pending_input_reports_.pop_front();
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                    seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
-        }
-        else {
-            // 将请求加入队列，等待 send_input_report() 响应
-            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-        }
+        // 通道内部处理：缓冲有报告立即应答，否则挂起请求等待 send_input_report()
+        input_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
         // 中断 OUT：主机发送输出报告
@@ -55,36 +35,10 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(std::uint3
 // ========== 发送输入报告 ==========
 
 void usbipdcpp::HidVirtualInterfaceHandler::send_input_report(asio::const_buffer data) {
-    // 同时锁两个 mutex
-    std::lock(input_mutex_, endpoint_requests_mutex_);
-    std::lock_guard lock1(input_mutex_, std::adopt_lock);
-    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-    // 从任何有请求的端点出队
-    auto req_opt = endpoint_requests_.dequeue_any();
-
-    if (req_opt.has_value()) {
-        // 有队列中的请求，响应它
-        auto &[ep_addr, req] = req_opt.value();
-
-        auto *trx = GenericTransfer::from_handle(req.transfer.get());
-        auto send_len = std::min(data.size(), static_cast<std::size_t>(req.length));
-        trx->data.assign(static_cast<const std::uint8_t *>(data.data()),
-                         static_cast<const std::uint8_t *>(data.data()) + send_len);
-        trx->actual_length = send_len;
-
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
-    }
-    else {
-        // 没有请求，将报告加入队列等待。
-        // 队列超限时丢最旧（主机长期不读中断 IN 时防止内存无限增长）
-        if (pending_input_reports_.size() >= MAX_PENDING_INPUT_REPORTS) {
-            pending_input_reports_.pop_front();
-        }
-        pending_input_reports_.emplace_back(static_cast<const std::uint8_t *>(data.data()),
-                                            static_cast<const std::uint8_t *>(data.data()) + data.size());
-    }
+    // 推入通道：有挂起请求直接应答，否则入缓冲等待（超上限丢最旧，见
+    // MAX_PENDING_INPUT_REPORTS）
+    input_channel.push(data_type(static_cast<const std::uint8_t *>(data.data()),
+                                 static_cast<const std::uint8_t *>(data.data()) + data.size()));
 }
 
 // ========== 回调默认实现 ==========
@@ -99,16 +53,16 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::cons
 
 // ========== 连接生命周期 ==========
 
+void usbipdcpp::HidVirtualInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+    // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    input_channel.bind_session(&current_session);
+    input_channel.on_new_connection();
+}
+
 void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec) {
-    {
-        std::lock_guard lock(input_mutex_);
-        pending_input_reports_.clear();
-    }
-    {
-        std::lock_guard lock(endpoint_requests_mutex_);
-        // TransferHandle 析构时会自动释放
-        endpoint_requests_.clear();
-    }
+    // 先清通道（缓冲 + 挂起请求，TransferHandle 析构时自动释放），再调父类清 session
+    input_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
@@ -116,8 +70,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec
 
 void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum,
                                                                  std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(endpoint_requests_mutex_);
-    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    bool cancelled = input_channel.cancel_pending(unlink_seqnum);
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c（priv->unlinking 时 RET_UNLINK 带 urb->status=-ECONNRESET，

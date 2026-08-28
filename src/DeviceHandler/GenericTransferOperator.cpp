@@ -1,5 +1,7 @@
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 
+#include <algorithm>
+
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/utils/SmallVector.h"
 
@@ -21,6 +23,22 @@ void GenericTransferOperator::free_transfer_handle(void *handle) {
 
 std::size_t GenericTransferOperator::get_actual_length(void *handle) {
     return GenericTransfer::from_handle(handle)->actual_length;
+}
+
+std::size_t GenericTransferOperator::set_transfer_data(void *handle, const data_type &data, std::size_t max_length) {
+    auto *trx = GenericTransfer::from_handle(handle);
+    auto send_len = std::min(data.size(), max_length);
+    trx->data.assign(data.begin(), data.begin() + send_len);
+    trx->actual_length = send_len;
+    return send_len;
+}
+
+std::size_t GenericTransferOperator::get_transfer_data(void *handle, data_type &out, bool &supported) {
+    // OUT 已接收数据追加到 out 末尾（调用方决定怎么消费）
+    auto *trx = GenericTransfer::from_handle(handle);
+    supported = true;
+    out.insert(out.end(), trx->data.begin(), trx->data.end());
+    return trx->data.size();
 }
 
 UsbIpIsoPacketDescriptor GenericTransferOperator::get_iso_descriptor(void *handle, int index) {

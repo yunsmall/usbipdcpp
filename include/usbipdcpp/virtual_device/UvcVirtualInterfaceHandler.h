@@ -7,6 +7,7 @@
 #include "usbipdcpp/Export.h"
 #include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/video_sources/VideoSource.h"
 
@@ -73,6 +74,7 @@ public:
     std::uint16_t request_get_status(std::uint32_t *p_status) override;
     std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
+    void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
@@ -89,8 +91,13 @@ private:
     bool power_on_ = true;
     UvcVideoStreamingHandler *vs_handler_ = nullptr;
 
-    std::deque<data_type> pending_status_;
-    mutable std::mutex status_mutex_;
+    /**
+     * @brief 状态通知通道（消息模式，中断 IN 端点）
+     *
+     * 封装「挂起-应答」：主机中断 IN 请求先挂起，send_vc_status() 推入
+     * 状态事件时匹配应答（UVC 1.5 状态通知，6 字节）
+     */
+    MessageInChannel status_channel;
 };
 
 /// VideoStreaming 接口处理器 — PROBE/COMMIT + ISO 流推送

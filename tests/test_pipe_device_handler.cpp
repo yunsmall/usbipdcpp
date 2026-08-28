@@ -74,6 +74,59 @@ PipeFixture make_pipe_device(StringPool &string_pool) {
     return {device, pipe.get()};
 }
 
+// 构造双 OUT 端点管道设备（bulk IN 0x81 + bulk OUT 0x02/0x04），
+// 用于验证 read 的跨端点全局顺序
+PipeFixture make_pipe_device_two_out(StringPool &string_pool) {
+    std::vector<UsbInterface> interfaces = {
+            UsbInterface{
+                    .interface_class = 0xFF,
+                    .interface_subclass = 0x00,
+                    .interface_protocol = 0x00,
+                    .endpoints = {{
+                            UsbEndpoint{
+                                    .address = 0x81, // IN
+                                    .attributes = 0x02,
+                                    .max_packet_size = 64,
+                                    .interval = 0,
+                            },
+                            UsbEndpoint{
+                                    .address = 0x02, // OUT
+                                    .attributes = 0x02,
+                                    .max_packet_size = 64,
+                                    .interval = 0,
+                            },
+                            UsbEndpoint{
+                                    .address = 0x04, // OUT
+                                    .attributes = 0x02,
+                                    .max_packet_size = 64,
+                                    .interval = 0,
+                            },
+                    }},
+            },
+    };
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+            .path = "/test/mock_pipe_two_out",
+            .busid = "1-1",
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+            .vendor_id = 0x1234,
+            .product_id = 0x5690,
+            .device_bcd = 0x0100,
+            .device_class = 0x00,
+            .device_subclass = 0x00,
+            .device_protocol = 0x00,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+    });
+    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    pipe->setup_interface_handlers();
+    return {device, pipe.get()};
+}
+
 // 发送 import 请求并读完回复（含设备描述符），返回回复中的 status；任何错误返回最大值
 std::uint32_t import_device(asio::ip::tcp::socket &client, const std::string &busid) {
     UsbIpCommand::OpReqImport req{.status = 0, .busid = {}};
@@ -221,6 +274,55 @@ TEST(TestPipeDeviceHandler, OutDataReachesRead) {
     EXPECT_EQ(xfer.ep, 0x02);
     EXPECT_FALSE(xfer.setup_req.has_value());
     EXPECT_EQ(xfer.data, payload);
+
+    client.close();
+    ASSERT_TRUE(wait_sessions_gone(server));
+    server.stop();
+}
+
+TEST(TestPipeDeviceHandler, ReadPreservesGlobalRequestOrderAcrossEndpoints) {
+    // 跨端点按主机请求的全局到达顺序返回（seqnum 序），不是按端点号：
+    // 发 ep2(seq 1) → ep4(seq 2) → ep2(seq 3)，read 必须按 1、2、3 取回
+    asio::io_context io;
+    asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
+
+    StringPool string_pool;
+    auto fixture = make_pipe_device_two_out(string_pool);
+    usbipdcpp::Server server;
+    server.add_device(std::move(fixture.device));
+
+    ASSERT_FALSE(server.start(ep));
+    asio::ip::tcp::socket client(io);
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
+    ASSERT_EQ(import_device(client, "1-1"), 0u);
+
+    // 业务线程阻塞读 3 条
+    std::vector<PipeXfer> got;
+    std::thread reader([&]() {
+        for (int i = 0; i < 3; i++) {
+            PipeXfer xfer;
+            if (fixture.pipe->read(xfer, 2000)) {
+                got.push_back(std::move(xfer));
+            }
+        }
+    });
+
+    // 交错发：ep 0x02 → ep 0x04 → ep 0x02
+    send_cmd_submit(client, 1, 0x02, UsbIpDirection::Out, 1, {}, {0x01});
+    EXPECT_EQ(read_ret_submit(client, false).seqnum, 1u);
+    send_cmd_submit(client, 2, 0x04, UsbIpDirection::Out, 1, {}, {0x02});
+    EXPECT_EQ(read_ret_submit(client, false).seqnum, 2u);
+    send_cmd_submit(client, 3, 0x02, UsbIpDirection::Out, 1, {}, {0x03});
+    EXPECT_EQ(read_ret_submit(client, false).seqnum, 3u);
+
+    reader.join();
+    ASSERT_EQ(got.size(), 3u);
+    EXPECT_EQ(got[0].ep, 0x02);
+    EXPECT_EQ(got[0].data, (data_type{0x01}));
+    EXPECT_EQ(got[1].ep, 0x04);
+    EXPECT_EQ(got[1].data, (data_type{0x02}));
+    EXPECT_EQ(got[2].ep, 0x02);
+    EXPECT_EQ(got[2].data, (data_type{0x03}));
 
     client.close();
     ASSERT_TRUE(wait_sessions_gone(server));
