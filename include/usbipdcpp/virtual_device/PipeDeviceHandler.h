@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -15,11 +16,37 @@
 
 namespace usbipdcpp {
 
+class PipeDeviceHandler;
+
 /// read() 返回的一次传输（对齐 VirtualUSBDevice::Xfer / FunctionFS SETUP 事件）
 struct PipeXfer {
     std::uint8_t ep = 0;                  // 端点地址（含方向位）；控制请求时为 0
     std::optional<SetupPacket> setup_req; // 仅控制请求（ep==0）时有效
     data_type data;                       // OUT 数据或控制请求数据
+};
+
+/// 标准请求行为回调（接口/端点 recipient 的标准控制请求解析后转发到这里，
+/// 通过 *p_status 应答（0=成功），需要时可访问 pipe 的公开 API。
+/// 不设置的回调使用默认行为：接受并回成功（SET_INTERFACE 只接受接口定义里
+/// 存在的 alt，其余回 EPIPE）。回调在 session receiver 线程调用，必须在
+/// 连接前设置，连接后不要修改
+struct PipeStandardRequestHandler {
+    std::function<void(PipeDeviceHandler &pipe, std::uint16_t feature_selector, std::uint32_t *p_status)>
+            clear_feature;
+    std::function<void(PipeDeviceHandler &pipe, std::uint16_t feature_selector, std::uint8_t ep_address,
+                       std::uint32_t *p_status)>
+            endpoint_clear_feature;
+    std::function<std::uint8_t(PipeDeviceHandler &pipe, std::uint32_t *p_status)> get_interface;
+    std::function<void(PipeDeviceHandler &pipe, std::uint16_t alternate_setting, std::uint32_t *p_status)>
+            set_interface;
+    std::function<std::uint16_t(PipeDeviceHandler &pipe, std::uint32_t *p_status)> get_status;
+    std::function<std::uint16_t(PipeDeviceHandler &pipe, std::uint8_t ep_address, std::uint32_t *p_status)>
+            endpoint_get_status;
+    std::function<void(PipeDeviceHandler &pipe, std::uint16_t feature_selector, std::uint32_t *p_status)>
+            set_feature;
+    std::function<void(PipeDeviceHandler &pipe, std::uint16_t feature_selector, std::uint8_t ep_address,
+                       std::uint32_t *p_status)>
+            endpoint_set_feature;
 };
 
 /**
@@ -28,13 +55,32 @@ struct PipeXfer {
  * - read() 阻塞等待一个 OUT 传输或非标准控制请求（class/vendor setup）
  * - write() 把数据写入指定 IN 端点的 FIFO，FIFO 满时阻塞等待宿主取走
  *
+ * 本类是为匹配内核 gadget 模式（FunctionFS）专门创建的：业务层像读写文件
+ * 一样操作设备，标准请求由框架消化、行为可通过 set_standard_request_handler
+ * 回调调整，非标准请求经 read() 透出。但通用管道模式难以覆盖全部自定义
+ * 写法（每端点的独立语义、复杂类协议的协商等），需要实现特定 USB 类或
+ * 复杂控制协议的设备，建议改用继承 VirtualInterfaceHandler 的方式实现
+ * （见 docs/custom-device.md 方法二）。
+ *
  * 用法：照 mock_keyboard 方式组 UsbDevice 描述符，with_handler 绑定本类，
  * setup_interface_handlers 后业务线程直接 read/write。
  */
-class USBIPDCPP_API PipeDeviceHandler : public SimpleVirtualDeviceHandler {
+class USBIPDCPP_API PipeDeviceHandler final : public SimpleVirtualDeviceHandler {
 public:
     PipeDeviceHandler(UsbDevice &handle_device, StringPool &string_pool);
-    // 构造时自动给每个接口绑定内部管道接口 handler
+    // 内部管道接口 handler 的绑定在 setup_interface_handlers 里完成（见其声明）
+
+    // ===== 标准请求行为配置 =====
+
+    /**
+     * @brief 设置接口/端点 recipient 的标准请求行为回调
+     * @param handler 回调结构体（只设置需要改行为的成员，未设置的保持默认
+     * 行为）。回调在 session receiver 线程调用，必须在连接前设置，连接后
+     * 不要修改
+     */
+    void set_standard_request_handler(PipeStandardRequestHandler handler) {
+        standard_request_handler = std::move(handler);
+    }
 
     // ===== 数据面 API（阻塞语义对齐内核 FIFO，read/write 对称走 PipeXfer）=====
 
@@ -77,6 +123,9 @@ public:
 
     // ========== 连接生命周期 ==========
 
+    /// 接口 handler 需要持有本对象指针，只能在对象完整构造后创建，故在 setup 阶段补建
+    void setup_interface_handlers() override;
+
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
 
@@ -115,6 +164,9 @@ private:
     // 自定义描述符（连接前设置，运行时只读，无需加锁）
     data_type class_specific_descriptor;
     std::unordered_map<std::uint8_t, data_type> custom_descriptors;
+
+    // 标准请求行为回调（连接前设置，运行时只读，无需加锁）
+    PipeStandardRequestHandler standard_request_handler;
 };
 
 } // namespace usbipdcpp

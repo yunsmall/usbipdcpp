@@ -62,6 +62,17 @@ int main(int argc, char **argv) {
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
     auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+
+    // 标准请求行为配置（可选，默认行为：接受存在的 alt、其余回错误）：
+    // 演示拒绝接口级 SET_FEATURE——本设备（vendor 管道）不支持任何接口级
+    // feature，回错误比假装成功清晰。必须在连接前设置
+    PipeStandardRequestHandler req_handler;
+    req_handler.set_feature = [](PipeDeviceHandler &pipe, std::uint16_t feature_selector,
+                                 std::uint32_t *p_status) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    };
+    pipe->set_standard_request_handler(std::move(req_handler));
+
     pipe->setup_interface_handlers();
 
     Server server;

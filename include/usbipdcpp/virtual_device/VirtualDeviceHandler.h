@@ -51,9 +51,10 @@ public:
 
     /**
      * @brief 设置所有接口 handler 的 device_handler 指针
-     * @note 应在创建完 UsbDevice 并设置好所有接口 handler 之后调用
+     * @note 应在创建完 UsbDevice 并设置好所有接口 handler 之后调用。
+     * 设为 virtual：子类重写后能自定义初始化 interface_handlers 的流程
      */
-    void setup_interface_handlers();
+    virtual void setup_interface_handlers();
 
 protected:
     void change_device_ep0_max_size_by_speed();

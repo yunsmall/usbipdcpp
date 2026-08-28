@@ -47,8 +47,4 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
     session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
-data_type VirtualInterfaceHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                                          std::uint16_t descriptor_length, std::uint32_t *p_status) {
-    *p_status = static_cast<uint32_t>(UrbStatusType::StatusEPIPE);
-    return {};
-}
+// 标准请求回调的默认实现在头文件内联（都很简单，头文件即文档），cpp 只保留数据面

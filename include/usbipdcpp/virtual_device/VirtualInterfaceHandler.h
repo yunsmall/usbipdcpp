@@ -157,7 +157,7 @@ public:
         session = nullptr;
     }
 
-    // ========== 内部实现（子类无需关心） ==========
+    // ========== 数据面回调（默认回 EPIPE，功能设备必须重写） ==========
 
     virtual void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                       std::uint32_t transfer_buffer_length, TransferHandle transfer, error_code &ec);
@@ -179,17 +179,42 @@ public:
                                                                           const SetupPacket &setup,
                                                                           TransferHandle transfer, std::error_code &ec);
 
-    // ========== 子类必须实现的虚函数 ==========
+    // ========== 标准请求回调（默认实现：接受并回成功，子类按需重写）==========
+    // 默认实现都很简单，放头文件内联：头文件即文档，子类无需跳去 cpp 看默认行为
 
-    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
+    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+        *p_status = 0;
+    }
     virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                std::uint32_t *p_status) = 0;
+                                                std::uint32_t *p_status) {
+        *p_status = 0;
+    }
 
-    virtual std::uint8_t request_get_interface(std::uint32_t *p_status) = 0;
-    virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) = 0;
+    virtual std::uint8_t request_get_interface(std::uint32_t *p_status) {
+        // 返回当前 alternate setting（设备级在 SET_INTERFACE 成功时已更新）
+        *p_status = 0;
+        return handle_interface.current_altsetting;
+    }
+    virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+        // 只接受设备定义里存在的 alt（endpoints 外层下标即 alt 号）：请求不存在的
+        // alt 回 EPIPE，否则 GET_INTERFACE 返回的值与端点集合不一致（假装成功
+        // 会让主机驱动读到矛盾的接口状态）
+        if (alternate_setting < handle_interface.endpoints.size()) {
+            *p_status = 0;
+        }
+        else {
+            *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        }
+    }
 
-    virtual std::uint16_t request_get_status(std::uint32_t *p_status) = 0;
-    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) = 0;
+    virtual std::uint16_t request_get_status(std::uint32_t *p_status) {
+        *p_status = 0;
+        return 0;
+    }
+    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
+        *p_status = 0;
+        return 0;
+    }
 
     /**
      * @brief this function is not necessary for all device,
@@ -201,11 +226,18 @@ public:
      * @return
      */
     virtual data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
-                                             std::uint16_t descriptor_length, std::uint32_t *p_status);
+                                             std::uint16_t descriptor_length, std::uint32_t *p_status) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {};
+    }
 
-    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
+    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+        *p_status = 0;
+    }
     virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                              std::uint32_t *p_status) = 0;
+                                              std::uint32_t *p_status) {
+        *p_status = 0;
+    }
 
     /**
      * @brief Only use for isochronous transfer, so give a default empty implement.
@@ -218,7 +250,10 @@ public:
     }
 
 
-    [[nodiscard]] virtual data_type get_class_specific_descriptor() = 0;
+    /// 类描述符（挂在配置描述符的接口描述符之后），默认空表示没有类描述符
+    [[nodiscard]] virtual data_type get_class_specific_descriptor() {
+        return {};
+    }
 
     /**
      * @brief class-specific 描述符是否放在所有 alternate setting 之后

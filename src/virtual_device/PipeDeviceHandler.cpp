@@ -55,42 +55,74 @@ public:
         pipe->on_pipe_unlink(unlink_seqnum, cmd_seqnum);
     }
 
-    // ========== 标准请求默认实现（无操作应答，对齐 CdcAcm 数据接口惯例） ==========
+    // ========== 标准请求回调（未设置的回调用基类默认行为：接受并回成功）==========
 
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (pipe->standard_request_handler.clear_feature) {
+            pipe->standard_request_handler.clear_feature(*pipe, feature_selector, p_status);
+        }
+        else {
+            VirtualInterfaceHandler::request_clear_feature(feature_selector, p_status);
+        }
     }
 
     void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                         std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (pipe->standard_request_handler.endpoint_clear_feature) {
+            pipe->standard_request_handler.endpoint_clear_feature(*pipe, feature_selector, ep_address, p_status);
+        }
+        else {
+            VirtualInterfaceHandler::request_endpoint_clear_feature(feature_selector, ep_address, p_status);
+        }
     }
 
     std::uint8_t request_get_interface(std::uint32_t *p_status) override {
-        return 0;
+        if (pipe->standard_request_handler.get_interface) {
+            return pipe->standard_request_handler.get_interface(*pipe, p_status);
+        }
+        return VirtualInterfaceHandler::request_get_interface(p_status);
     }
 
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override {
-        if (alternate_setting != 0) {
-            *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (pipe->standard_request_handler.set_interface) {
+            pipe->standard_request_handler.set_interface(*pipe, alternate_setting, p_status);
+        }
+        else {
+            VirtualInterfaceHandler::request_set_interface(alternate_setting, p_status);
         }
     }
 
     std::uint16_t request_get_status(std::uint32_t *p_status) override {
-        return 0;
+        if (pipe->standard_request_handler.get_status) {
+            return pipe->standard_request_handler.get_status(*pipe, p_status);
+        }
+        return VirtualInterfaceHandler::request_get_status(p_status);
     }
 
     std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override {
-        return 0;
+        if (pipe->standard_request_handler.endpoint_get_status) {
+            return pipe->standard_request_handler.endpoint_get_status(*pipe, ep_address, p_status);
+        }
+        return VirtualInterfaceHandler::request_endpoint_get_status(ep_address, p_status);
     }
 
     void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (pipe->standard_request_handler.set_feature) {
+            pipe->standard_request_handler.set_feature(*pipe, feature_selector, p_status);
+        }
+        else {
+            VirtualInterfaceHandler::request_set_feature(feature_selector, p_status);
+        }
     }
 
     void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                       std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        if (pipe->standard_request_handler.endpoint_set_feature) {
+            pipe->standard_request_handler.endpoint_set_feature(*pipe, feature_selector, ep_address, p_status);
+        }
+        else {
+            VirtualInterfaceHandler::request_endpoint_set_feature(feature_selector, ep_address, p_status);
+        }
     }
 
     [[nodiscard]] data_type get_class_specific_descriptor() override {
@@ -133,11 +165,17 @@ private:
 
 PipeDeviceHandler::PipeDeviceHandler(UsbDevice &handle_device, StringPool &string_pool) :
     SimpleVirtualDeviceHandler(handle_device, string_pool) {
-    // 给每个接口自动绑定管道接口 handler：接口内所有端点自动管道化，
-    // 非标准控制请求（class/vendor）也统一转给 read()
+}
+
+void PipeDeviceHandler::setup_interface_handlers() {
+    // 强制所有接口都改为管道接口 handler：数据面/标准请求统一走管道转发
+    // （read/write 拿到全部端点数据流），不允许混合使用其他接口 handler，
+    // 否则 read/write 会漏掉部分端点。创建放在这个阶段而不是构造函数里，
+    // 因为接口 handler 持有本对象指针，需等对象完整构造
     for (auto &intf: handle_device.interfaces) {
         intf.with_handler<PipeInterfaceHandler>(string_pool, this);
     }
+    VirtualDeviceHandler::setup_interface_handlers();
 }
 
 bool PipeDeviceHandler::read(PipeXfer &xfer, std::uint32_t timeout_ms) {
