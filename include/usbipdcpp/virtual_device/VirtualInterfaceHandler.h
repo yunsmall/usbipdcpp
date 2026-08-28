@@ -8,112 +8,11 @@
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/InterfaceHandler/InterfaceHandler.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 
 namespace usbipdcpp {
 
 class VirtualDeviceHandler;
-
-/**
- * @brief 端点请求队列，按端点地址管理传输请求（纯数据容器，不加锁）
- *
- * 用于管理每个端点的待处理 IN 传输请求。
- * 注意：所有方法都不加锁，调用者需自行管理互斥锁。
- */
-class EndpointRequestQueue {
-public:
-    struct Request {
-        std::uint32_t seqnum;
-        std::uint32_t length;
-        TransferHandle transfer;
-    };
-
-    /**
-     * @brief 向指定端点入队请求
-     * @note 调用者需已持有互斥锁
-     */
-    void enqueue(std::uint8_t ep_address, Request request) {
-        queues_[ep_address].push_back(std::move(request));
-    }
-
-    /**
-     * @brief 从指定端点出队请求
-     * @note 调用者需已持有互斥锁
-     */
-    std::optional<Request> dequeue(std::uint8_t ep_address) {
-        auto it = queues_.find(ep_address);
-        if (it == queues_.end() || it->second.empty()) {
-            return std::nullopt;
-        }
-        auto req = std::move(it->second.front());
-        it->second.pop_front();
-        return req;
-    }
-
-    /**
-     * @brief 从任何有请求的端点出队请求（返回端点地址和请求）
-     * @return pair<端点地址, 请求>，如果所有队列都为空返回 nullopt
-     * @note 调用者需已持有互斥锁
-     */
-    std::optional<std::pair<std::uint8_t, Request>> dequeue_any() {
-        for (auto &[ep, queue]: queues_) {
-            if (!queue.empty()) {
-                auto req = std::move(queue.front());
-                queue.pop_front();
-                return std::make_pair(ep, std::move(req));
-            }
-        }
-        return std::nullopt;
-    }
-
-    /**
-     * @brief 获取指定端点队列的首个请求（不出队）
-     * @note 调用者需已持有互斥锁
-     */
-    Request *peek(std::uint8_t ep_address) {
-        auto it = queues_.find(ep_address);
-        if (it == queues_.end() || it->second.empty()) {
-            return nullptr;
-        }
-        return &it->second.front();
-    }
-
-    /**
-     * @brief 检查指定端点队列是否为空
-     * @note 调用者需已持有互斥锁
-     */
-    bool empty(std::uint8_t ep_address) const {
-        auto it = queues_.find(ep_address);
-        return it == queues_.end() || it->second.empty();
-    }
-
-    /**
-     * @brief 按 seqnum 取消请求（用于 UNLINK）
-     * @return 如果找到并移除了请求返回 true
-     * @note 调用者需已持有互斥锁
-     */
-    bool cancel_by_seqnum(std::uint32_t unlink_seqnum) {
-        for (auto &[ep, queue]: queues_) {
-            auto it = std::find_if(queue.begin(), queue.end(),
-                                   [unlink_seqnum](const Request &r) { return r.seqnum == unlink_seqnum; });
-            if (it != queue.end()) {
-                queue.erase(it);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * @brief 清空所有队列
-     * @note 调用者需已持有互斥锁
-     */
-    void clear() {
-        queues_.clear();
-    }
-
-private:
-    std::unordered_map<std::uint8_t, std::deque<Request>> queues_;
-};
 
 class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:

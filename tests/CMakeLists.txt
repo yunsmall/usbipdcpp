@@ -63,4 +63,8 @@ if (TARGET usbipdcpp_virtual_device)
     # 传输调度器（vudc 帧调度等价物）测试
     add_test_file(test_transfer_scheduler)
     target_link_libraries(test_transfer_scheduler PRIVATE usbipdcpp_virtual_device)
+
+    # IN 数据通道组件（挂起-应答模式）测试
+    add_test_file(test_in_endpoint_channel)
+    target_link_libraries(test_in_endpoint_channel PRIVATE usbipdcpp_virtual_device)
 endif ()
