@@ -8,6 +8,7 @@
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/virtual_device/InEndpointChannel.h"
+#include "usbipdcpp/virtual_device/OutEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 namespace usbipdcpp {
@@ -199,6 +200,8 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
+    void on_new_connection(Session &current_session, std::error_code &ec) override;
+
     void on_disconnection(std::error_code &ec) override;
 
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
@@ -208,19 +211,14 @@ protected:
     ControlSignalState control_signal_state_;
 
     /**
-     * @brief 待发送的状态通知数据
-     */
-    std::vector<std::uint8_t> pending_notification_;
-
-    /**
-     * @brief 保护 pending_notification_ 的互斥锁
-     */
-    std::mutex notification_mutex_;
-
-    /**
      * @brief 关联的数据接口处理器
      */
     CdcAcmDataInterfaceHandler *data_handler_ = nullptr;
+
+    /// 串口状态通知通道（中断 IN 端点）：一条通知 = 一个完整消息。有挂起请求
+    /// 直接应答，否则入缓冲（上限 1 条：只保留最新状态，对齐原 pending_notification_
+    /// 被新通知覆盖的语义；状态变化低频，丢旧保新即可）
+    MessageInChannel notification_channel;
 };
 
 /**
@@ -262,10 +260,15 @@ public:
     // ========== 子类可选重写的回调 ==========
 
     /**
-     * @brief 收到主机发送的数据时回调
-     * @param data 接收到的数据
+     * @brief 主机 OUT 数据到达时回调，供子类当场根据输入生成数据（通常把生成
+     * 的数据塞给 IN 方向，如回显）。在请求挂起（on_out_request）之前调用
+     * @param data 接收到的数据（右值引用）。注意契约：返回 false 表示未处理，
+     * 请求会挂起，此时必须保证 data 未被移动走（数据仍留在挂起请求里，等子类
+     * 之后 take_out() 取出）
+     * @return true=已处理这条 OUT（handler 立即应答）；false=未处理，handler 挂起
+     * 请求（主机 NAK 背压），子类之后用 take_out() 取出数据并应答
      */
-    virtual void on_data_received(data_type &&data);
+    virtual bool on_data_received(data_type &&data);
 
     /**
      * @brief 主机请求数据时回调，用于实时按需生成数据
@@ -306,6 +309,17 @@ public:
     std::size_t send_data_blocking(const data_type &data, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(data_type &&data, std::uint32_t timeout_ms = 0);
     std::size_t send_data_blocking(std::string_view data, std::uint32_t timeout_ms = 0);
+
+    // ========== 接收数据 API（OUT 方向，挂起模式） ==========
+
+    /**
+     * @brief 阻塞取一条主机 OUT 数据。timeout_ms=0 无限等；断连返回 nullopt。
+     * OUT 请求先挂起不立即应答（主机 NAK 背压），take_out() 取走时才应答
+     */
+    std::optional<OutEndpointChannel::Pending> take_out(std::uint32_t timeout_ms = 0);
+
+    /// 非阻塞取一条主机 OUT 数据；无数据返回 nullopt
+    std::optional<OutEndpointChannel::Pending> try_take_out();
 
     // ========== 缓冲区配置 API ==========
 
@@ -370,6 +384,10 @@ protected:
      * handle_bulk_transfer 双锁内调用语义一致）
      */
     ByteStreamInChannel tx_channel;
+
+    /// OUT 数据挂起通道：主机 bulk OUT 请求先挂起不应答（NAK 背压），
+    /// take_out() 取走时读出数据并应答
+    OutEndpointChannel out_channel;
 
     std::size_t tx_high_watermark_ = 48 * 1024;
     std::size_t tx_low_watermark_ = 16 * 1024;

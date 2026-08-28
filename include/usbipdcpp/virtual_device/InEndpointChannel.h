@@ -135,6 +135,13 @@ private:
  *   数据（字节流：本次请求优先发 min 部分，剩余入缓冲；消息模式整条入缓冲）
  * - push_locked(data)：数据入缓冲（满时按各自语义：消息丢最旧 / 字节流丢弃超出部分）
  * - buffer_clear()：清空缓冲
+ *
+ * 典型接入（handler 内）：
+ *  - 主机 IN 回调里调 on_in_request(...)：缓冲有数据立即应答，没数据则挂起请求
+ *  - 业务线程产生数据：push()（消息模式，一条数据=一个消息）或 write()/write_nb()
+ *    （字节流模式，按请求长度分片），通道自动匹配挂起的请求应答
+ *  - 生命周期：on_new_connection 时调 bind_session + on_new_connection，
+ *    on_disconnection 时调 on_disconnection（清空缓冲与挂起请求）
  */
 template <typename Derived>
 class InEndpointChannelBase {

@@ -263,25 +263,8 @@ void UacAudioControlHandler::handle_interrupt_transfer(std::uint32_t seqnum, con
                                                        std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                                        std::error_code &ec) {
     if (ep.is_in()) {
-        std::lock(status_mutex_, endpoint_requests_mutex_);
-        std::lock_guard lock1(status_mutex_, std::adopt_lock);
-        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-        // 有缓存的待推送状态：立即填给这个 URB（对齐内核"request 常驻端点"语义）
-        if (endpoint_requests_.empty(ep.address) && !pending_status_.empty()) {
-            auto status = std::move(pending_status_.front());
-            pending_status_.pop_front();
-            auto *trx = GenericTransfer::from_handle(transfer.get());
-            auto send_len = std::min(status.size(), static_cast<std::size_t>(transfer_buffer_length));
-            trx->data.assign(status.begin(), status.begin() + send_len);
-            trx->actual_length = send_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                    seqnum, static_cast<std::uint32_t>(send_len), std::move(transfer)));
-        }
-        else {
-            // 无状态：挂起请求，等 FU 控制变化时填充
-            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-        }
+        // 通道内部处理：缓冲有状态立即应答，否则挂起请求等待 send_ac_status()
+        status_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
         session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
@@ -289,40 +272,25 @@ void UacAudioControlHandler::handle_interrupt_transfer(std::uint32_t seqnum, con
 }
 
 void UacAudioControlHandler::send_ac_status(data_type status) {
-    std::lock(status_mutex_, endpoint_requests_mutex_);
-    std::lock_guard lock1(status_mutex_, std::adopt_lock);
-    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
+    // 通道内部处理：有挂起请求直接应答，否则入缓冲（对齐内核 f_uac1 audio_notify）
+    status_channel.push(std::move(status));
+}
 
-    auto req_opt = endpoint_requests_.dequeue_any();
-    if (req_opt.has_value()) {
-        auto &[ep_addr, req] = req_opt.value();
-        auto *trx = GenericTransfer::from_handle(req.transfer.get());
-        auto send_len = std::min(status.size(), static_cast<std::size_t>(req.length));
-        trx->data.assign(status.begin(), status.begin() + send_len);
-        trx->actual_length = send_len;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                req.seqnum, static_cast<std::uint32_t>(send_len), std::move(req.transfer)));
-    }
-    else {
-        pending_status_.push_back(std::move(status));
-    }
+void UacAudioControlHandler::on_new_connection(Session &current_session, error_code &ec) {
+    // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    status_channel.bind_session(&current_session);
+    status_channel.on_new_connection();
 }
 
 void UacAudioControlHandler::on_disconnection(std::error_code &ec) {
-    {
-        std::lock_guard lock(status_mutex_);
-        pending_status_.clear();
-    }
-    {
-        std::lock_guard lock(endpoint_requests_mutex_);
-        endpoint_requests_.clear();
-    }
+    // 先清通道（缓冲 + 挂起请求，TransferHandle 析构自动释放），再调父类清 session
+    status_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void UacAudioControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(endpoint_requests_mutex_);
-    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    bool cancelled = status_channel.cancel_pending(unlink_seqnum);
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致

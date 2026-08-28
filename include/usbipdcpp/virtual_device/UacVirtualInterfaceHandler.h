@@ -5,6 +5,7 @@
 
 #include "usbipdcpp/Export.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
+#include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/audio_sources/AudioSource.h"
 
@@ -45,6 +46,7 @@ public:
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                    std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
+    void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
     void on_setup_interface_handlers() override;
@@ -84,9 +86,9 @@ private:
     std::int16_t volume_db = 0; // 单位 1/256 dB，0 表示 0dB
     std::uint32_t gain_q16 = 65536; // 10^(volume_db/256/20) 的 Q16 表示
 
-    // AC 中断端点：状态变化时无挂起 URB 的暂存（UAC1 状态字 2 字节）
-    std::deque<data_type> pending_status_;
-    mutable std::mutex status_mutex_;
+    // AC 中断端点：状态变化时无挂起 URB 的暂存（UAC1 状态字 2 字节）。
+    // push 非阻塞：有挂起请求直接应答，否则入缓冲（对齐内核 f_uac1 audio_notify）
+    MessageInChannel status_channel;
 };
 
 /// AudioStreaming 接口处理器 — 类描述符 + 采样率协商 + ISO PCM 推流

@@ -12,8 +12,8 @@ using namespace usbipdcpp;
 
 namespace {
 
-// 记录应答的测试通道：override reply 记录（不真的发 socket）
-class RecordingOutChannel : public OutEndpointChannel {
+// 记录应答的测试通道：派生类实现 CRTP 接口 reply 记录（不真的发 socket）
+class RecordingOutChannel : public OutEndpointChannelBase<RecordingOutChannel> {
 public:
     struct Replied {
         std::uint32_t seqnum;
@@ -22,8 +22,8 @@ public:
     };
     std::vector<Replied> replied;
 
-protected:
-    void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) override {
+    // CRTP 接口：应答一个请求（基类在取走/上限拒绝时调用）
+    void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) {
         replied.push_back({seqnum, length, status});
     }
 };

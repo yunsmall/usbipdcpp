@@ -209,19 +209,6 @@ protected:
     std::uint8_t string_interface;
 
     StringPool &string_pool;
-
-    /**
-     * @brief 保护 endpoint_requests_ 的互斥锁
-     */
-    mutable std::mutex endpoint_requests_mutex_;
-
-    /**
-     * @brief 通用端点请求队列，用于管理 IN 传输请求
-     *
-     * 子类可以直接使用此队列，不需要各自实现。
-     * 操作时需持有 endpoint_requests_mutex_。
-     */
-    EndpointRequestQueue endpoint_requests_;
 };
 
 } // namespace usbipdcpp

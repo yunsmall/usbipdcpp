@@ -963,7 +963,7 @@ void UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &strin
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     // UVC 等时 URB 立即响应（虚拟设备不模拟总线等时事务节奏，帧时钟已管住
     // 帧率），不启用设备级传输调度器（默认关；启用会被 125µs×包节流卡死
-    // 带宽，大帧画面慢放）。UNLINK 走 endpoint_requests_ 自己的 cancel
+    // 带宽，大帧画面慢放）。UNLINK 走通道自己的 cancel_pending
     dh->setup_interface_handlers();
 }
 

@@ -11,6 +11,9 @@ namespace usbipdcpp {
 CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface,
                                                                          StringPool &string_pool) :
     VirtualInterfaceHandler(handle_interface, string_pool) {
+    // 通知通道上限 1 条：只缓存最新一条状态，对齐原来 pending_notification_
+    // 被新通知覆盖的语义（串口状态通知低频，丢旧保新即可）
+    notification_channel.set_max_pending(1);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_control_urb(
@@ -97,24 +100,9 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(std::uint32_
                                                                     std::uint32_t transfer_buffer_length,
                                                                     TransferHandle transfer, std::error_code &ec) {
     if (ep.is_in()) {
-        // 同时锁两个 mutex，避免竞态条件
-        std::lock(notification_mutex_, endpoint_requests_mutex_);
-        std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-        std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
-
-        if (!pending_notification_.empty() && endpoint_requests_.empty(ep.address)) {
-            // 有待发送的通知且没有队列中的请求，立即响应
-            auto *trx = GenericTransfer::from_handle(transfer.get());
-            trx->data = std::move(pending_notification_);
-            trx->actual_length = trx->data.size();
-            pending_notification_.clear();
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                    seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
-        }
-        else {
-            // 将请求加入队列，等待处理
-            endpoint_requests_.enqueue(ep.address, {seqnum, transfer_buffer_length, std::move(transfer)});
-        }
+        // 通道内部处理：缓冲有通知立即应答，否则挂起请求等待
+        // send_serial_state_notification() 推入
+        notification_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
         // 中断 OUT：CDC ACM 通常不使用
@@ -219,43 +207,25 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     SerialStateNotification notification;
     notification.data = state_bits;
 
-    // 同时锁两个 mutex，避免竞态条件
-    std::lock(notification_mutex_, endpoint_requests_mutex_);
-    std::lock_guard lock1(notification_mutex_, std::adopt_lock);
-    std::lock_guard lock2(endpoint_requests_mutex_, std::adopt_lock);
+    // 通道内部处理：有挂起请求直接应答，否则入缓冲（上限 1 条：只保留最新）
+    notification_channel.push(notification.to_bytes());
+}
 
-    pending_notification_ = notification.to_bytes();
-
-    // 如果队列中有中断请求，响应第一个
-    auto req_opt = endpoint_requests_.dequeue_any();
-    if (req_opt.has_value()) {
-        auto &[ep_addr, req] = req_opt.value();
-
-        auto *trx = GenericTransfer::from_handle(req.transfer.get());
-        trx->data = std::move(pending_notification_);
-        trx->actual_length = trx->data.size();
-        pending_notification_.clear();
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                req.seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(req.transfer)));
-    }
+void CdcAcmCommunicationInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+    // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    notification_channel.bind_session(&current_session);
+    notification_channel.on_new_connection();
 }
 
 void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) {
-    {
-        std::lock_guard lock(notification_mutex_);
-        pending_notification_.clear();
-    }
-    {
-        std::lock_guard lock(endpoint_requests_mutex_);
-        // TransferHandle 析构时会自动释放
-        endpoint_requests_.clear();
-    }
+    // 先清通道（缓冲 + 挂起请求，TransferHandle 析构自动释放），再调父类清 session
+    notification_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    std::lock_guard lock(endpoint_requests_mutex_);
-    bool cancelled = endpoint_requests_.cancel_by_seqnum(unlink_seqnum);
+    bool cancelled = notification_channel.cancel_pending(unlink_seqnum);
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
@@ -280,17 +250,24 @@ void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     tx_channel.bind_session(&current_session);
     tx_channel.on_new_connection();
+    out_channel.bind_session(&current_session);
+    out_channel.on_new_connection();
 }
 
 void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
     // 先清通道（缓冲 + 挂起请求，TransferHandle 析构时自动释放；唤醒阻塞
-    // 的写者让它们按断连返回），再调父类清 session
+    // 的写者/取者让它们按断连返回），再调父类清 session
+    out_channel.on_disconnection();
     tx_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    // 挂起请求分散在 IN/OUT 两通道里，逐个尝试取消
     bool cancelled = tx_channel.cancel_pending(unlink_seqnum);
+    if (!cancelled) {
+        cancelled = out_channel.cancel_pending(unlink_seqnum);
+    }
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
@@ -308,14 +285,19 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, cons
         tx_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
-        // Bulk OUT：接收主机发来的数据，直接回调子类处理
+        // Bulk OUT：先给子类当场消费机会（如把数据生成响应塞给 IN 方向）。
+        // true=已处理，立即应答；false=未处理，请求挂起入通道（主机 NAK 背压），
+        // 子类之后用 take_out() 取出数据并应答。false 时子类必须保证 data 未被
+        // 移动（挂起的请求里数据仍在）
         auto *trx = GenericTransfer::from_handle(transfer.get());
         auto received_size = static_cast<std::uint32_t>(trx->data.size());
-        on_data_received(std::move(trx->data));
-
-        // transfer 析构时自动释放
-        session->submit_ret_submit(
-                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
+        if (on_data_received(std::move(trx->data))) {
+            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+                    seqnum, received_size));
+        }
+        else {
+            out_channel.on_out_request(ep.address, seqnum, std::move(transfer));
+        }
     }
 }
 
@@ -333,8 +315,9 @@ data_type CdcAcmDataInterfaceHandler::get_class_specific_descriptor() {
     return {};
 }
 
-void CdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
-    // 默认空实现，子类可重写
+bool CdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
+    // 默认行为：总是消费并立即应答（未 override 的子类保持原"总是接收"语义）
+    return true;
 }
 
 data_type CdcAcmDataInterfaceHandler::on_data_requested(std::uint16_t length) {
@@ -381,6 +364,14 @@ std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(data_type &&data, std
 
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(std::string_view data, std::uint32_t timeout_ms) {
     return send_data_blocking(reinterpret_cast<const std::uint8_t *>(data.data()), data.size(), timeout_ms);
+}
+
+std::optional<OutEndpointChannel::Pending> CdcAcmDataInterfaceHandler::take_out(std::uint32_t timeout_ms) {
+    return out_channel.take(timeout_ms);
+}
+
+std::optional<OutEndpointChannel::Pending> CdcAcmDataInterfaceHandler::try_take_out() {
+    return out_channel.try_take();
 }
 
 // ===== 缓冲区配置 =====

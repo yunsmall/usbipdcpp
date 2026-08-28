@@ -16,9 +16,9 @@
 namespace usbipdcpp {
 
 /**
- * @brief OUT 数据通道：主机 OUT 请求挂起，业务侧取走时应答（NAK 背压）
+ * @brief OUT 数据通道基类（CRTP 静态分发）：主机 OUT 请求挂起，业务侧取走时应答（NAK 背压）
  *
- * 与 InEndpointChannel 对称：In 的请求挂起是「设备没数据可发」，Out 的请求
+ * 与 InEndpointChannelBase 对称：In 的请求挂起是「设备没数据可发」，Out 的请求
  * 挂起是「设备没空位可收」（业务侧未消费）。主机 OUT 请求到达后数据留在
  * transfer 里挂起、不回 RET_SUBMIT——主机 URB 挂着，天然停发（对齐内核
  * vudc：gadget 请求耗尽时 OUT 端点 NAK，见 u_serial.c gs_rx_push）。
@@ -32,8 +32,16 @@ namespace usbipdcpp {
  *
  * 纯通知请求（transfer 为空，如 Pipe 控制 IN 的 setup 透出）：take 只返回
  * setup、不应答，用于把「主机有控制请求待应答」通知给业务侧
+ *
+ * 典型接入（handler 内）：
+ *  - 主机 OUT 回调里调 on_out_request(...)：请求挂起，数据留在 transfer 里
+ *  - 业务线程取数据：take()（阻塞，取走时读出数据并应答，空位释放主机恢复发送）
+ *    或 try_take()（非阻塞，没数据立即返回 nullopt）
+ *  - 生命周期：on_new_connection 时调 bind_session + on_new_connection，
+ *    on_disconnection 时调 on_disconnection（清挂起请求、唤醒阻塞的 take）
  */
-class OutEndpointChannel {
+template <typename Derived>
+class OutEndpointChannelBase {
 public:
     /// take() 返回的一次消费（业务侧拿到数据后自行处理）
     struct Pending {
@@ -83,7 +91,7 @@ public:
         }
         // 达到上限：设备忙，回 EPIPE 拒绝（请求直接释放，不占挂起队列）
         if (max_pending_ != 0 && pending.size() >= max_pending_) {
-            reply(seqnum, 0, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+            self().reply(seqnum, 0, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
             return;
         }
         pending.emplace_back(PendingRequest{ep, seqnum, setup_req, std::move(transfer)});
@@ -151,24 +159,11 @@ public:
     }
 
 protected:
-    /**
-     * @brief 应答一个请求（take 出队 / 上限拒绝时调用）
-     *
-     * 虚函数便于测试注入：默认走 session->submit_ret_submit 回 RET_SUBMIT
-     * （status=0：OUT 数据消费完成；非 0：如上限拒绝的 EPIPE），测试可
-     * override 记录应答
-     */
-    virtual void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) {
-        if (status == 0) {
-            session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, length));
-        }
-        else {
-            // 错误状态应答：actual_length 填 0（协议上错误传输不带有效数据）
-            session->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(seqnum, status, 0));
-        }
+    Derived &self() {
+        return static_cast<Derived &>(*this);
     }
+
+    Session *session = nullptr;
 
 private:
     struct PendingRequest {
@@ -189,7 +184,7 @@ private:
             data_type data;
             auto len = req.transfer.get_operator()->get_transfer_data(req.transfer.get(), data, supported);
             assert(supported);  // 挂起-消费的 op 必须支持读数据
-            reply(req.seqnum, len);
+            self().reply(req.seqnum, len);
             return Pending{req.ep, req.setup_req, std::move(data)};
         }
         // 纯通知（控制 IN 的 setup 透出）：不应答，只把 setup 交给业务侧
@@ -201,7 +196,29 @@ private:
     std::deque<PendingRequest> pending;
     std::size_t max_pending_ = 0;  // 0 = 无限
     bool disconnected = true;      // 初始为断连，on_new_connection 后可用
-    Session *session = nullptr;
+};
+
+/**
+ * @brief OUT 数据通道默认实现
+ *
+ * 派生类需实现 reply()（CRTP 接口，应答一个请求）：通常走
+ * session->submit_ret_submit 回 RET_SUBMIT（status=0：OUT 数据消费完成；
+ * 非 0：如上限拒绝的 EPIPE）。测试可继承 OutEndpointChannelBase 提供自己的
+ * reply() 记录应答，不产生虚函数开销
+ */
+class OutEndpointChannel : public OutEndpointChannelBase<OutEndpointChannel> {
+public:
+    void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) {
+        if (status == 0) {
+            session->submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, length));
+        }
+        else {
+            // 错误状态应答：actual_length 填 0（协议上错误传输不带有效数据）
+            session->submit_ret_submit(
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(seqnum, status, 0));
+        }
+    }
 };
 
 } // namespace usbipdcpp

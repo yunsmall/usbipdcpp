@@ -42,12 +42,15 @@ void MockCdcAcmDataInterfaceHandler::on_disconnection(error_code &ec) {
     CdcAcmDataInterfaceHandler::on_disconnection(ec);
 }
 
-void MockCdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
+bool MockCdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
     if (should_immediately_stop) {
-        return;
+        // 停止状态不处理：返回 false 且不移动 data（契约），请求挂起后随断连清掉
+        return false;
     }
 
-    // 回显：将接收到的数据原样发回，使用阻塞发送确保不丢数据
+    // 回显：把主机数据原样塞给 IN 方向，阻塞发送确保不丢（生成的数据经
+    // tx_channel 等主机 IN 请求取走）
     SPDLOG_DEBUG("Echo {} bytes", data.size());
     send_data_blocking(std::move(data));
+    return true;
 }
