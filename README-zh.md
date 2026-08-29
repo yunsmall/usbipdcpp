@@ -340,6 +340,8 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ### 扩展功能
 
+实现自定义设备完整指南（含两种实现方法与完整代码示例）见 [docs/custom-device.md](docs/custom-device.md)。
+
 实现自定义 USB 设备：
 
 1. 使用 `usbipdcpp::UsbDevice` 定义设备描述符

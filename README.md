@@ -341,6 +341,9 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ### Extending Functionality
 
+For a complete guide with both implementation approaches and full code examples, see
+[docs/custom-device.md](docs/custom-device.md).
+
 To implement custom USB devices:
 
 1. Define descriptors with `usbipdcpp::UsbDevice`
