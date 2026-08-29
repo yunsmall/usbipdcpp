@@ -213,7 +213,15 @@ void usbipdcpp::Session::parse_op() {
                             // 进入通信状态
                             transfer_loop(transferring_ec);
                             if (transferring_ec) {
-                                SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
+                                // 连接断开类错误（见 459 处判断）是正常路径，降级为 debug
+                                auto is_disconnect = transferring_ec == make_error_code(ErrorType::SOCKET_EOF) ||
+                                                     transferring_ec == make_error_code(ErrorType::SOCKET_ERR);
+                                if (is_disconnect) {
+                                    SPDLOG_DEBUG("传输结束（客户端断开）：{}", transferring_ec.message());
+                                }
+                                else {
+                                    SPDLOG_ERROR("Error occurred during transferring : {}", transferring_ec.message());
+                                }
                                 ec = transferring_ec;
                             }
 
@@ -456,7 +464,17 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
     }
     // 一般来说receiver_ec的ec重要一点，因此会覆盖掉
     else if (receiver_ec) {
-        SPDLOG_ERROR("An error occur during receiving: {}", receiver_ec.message());
+        // 连接断开类错误（客户端 detach/关闭、网络中断）是服务器的日常路径，
+        // 不算异常：空闲时断开读到 eof（SOCKET_EOF），传输中断开读到
+        // connection_reset 等（归为 SOCKET_ERR），两者等价，均降级为 debug
+        auto is_disconnect = receiver_ec == make_error_code(ErrorType::SOCKET_EOF) ||
+                             receiver_ec == make_error_code(ErrorType::SOCKET_ERR);
+        if (is_disconnect) {
+            SPDLOG_DEBUG("连接断开：{}", receiver_ec.message());
+        }
+        else {
+            SPDLOG_ERROR("An error occur during receiving: {}", receiver_ec.message());
+        }
         transferring_ec = receiver_ec;
     }
     cmd_transferring = false;
