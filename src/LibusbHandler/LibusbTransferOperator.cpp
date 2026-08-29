@@ -91,6 +91,12 @@ std::size_t LibusbTransferOperator::get_actual_length(void *handle) {
     return trx->actual_length;
 }
 
+bool LibusbTransferOperator::transfer_is_in(void *handle) {
+    auto *trx = static_cast<libusb_transfer *>(handle);
+    // 方向以 libusb 提交时的端点为准（与 send_transfer_data 内部判断同源）
+    return (trx->endpoint & LIBUSB_ENDPOINT_IN) != 0;
+}
+
 UsbIpIsoPacketDescriptor LibusbTransferOperator::get_iso_descriptor(void *handle, int index) {
     auto *trx = static_cast<libusb_transfer *>(handle);
     auto &iso = trx->iso_packet_desc[index];
@@ -124,11 +130,10 @@ void LibusbTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::soc
         // offset: buffer 中的包槽位偏移（pkt.length 步长），同时用于数据读取和描述符 offset 字段。
         //   槽位大小由客户端 CMD_SUBMIT 的描述符 length 决定，必须按 pkt.length 步进而非 actual_length，
         //   否则 vhci 会把包 N 的数据错误地写入包 N-1 的槽位中。
-        // 只对 IN 方向发送数据：与内核 stub_tx.c 一致（ISO 的 transfer buffer
-        // 分支全部要求 usb_pipein），vhci 侧对 OUT 传输也不读数据
-        // （usbip_recv_xbuff 对 pipeout 直接返回）。OUT 方向只发描述符
-        bool is_in = (trx->endpoint & LIBUSB_ENDPOINT_IN) != 0;
-        bool need_to_send_buffer = is_in && (length > 0);
+        // length 已由协议层按方向算好（transfer_is_in 查询，OUT 恒传 0，
+        // 见 RetSubmit/CmdSubmit 的 to_socket），这里只按 length > 0 决定
+        // 是否发数据，不再自行判断方向
+        bool need_to_send_buffer = (length > 0);
         std::uint32_t offset = 0;
         for (int i = 0; i < trx->num_iso_packets; i++) {
             auto &pkt = trx->iso_packet_desc[i];

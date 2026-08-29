@@ -171,6 +171,8 @@ struct GenericTransfer {
     std::vector<UsbIpIsoPacketDescriptor> iso_descriptors;
     std::size_t actual_length = 0;
     std::size_t data_offset = 0;
+    // 传输方向（CMD_SUBMIT 的 direction，alloc 时确定）：true=IN，数据需要回发
+    bool is_in = true;
 
     static GenericTransfer *from_handle(void *ptr) {
         return static_cast<GenericTransfer *>(ptr);

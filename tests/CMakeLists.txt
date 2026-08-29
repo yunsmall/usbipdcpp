@@ -34,6 +34,7 @@ add_test_file(test_object_pool)
 add_test_file(test_small_vector)
 add_test_file(test_transfer_handle)
 add_test_file(test_generic_transfer)
+add_test_file(test_transfer_direction)
 add_test_file(test_reuse_map)
 add_test_file(test_reuse_set)
 add_test_file(test_descriptors)
@@ -71,4 +72,12 @@ if (TARGET usbipdcpp_virtual_device)
     # OUT 数据通道组件（NAK 背压模式）测试
     add_test_file(test_out_endpoint_channel)
     target_link_libraries(test_out_endpoint_channel PRIVATE usbipdcpp_virtual_device)
+
+    # 音频汇（UAC 扬声器方向）AC/AS 描述符拓扑测试
+    add_test_file(test_audio_sinks)
+    target_link_libraries(test_audio_sinks PRIVATE usbipdcpp_virtual_device)
+
+    # WavFileSink（库内音频汇）WAV 文件写入测试
+    add_test_file(test_wav_file_sink)
+    target_link_libraries(test_wav_file_sink PRIVATE usbipdcpp_virtual_device)
 endif ()

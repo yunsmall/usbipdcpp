@@ -7,14 +7,18 @@
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/audio_sinks/AudioSink.h"
 #include "usbipdcpp/virtual_device/audio_sources/AudioSource.h"
 
 namespace usbipdcpp {
 
 /// UAC 设备配置 — 控制 AudioControl 接口描述符与 Feature Unit 行为
 struct UacDeviceConfig {
-    /// 输入终端类型（默认麦克风）
+    /// 输入终端类型。默认麦克风（ITT_MICROPHONE）；
+    /// 扬声器方向传 TT_USB_STREAMING（数据从 USB 流入），此时输出终端用 output_terminal_type
     std::uint16_t input_terminal_type = ITT_MICROPHONE;
+    /// 输出终端类型（仅扬声器方向使用，默认 Speaker）
+    std::uint16_t output_terminal_type = ITT_SPEAKER;
     /// 声道数（1 或 2）。0 表示从 AudioSource 推断
     std::uint8_t channels = 0;
     /// Feature Unit 是否提供静音控制
@@ -182,13 +186,89 @@ private:
     std::size_t chunk_offset = 0;
 };
 
+/// AudioStreaming 接口处理器（扬声器方向）— 类描述符 + 采样率协商 + ISO OUT 收流
+/// 与 UacAudioStreamingHandler（麦克风 IN 推流）对称：数据面反转为消费主机发来的
+/// PCM（写入 AudioSink），控制面（采样率协商、类描述符）逻辑相同
+class USBIPDCPP_API UacAudioStreamingSinkHandler : public VirtualInterfaceHandler {
+public:
+    UacAudioStreamingSinkHandler(UsbInterface &handle_interface, StringPool &string_pool,
+                                 std::unique_ptr<AudioSink> sink);
+
+    [[nodiscard]] data_type get_class_specific_descriptor() override;
+    data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
+                                     std::uint32_t *p_status) override;
+    void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                      std::uint32_t transfer_flags,
+                                                      std::uint32_t transfer_buffer_length,
+                                                      const SetupPacket &setup_packet, TransferHandle transfer,
+                                                      std::error_code &ec) override;
+    // Linux snd-usb-audio 对 UAC1 的采样率控制发给端点（recipient=Endpoint，wIndex=端点地址），
+    // 而非接口（UAC 1.0 规范允许的实现差异），需在端点级入口处理
+    void handle_non_standard_request_type_control_urb_to_endpoint(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                                  std::uint32_t transfer_flags,
+                                                                  std::uint32_t transfer_buffer_length,
+                                                                  const SetupPacket &setup_packet,
+                                                                  TransferHandle transfer, std::error_code &ec) override;
+    void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
+                                     std::uint32_t transfer_buffer_length, TransferHandle transfer, int num_iso_packets,
+                                     std::error_code &ec) override;
+    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_disconnection(error_code &ec) override;
+    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
+    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
+    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
+    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                      std::uint32_t *p_status) override;
+    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
+    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                        std::uint32_t *p_status) override;
+    std::uint16_t request_get_status(std::uint32_t *p_status) override;
+    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
+    void on_setup_interface_handlers() override;
+
+    // AS 的类描述符（General + Format Type）必须出现在每个 alt，
+    // 否则主机驱动在 alt 1 找不到格式描述符无法解析
+    [[nodiscard]] bool put_class_specific_descriptor_in_all_alts() const override {
+        return true;
+    }
+
+    AudioSink *get_sink() {
+        return sink.get();
+    }
+
+    void set_ac_handler(UacAudioControlHandler *handler) {
+        ac_handler = handler;
+    }
+
+private:
+    void build_class_descriptor();
+
+    /// 处理采样率控制请求（GET_CUR/GET_MIN/GET_MAX/SET_CUR）。
+    /// 接口级与端点级入口共用（Linux snd-usb-audio 从端点级发起）。
+    /// 返回 true 表示已自行提交响应，调用方直接返回；false 表示未识别
+    bool handle_sampling_freq_control(std::uint32_t seqnum, std::uint8_t request, GenericTransfer *trx,
+                                      TransferHandle &transfer, std::uint32_t transfer_buffer_length);
+
+    UacAudioControlHandler *ac_handler = nullptr;
+
+    std::unique_ptr<AudioSink> sink;
+    data_type class_desc;
+    bool streaming = false;
+};
+
 /// UAC 设备辅助类 — 在 device 上注册 AC/AS 接口 handler 并设置描述符
 class USBIPDCPP_API UacDeviceHelper {
 public:
-    /// 向 device 注入 UAC 接口 handler。
+    /// 向 device 注入 UAC 接口 handler（麦克风方向）。
     /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO IN 端点
     static void setup(std::shared_ptr<UsbDevice> device, StringPool &string_pool, std::unique_ptr<AudioSource> source,
                       const UacDeviceConfig &config = {});
+
+    /// 向 device 注入 UAC 接口 handler（扬声器方向，ISO OUT 收流）。
+    /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO OUT 端点；
+    /// AC 的 input_terminal_type 需为 TT_USB_STREAMING（扬声器拓扑）
+    static void setup_speaker(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
+                              std::unique_ptr<AudioSink> sink, const UacDeviceConfig &config = {});
 };
 
 } // namespace usbipdcpp

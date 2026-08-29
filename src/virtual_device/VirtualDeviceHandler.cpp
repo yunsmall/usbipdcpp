@@ -135,9 +135,13 @@ void VirtualDeviceHandler::on_disconnection(error_code &ec) {
     }
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
-            intf.handler->on_disconnection(ec);
-            if (ec) {
-                break;
+            // 每个 handler 用独立错误码：传入的既有错误（如 EOF 断开）不污染
+            // 判断；出错也不中断——各接口清理相互独立（如 AC 失败时 AS 的
+            // WAV 回填仍要执行），一个失败不影响其他接口的收尾
+            usbipdcpp::error_code handler_ec;
+            intf.handler->on_disconnection(handler_ec);
+            if (handler_ec) {
+                SPDLOG_WARN("接口 handler on_disconnection 出错：{}", handler_ec.message());
             }
         }
     }

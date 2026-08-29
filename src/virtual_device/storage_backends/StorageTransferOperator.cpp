@@ -16,6 +16,8 @@ void *StorageTransferOperator::alloc_transfer_handle(std::size_t buffer_length, 
     auto *trx = pool_.alloc();
     if (!trx)
         trx = new StorageIoTransfer{};
+    // 方向记录契约：transfer_is_in 依赖（协议层按方向决定回发长度）
+    trx->is_in = (header.direction == UsbIpDirection::In);
     SPDLOG_DEBUG("STO::alloc handle={:p} dir={} len={}", static_cast<const void *>(trx),
                  header.direction == UsbIpDirection::In ? "IN" : "OUT", buffer_length);
     if (header.direction == UsbIpDirection::Out) {
@@ -35,6 +37,10 @@ void StorageTransferOperator::free_transfer_handle(void *handle) {
 
 std::size_t StorageTransferOperator::get_actual_length(void *handle) {
     return StorageIoTransfer::from_handle(handle)->actual_length;
+}
+
+bool StorageTransferOperator::transfer_is_in(void *handle) {
+    return StorageIoTransfer::from_handle(handle)->is_in;
 }
 
 UsbIpIsoPacketDescriptor StorageTransferOperator::get_iso_descriptor(void *, int) {

@@ -22,6 +22,21 @@ class USBIPDCPP_API TransferOperator {
 public:
     virtual ~TransferOperator() = default;
 
+    /**
+     * @brief 创建传输句柄
+     *
+     * 实现必须把传输方向记录进返回的 transfer 结构中（按 header.direction
+     * 判断 in/out）：transfer_is_in 查询依赖它——RET_SUBMIT::to_socket 按
+     * 方向决定数据回发长度（OUT 恒为 0，数据不回发），方向不落库则 OUT
+     * 应答可能把已收数据误当回发内容发给客户端。
+     */
+    /**
+     * @brief 创建传输句柄
+     *
+     * 实现必须记录该传输的方向（in/out，来自 header.direction），记录
+     * 方式不限（transfer 结构体字段、map 等均可），transfer_is_in 查询
+     * 依赖它：RET_SUBMIT::to_socket 按方向决定数据回发长度，OUT 恒为 0。
+     */
     virtual void *alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets, const UsbIpHeaderBasic &header,
                                         const SetupPacket &setup_packet) = 0;
     virtual void free_transfer_handle(void *handle) = 0;
@@ -72,6 +87,16 @@ public:
     }
 
     /**
+     * @brief 查询 handle 对应的传输是否为 IN 方向（数据回发方向）
+     *
+     * 由 RET_SUBMIT::to_socket() 计算 send_transfer_data 的 length 时调用：
+     * IN 传 actual_length（数据要回发），OUT 传 0（无数据回发）。
+     * 方向在 alloc_transfer_handle 时由 CMD_SUBMIT 的 direction 确定，
+     * 各实现从自己的 transfer 结构取（Generic 存字段、libusb 看 endpoint）。
+     */
+    virtual bool transfer_is_in(void *handle) = 0;
+
+    /**
      * @brief 发送传输数据（IN 方向：server → client）
      *
      * 由 RET_SUBMIT::to_socket() 在写完 USBIP header 后调用。
@@ -80,7 +105,8 @@ public:
      * 实现必须严格按以下步骤操作，不得额外读写 sock，防止协议错位：
      *
      * 1. 若 length > 0，从私有 transfer 中发送 length 字节数据到 sock。
-     *    IN 传输 length 为 actual_length，OUT 传输恒为 0，跳过此步。
+     *    length 由调用方（RET_SUBMIT::to_socket）按 transfer_is_in 计算：
+     *    IN 为 actual_length，OUT 恒为 0（OUT 无数据回发），跳过此步。
      *
      * 2. 发送 N = alloc_transfer_handle 时传入的 num_iso_packets 个
      *    UsbIpIsoPacketDescriptor。在 for 循环中对每个描述符调用 to_bytes()
@@ -143,6 +169,8 @@ public:
     void free_transfer_handle(void *handle) override;
 
     std::size_t get_actual_length(void *handle) override;
+
+    bool transfer_is_in(void *handle) override;
 
     UsbIpIsoPacketDescriptor get_iso_descriptor(void *handle, int index) override;
     void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override;

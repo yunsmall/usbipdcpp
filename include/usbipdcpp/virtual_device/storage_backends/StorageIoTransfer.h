@@ -83,6 +83,16 @@ struct StorageIoTransfer {
      */
     bool direct_io = false;
 
+    /**
+     * @brief 传输方向（CMD_SUBMIT 的 direction，alloc 时确定）
+     *
+     * true=IN（READ/CSW 应答回发数据），false=OUT（CBW/WRITE/UNMAP 收数据）。
+     * 满足 TransferOperator::alloc_transfer_handle 的方向记录契约，
+     * 供 transfer_is_in 查询。MSC 的 OUT 应答不带 transfer，正常情况下
+     * 不会走到 send_transfer_data，该字段主要用于协议层 length 计算。
+     */
+    bool is_in = false;
+
     // ===== 本结构体自用缓冲区 =====
 
     /**
@@ -101,6 +111,7 @@ struct StorageIoTransfer {
         file_lba = 0;
         file_offset = 0;
         direct_io = false;
+        is_in = false;
         fallback_data.clear();
     }
 

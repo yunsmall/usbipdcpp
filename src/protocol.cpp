@@ -239,18 +239,20 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
 
     // 从 transfer 获取数据。入口条件不能只看 actual_length：ISO 传输即使
     // actual_length 为 0（如全包失败/0 字节）也必须由 operator 发送 iso
-    // 描述符（vhci 按 number_of_packets 读取，不发会错位），数据发不发由
-    // operator 按方向决定（ISO OUT 不发送数据）；非 ISO 传输 actual_length
-    // 为 0 时走 else 分支只发 header——不能把 0 字节的非 ISO 传输放进 op
-    // 路径（如存储后端的零拷贝 send_direct 在 Windows 上
-    // TransmitFile(0) 会发送整个文件）
+    // 描述符（vhci 按 number_of_packets 读取，不发会错位）；数据发送
+    // length 按 transfer_is_in 计算：IN 传 actual_length（数据回发），OUT
+    // 恒为 0（OUT 应答无数据回发，见 stub_tx.c 的 usb_pipein 条件；vhci
+    // 对 OUT 也不读数据，传非 0 会把数据误读成 iso 描述符导致校验失败）。
+    // 非 ISO 传输 actual_length 为 0 时走 else 分支只发 header——不能把
+    // 0 字节的非 ISO 传输放进 op 路径（如存储后端的零拷贝 send_direct 在
+    // Windows 上 TransmitFile(0) 会发送整个文件）
     if (transfer && (actual_length > 0 || number_of_packets > 0)) {
         auto *op = transfer.get_operator();
         void *raw_handle = transfer.get();
 
         asio::write(sock, asio::buffer(data1), ec);
         if (!ec)
-            op->send_transfer_data(raw_handle, sock, actual_length, ec);
+            op->send_transfer_data(raw_handle, sock, op->transfer_is_in(raw_handle) ? actual_length : 0, ec);
     }
     else {
         asio::write(sock, asio::buffer(data1), ec);
@@ -428,7 +430,9 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
     if (transfer) {
         auto *op = transfer.get_operator();
         void *raw_handle = transfer.get();
-        op->send_transfer_data(raw_handle, sock, transfer_buffer_length, ec);
+        // 数据阶段只在 OUT 方向携带（与 from_socket 的方向判断对称）：
+        // IN 恒传 0，防止 IN 的 transfer 缓冲内容被误发
+        op->send_transfer_data(raw_handle, sock, op->transfer_is_in(raw_handle) ? 0 : transfer_buffer_length, ec);
     }
 }
 

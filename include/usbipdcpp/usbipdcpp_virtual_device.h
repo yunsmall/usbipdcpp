@@ -35,3 +35,12 @@
 #include "usbipdcpp/virtual_device/UvcVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/video_sources/VideoSource.h"
 #include "usbipdcpp/virtual_device/video_sources/ColorBarSource.h"
+
+// UAC
+#include "usbipdcpp/virtual_device/UacConstants.h"
+#include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/audio_sources/AudioSource.h"
+#include "usbipdcpp/virtual_device/audio_sources/SineWaveSource.h"
+#include "usbipdcpp/virtual_device/audio_sources/FourierSource.h"
+#include "usbipdcpp/virtual_device/audio_sinks/AudioSink.h"
+#include "usbipdcpp/virtual_device/audio_sinks/WavFileSink.h"

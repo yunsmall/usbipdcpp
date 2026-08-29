@@ -45,6 +45,10 @@ void UacAudioControlHandler::build_class_descriptor() {
 
     // UAC 1.0：Header(9) + Input Terminal(12) + Feature Unit(7+ch+1) + Output Terminal(9)
     // AS interface 固定跟在 AC 之后（interface 1）
+    // 麦克风拓扑：IT(MIC) → FU → OT(USB streaming)；扬声器拓扑：IT(USB streaming) → FU
+    // → OT(Speaker)（对齐内核 gadget f_uac1.c：usb_out_it_desc/io_out_ot_desc）。
+    // 方向由 input_terminal_type 判断：数据从 USB 流入（IT=TT_USB_STREAMING）即扬声器
+    bool is_speaker = (config.input_terminal_type == TT_USB_STREAMING);
     std::uint8_t as_if_num = 1;
     auto fu_len = static_cast<std::uint8_t>(AC_FEATURE_UNIT_FIXED_LEN + config.channels + 1);
 
@@ -63,7 +67,7 @@ void UacAudioControlHandler::build_class_descriptor() {
                  0x01, as_if_num}
             .append_to(d);
 
-    // Input Terminal：类型来自配置（默认麦克风）
+    // Input Terminal：麦克风方向类型来自配置（默认麦克风），扬声器方向为 USB streaming
     auto channel_config = (config.channels == 2) ? CHANNEL_CONFIG_STEREO : CHANNEL_CONFIG_MONO;
     AcInputTerminalDesc{AC_INPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_INPUT_TERMINAL,
                         UAC_ENTITY_INPUT_TERMINAL, config.input_terminal_type,
@@ -77,9 +81,10 @@ void UacAudioControlHandler::build_class_descriptor() {
                       0x01}
             .append_to(d, bma_controls, config.channels);
 
-    // Output Terminal: USB streaming
+    // Output Terminal: 麦克风方向为 USB streaming，扬声器方向为 output_terminal_type
+    auto output_type = is_speaker ? config.output_terminal_type : TT_USB_STREAMING;
     AcOutputTerminalDesc{AC_OUTPUT_TERMINAL_LEN, CS_INTERFACE, AC_DESC_OUTPUT_TERMINAL,
-                         UAC_ENTITY_OUTPUT_TERMINAL, TT_USB_STREAMING,
+                         UAC_ENTITY_OUTPUT_TERMINAL, output_type,
                          0x00, UAC_ENTITY_FEATURE_UNIT,
                          0x00}
             .append_to(d);
@@ -695,6 +700,286 @@ data_type UacAudioStreamingHandler::request_get_descriptor(std::uint8_t type, st
     return VirtualInterfaceHandler::request_get_descriptor(type, language_id, descriptor_length, p_status);
 }
 
+// ==================== UacAudioStreamingSinkHandler ====================
+
+UacAudioStreamingSinkHandler::UacAudioStreamingSinkHandler(UsbInterface &handle_interface, StringPool &string_pool,
+                                                           std::unique_ptr<AudioSink> sink) :
+    VirtualInterfaceHandler(handle_interface, string_pool), sink(std::move(sink)) {
+    change_string_interface(L"Usbipdcpp Speaker");
+}
+
+void UacAudioStreamingSinkHandler::on_setup_interface_handlers() {
+    build_class_descriptor();
+}
+
+void UacAudioStreamingSinkHandler::build_class_descriptor() {
+    auto fmt = sink->current_format();
+    std::vector<std::uint32_t> rates;
+    for (auto &f: sink->supported_formats()) {
+        if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
+            rates.push_back(f.sample_rate);
+        }
+    }
+    std::sort(rates.begin(), rates.end());
+    rates.erase(std::unique(rates.begin(), rates.end()), rates.end());
+
+    data_type d;
+    // AS General: bTerminalLink 指向 AC 的 Input Terminal（USB streaming，扬声器方向
+    // 数据从该终端流入，对齐内核 gadget f_uac1.c 的 as_out_header_desc 动态终端链接）
+    AsGeneralDesc{AS_GENERAL_LEN, CS_INTERFACE, AS_DESC_GENERAL,
+                  UAC_ENTITY_INPUT_TERMINAL, 0x01, AUDIO_FORMAT_PCM}
+            .append_to(d);
+
+    // Format Type I: 16 位 PCM，采样率列表来自 sink（UAC 1.0 允许最多 255 个）
+    AsFormatTypeIHead{static_cast<std::uint8_t>(AS_FORMAT_TYPE_I_BASE_LEN + rates.size() * AS_SAMFREQ_ENTRY_LEN),
+                      CS_INTERFACE, AS_DESC_FORMAT_TYPE,
+                      0x01, // bFormatType: FORMAT_TYPE_I
+                      static_cast<std::uint8_t>(fmt.channels),
+                      0x02, // bSubframeSize
+                      static_cast<std::uint8_t>(fmt.bits_per_sample),
+                      static_cast<std::uint8_t>(rates.size())}
+            .append_to(d, rates);
+
+    class_desc = std::move(d);
+}
+
+data_type UacAudioStreamingSinkHandler::get_class_specific_descriptor() {
+    return class_desc;
+}
+
+void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb(
+        std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+        const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
+
+    auto type = static_cast<RequestType>(setup_packet.calc_request_type());
+    if (type != RequestType::Class) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        return;
+    }
+
+    auto *trx = GenericTransfer::from_handle(transfer.get());
+
+    // 调试用：打印收到的 AS 控制请求（主机驱动的流启动排查）
+    SPDLOG_TRACE("[UAC-AS-SINK] ctrl: bmReqType=0x{:02x} bRequest=0x{:02x} wValue=0x{:04x} wIndex=0x{:04x} len={}",
+                setup_packet.calc_request_type(), setup_packet.request, setup_packet.value, setup_packet.index,
+                transfer_buffer_length);
+
+    // 处理类特定 GET_DESCRIPTOR（CS_INTERFACE=0x24）
+    if (setup_packet.request == static_cast<std::uint8_t>(StandardRequest::GetDescriptor)) {
+        auto desc_type = setup_packet.value >> 8;
+        if (desc_type == CS_INTERFACE) {
+            auto resp = class_desc;
+            auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
+            trx->data.assign(resp.begin(), resp.begin() + act_len);
+            trx->actual_length = act_len;
+            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
+                    static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
+            return;
+        }
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        return;
+    }
+
+    // AS 接口控制 entity 固定为接口自身（0）
+    auto entity = setup_packet.index >> 8;
+    auto control_selector = setup_packet.value >> 8;
+    auto request = setup_packet.request;
+
+    if (entity != 0 || control_selector != AS_SAMPLING_FREQ_CONTROL) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        return;
+    }
+
+    if (!handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    }
+}
+
+void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb_to_endpoint(
+        std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
+        const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
+    // Linux snd-usb-audio 对 UAC1 的采样率控制发给端点：
+    // wValue 高字节为控制选择器，wIndex 为端点地址（recpient=Endpoint）
+    auto control_selector = setup_packet.value >> 8;
+    auto request = setup_packet.request;
+    auto *trx = GenericTransfer::from_handle(transfer.get());
+
+    if (control_selector != AS_SAMPLING_FREQ_CONTROL ||
+        !handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    }
+}
+
+bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t seqnum, std::uint8_t request,
+                                                                GenericTransfer *trx, TransferHandle &transfer,
+                                                                std::uint32_t transfer_buffer_length) {
+    auto fmt = sink->current_format();
+    switch (request) {
+        case GET_CUR: {
+            auto rate = fmt.sample_rate;
+            trx->data = {static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
+                         static_cast<std::uint8_t>((rate >> 16) & 0xFF)};
+            trx->actual_length = 3;
+            break;
+        }
+        case GET_MIN:
+        case GET_MAX: {
+            // 返回支持列表中的最小/最大采样率
+            std::vector<std::uint32_t> rates;
+            for (auto &f: sink->supported_formats()) {
+                if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
+                    rates.push_back(f.sample_rate);
+                }
+            }
+            std::sort(rates.begin(), rates.end());
+            auto rate = (request == GET_MIN) ? rates.front() : rates.back();
+            trx->data = {static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
+                         static_cast<std::uint8_t>((rate >> 16) & 0xFF)};
+            trx->actual_length = 3;
+            break;
+        }
+        case SET_CUR: {
+            if (trx->data.size() < 3) {
+                return false;
+            }
+            auto rate = static_cast<std::uint32_t>(trx->data[0] | (trx->data[1] << 8) | (trx->data[2] << 16));
+            // UAC 1.0 §5.2.3.2.3.1: 离散采样率端点收到不支持的值时应四舍五入到最近的支持值
+            std::vector<std::uint32_t> rates;
+            for (auto &f: sink->supported_formats()) {
+                if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
+                    rates.push_back(f.sample_rate);
+                }
+            }
+            std::sort(rates.begin(), rates.end());
+            auto nearest = *std::min_element(rates.begin(), rates.end(), [rate](std::uint32_t a, std::uint32_t b) {
+                return std::abs(static_cast<std::int64_t>(a) - rate) <
+                       std::abs(static_cast<std::int64_t>(b) - rate);
+            });
+            if (nearest != rate) {
+                SPDLOG_INFO("采样率 SET_CUR {} 不在支持列表，四舍五入到 {}", rate, nearest);
+            }
+            rate = nearest;
+            if (!sink->set_format(fmt.channels, fmt.bits_per_sample, rate)) {
+                SPDLOG_WARN("采样率 SET_CUR {} 被 sink 拒绝", rate);
+                return false;
+            }
+            SPDLOG_INFO("采样率 SET_CUR: {} → sink 切换成功", rate);
+            build_class_descriptor();
+            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
+            return true;
+        }
+        default:
+            return false;
+    }
+
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
+            std::move(transfer)));
+    return true;
+}
+
+void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                               std::uint32_t transfer_flags,
+                                                               std::uint32_t transfer_buffer_length,
+                                                               TransferHandle transfer, int num_iso_packets,
+                                                               std::error_code &ec) {
+    if (!streaming) {
+        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        return;
+    }
+
+    auto *trx = GenericTransfer::from_handle(transfer.get());
+    auto &data = trx->data;
+    auto &iso_descs = trx->iso_descriptors;
+
+    // iso 描述符 status 初始为 -EXDEV（对齐内核 usb_submit_urb 初始化），
+    // 必须清零，否则内核音频驱动认为所有包失败
+    for (auto &iso: iso_descs)
+        iso.status = 0;
+
+    // OUT 数据在缓冲中按各包 length 累加紧凑排列（描述符 offset 是客户端本地布局，
+    // 不可信，见 LibusbTransferOperator recv_transfer_data 注释），逐包读出交给
+    // sink 消费。收下即回 RET_SUBMIT——主机按帧节奏发，无需 IN 方向的调度器延迟
+    std::uint32_t total_received = 0;
+    std::size_t data_pos = 0;
+    for (auto &iso: iso_descs) {
+        auto take = std::min(static_cast<std::size_t>(iso.length), data.size() - data_pos);
+        if (take > 0) {
+            sink->write_pcm(&data[data_pos], take);
+            iso.actual_length = static_cast<std::uint32_t>(take);
+            total_received += iso.actual_length;
+        }
+        data_pos += iso.length;
+    }
+
+    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_received, 0,
+            static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
+}
+
+void UacAudioStreamingSinkHandler::on_new_connection(Session &current_session, error_code &ec) {
+    VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    streaming = false;
+    sink->reset();
+}
+
+void UacAudioStreamingSinkHandler::on_disconnection(error_code &ec) {
+    streaming = false;
+    sink->reset();
+    VirtualInterfaceHandler::on_disconnection(ec);
+}
+
+void UacAudioStreamingSinkHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+    if (alternate_setting == 0) {
+        streaming = false;
+        *p_status = 0;
+    }
+    else if (alternate_setting == 1) {
+        streaming = true;
+        sink->reset(); // 清空缓冲，保证新流起点干净
+        *p_status = 0;
+    }
+    else {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    }
+}
+
+std::uint8_t UacAudioStreamingSinkHandler::request_get_interface(std::uint32_t *p_status) {
+    return streaming ? 1 : 0;
+}
+
+void UacAudioStreamingSinkHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = 0;
+}
+void UacAudioStreamingSinkHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                                                std::uint32_t *p_status) {
+    *p_status = 0;
+}
+void UacAudioStreamingSinkHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
+    *p_status = 0;
+}
+void UacAudioStreamingSinkHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
+                                                                  std::uint32_t *p_status) {
+    *p_status = 0;
+}
+std::uint16_t UacAudioStreamingSinkHandler::request_get_status(std::uint32_t *p_status) {
+    return 0;
+}
+std::uint16_t UacAudioStreamingSinkHandler::request_endpoint_get_status(std::uint8_t ep_address,
+                                                                        std::uint32_t *p_status) {
+    return 0;
+}
+
+data_type UacAudioStreamingSinkHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
+                                                                std::uint16_t descriptor_length, std::uint32_t *p_status) {
+    if (type == CS_INTERFACE) {
+        return class_desc;
+    }
+    return VirtualInterfaceHandler::request_get_descriptor(type, language_id, descriptor_length, p_status);
+}
+
 // ==================== UacDeviceHelper ====================
 
 void UacDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
@@ -717,6 +1002,28 @@ void UacDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &strin
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     // UAC 走等时帧调度（ISO URB 按帧节奏延迟响应），启用设备级调度器
     dh->set_use_transfer_scheduler(true);
+    dh->setup_interface_handlers();
+}
+
+void UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
+                                    std::unique_ptr<AudioSink> sink, const UacDeviceConfig &config) {
+    auto ac = std::make_shared<UacAudioControlHandler>(device->interfaces[0], string_pool);
+    auto as = std::make_shared<UacAudioStreamingSinkHandler>(device->interfaces[1], string_pool, std::move(sink));
+
+    device->interfaces[0].handler = ac;
+    device->interfaces[1].handler = as;
+
+    // 声道数：config 未指定（0）时从 sink 推断
+    auto resolved = config;
+    if (resolved.channels == 0) {
+        resolved.channels = as->get_sink()->current_format().channels;
+    }
+    ac->set_config(resolved);
+    as->set_ac_handler(ac.get());
+
+    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
+                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    // 扬声器收流（OUT）主机按帧节奏发、收下即答，无需等时帧调度器
     dh->setup_interface_handlers();
 }
 

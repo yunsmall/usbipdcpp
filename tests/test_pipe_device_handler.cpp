@@ -168,7 +168,12 @@ void send_cmd_submit(asio::ip::tcp::socket &client, std::uint32_t seqnum, std::u
     submit.interval = 0;
     submit.setup = setup;
     if (direction == UsbIpDirection::Out && !out_data.empty()) {
-        auto *trx = new GenericTransfer{};
+        // 方向经 alloc_transfer_handle 记录（transfer_is_in 契约），否则直接
+        // new 的 GenericTransfer 方向默认为 IN，CmdSubmit::to_socket 会按
+        // transfer_is_in 传 0 导致 OUT 数据不发（服务器等数据卡住）
+        UsbIpHeaderBasic header{};
+        header.direction = UsbIpDirection::Out;
+        auto *trx = GenericTransfer::from_handle(out_op.alloc_transfer_handle(out_data.size(), 0, header, {}));
         trx->data = out_data;
         TransferHandle handle(trx, &out_op);
         submit.transfer = std::move(handle);

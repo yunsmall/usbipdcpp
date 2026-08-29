@@ -36,6 +36,12 @@ std::size_t VirtualDeviceTransferOperator::get_actual_length(void *handle) {
     return generic_op_.get_actual_length(handle);
 }
 
+bool VirtualDeviceTransferOperator::transfer_is_in(void *handle) {
+    // 防御路径：正常流程 TransferHandle 绑定 leaf op（见 protocol.cpp 的
+    // set_handle），to_socket 不会拿到本路由 op
+    return generic_op_.transfer_is_in(handle);
+}
+
 UsbIpIsoPacketDescriptor VirtualDeviceTransferOperator::get_iso_descriptor(void *handle, int index) {
     return generic_op_.get_iso_descriptor(handle, index);
 }
