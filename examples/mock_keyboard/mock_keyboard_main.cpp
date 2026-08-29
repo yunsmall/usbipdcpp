@@ -18,43 +18,11 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {
-            UsbInterface{
-                    .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-                    .interface_subclass = 0x01, // Boot Interface Subclass
-                    .interface_protocol = 0x01, // Keyboard
-                    .endpoints = {{
-                            UsbEndpoint{
-                                    .address = 0x81, // IN
-                                    .attributes = 0x03,
-                                    .max_packet_size = 16,
-                                    .interval = 10,
-                            },
-                    }},
-            },
-    };
-    interfaces[0].with_handler<KeyboardHandler>(string_pool);
-
-    auto mock_keyboard = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_keyboard",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-            .vendor_id = 0x1234,
-            .product_id = 0x5679,
-            .device_bcd = 0xABCD,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
-    auto device_handler = mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    // make_interface 返回已绑定 KeyboardHandler 的完整键盘接口
+    auto mock_keyboard = UsbDevice::make(busid, 0x1234, 0x5679,
+                                         {KeyboardHandler::make_interface(string_pool, 0x81)},
+                                         1, 1, 0, "/usbipdcpp/mock_keyboard", UsbSpeed::Full, 0xABCD);
+    mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &kb = dynamic_cast<KeyboardHandler &>(*mock_keyboard->interfaces[0].handler);
 

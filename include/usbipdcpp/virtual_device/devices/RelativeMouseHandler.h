@@ -27,6 +27,28 @@ public:
     RelativeMouseHandler(UsbInterface &handle_interface, StringPool &string_pool);
     ~RelativeMouseHandler() override = default;
 
+    /**
+     * @brief 创建标准的 HID 相对鼠标接口（已绑定本 handler）
+     *
+     * 接口定义：HID 类（03/00/00），一个中断 IN 端点。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param in_ep 中断 IN 端点地址（设备→主机，鼠标报告）
+     * @return 已绑好 RelativeMouseHandler 的完整 UsbInterface
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                .interface_subclass = 0x00,
+                .interface_protocol = 0x00,
+                .endpoints = {{UsbEndpoint{.address = in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                                           .max_packet_size = 8, // 6 字节报告 + 对齐余量
+                                           .interval = 10}}},
+        };
+        i.with_handler<RelativeMouseHandler>(string_pool);
+        return i;
+    }
+
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
 

@@ -46,35 +46,11 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {UsbInterface{
-            .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-            .interface_subclass = 0x01,
-            .interface_protocol = 0x02, // Mouse
-            .endpoints = {{UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 1}}}}};
-
-    interfaces[0].with_handler<AbsoluteMouseHandler>(string_pool, 1920, 1080);
-
-    auto mouse_device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/absolute_mouse",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-            .vendor_id = 0x1234,
-            .product_id = 0x5680,
-            .device_bcd = 0x0100,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
-
-    auto device_handler = mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    // make_interface 返回已绑定 AbsoluteMouseHandler 的完整接口（1920x1080 为默认屏幕尺寸）
+    auto mouse_device = UsbDevice::make(busid, 0x1234, 0x5680,
+                                        {AbsoluteMouseHandler::make_interface(string_pool, 0x81)},
+                                        1, 1, 0, "/usbipdcpp/absolute_mouse");
+    mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto mouse = std::dynamic_pointer_cast<AbsoluteMouseHandler>(mouse_device->interfaces[0].handler);
 

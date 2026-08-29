@@ -23,33 +23,11 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {UsbInterface{
-            .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-            .interface_subclass = 0x00,
-            .interface_protocol = 0x00,
-            .endpoints = {{UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10}}}}};
-    interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
-
-    auto mock_mouse = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_mouse",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
-            .vendor_id = 0x1234,
-            .product_id = 0x5678,
-            .device_bcd = 0xabcd,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Low),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Low),
-    });
-    auto device_handler = mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    // make_interface 返回已绑定 RelativeMouseHandler 的完整鼠标接口
+    auto mock_mouse = UsbDevice::make(busid, 0x1234, 0x5678,
+                                      {RelativeMouseHandler::make_interface(string_pool, 0x81)},
+                                      1, 1, 0, "/usbipdcpp/mock_mouse", UsbSpeed::Low, 0xabcd);
+    mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(mock_mouse->interfaces[0].handler);
 

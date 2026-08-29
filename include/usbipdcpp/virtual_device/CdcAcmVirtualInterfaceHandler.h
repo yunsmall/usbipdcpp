@@ -102,6 +102,29 @@ class USBIPDCPP_API CdcAcmCommunicationInterfaceHandler : public VirtualInterfac
 public:
     CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
+    /**
+     * @brief 创建 CDC ACM 通信接口（已绑定本 handler）
+     *
+     * 接口定义：CDC 类、ACM 子类、AT 命令协议（02/02/01），一个中断 IN 端点
+     * （用于串口状态通知）。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param interrupt_in_ep 中断 IN 端点地址（设备→主机，状态通知）
+     * @return 已绑好 CdcAcmCommunicationInterfaceHandler 的完整 UsbInterface
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t interrupt_in_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::CDC),
+                .interface_subclass = 0x02, // ACM
+                .interface_protocol = 0x01, // AT Commands (v25ter)
+                .endpoints = {{UsbEndpoint{.address = interrupt_in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                                           .max_packet_size = 64,
+                                           .interval = 16}}},
+        };
+        i.with_handler<CdcAcmCommunicationInterfaceHandler>(string_pool);
+        return i;
+    }
+
     // ========== 内部实现（子类无需关心） ==========
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
@@ -229,6 +252,34 @@ protected:
 class USBIPDCPP_API CdcAcmDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
     CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
+
+    /**
+     * @brief 创建 CDC ACM 数据接口（已绑定本 handler）
+     *
+     * 接口定义：CDC Data 类（0A/00/00），一个 Bulk IN + 一个 Bulk OUT 端点
+     * （Full speed，mps=64）。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param in_ep Bulk IN 端点地址（设备→主机，串口数据）
+     * @param out_ep Bulk OUT 端点地址（主机→设备，串口数据）
+     * @return 已绑好 CdcAcmDataInterfaceHandler 的完整 UsbInterface
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep, std::uint8_t out_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::CDCData),
+                .interface_subclass = 0x00,
+                .interface_protocol = 0x00,
+                .endpoints = {{UsbEndpoint{.address = in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                                           .max_packet_size = 64,
+                                           .interval = 0},
+                               UsbEndpoint{.address = out_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                                           .max_packet_size = 64,
+                                           .interval = 0}}},
+        };
+        i.with_handler<CdcAcmDataInterfaceHandler>(string_pool);
+        return i;
+    }
 
     // ========== 内部实现（子类无需关心） ==========
 

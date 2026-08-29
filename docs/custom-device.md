@@ -38,6 +38,15 @@ UsbDevice（设备描述符 + 接口列表）
 
 ## 第一步：定义设备模型
 
+> **库内置 handler 的接口不要手写**：每个内置 InterfaceHandler 都提供同名静态工厂
+> `make_interface(StringPool&, <每个端点一个地址参数>...)`，直接返回已绑好 handler 的
+> 完整 `UsbInterface`（如 `KeyboardHandler::make_interface(pool, 0x81)`）。接口 handler
+> 内部可能对接口结构有硬编码假设（如构造函数里记录端点地址、假定端点数量/属性），
+> 手写接口与 handler 的假设不符会导致枚举或数据传输异常，因此 **UsbInterface 一律
+> 建议用工厂创建**（自定义 handler 也照此提供自己的工厂，见 [make_interface 工厂](#make_interface-工厂)）。
+> `UsbDevice` 则没有此约束——想更灵活地配置时完全可以手动构造（所有成员都可改）。
+> 下面的手写 `UsbInterface`/`UsbEndpoint` 仅用于理解底层结构。
+
 所有设备都从定义描述符结构开始：
 
 ```cpp
@@ -340,6 +349,34 @@ public:
         echo_channel.set_max_pending(1024);
     }
 
+    /**
+     * @brief 创建回显接口（已绑定本 handler）。库内置 handler 都提供同名工厂，
+     * 自定义 handler 可选提供（约定见下文「make_interface 工厂」小节）：
+     *
+     * 形参 = 该接口每类端点一个地址（参数名即用途，调用方可显式指定任意地址），
+     * 端点属性/方向由工厂给定合理默认，只暴露地址可变；返回的接口已绑好 handler。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param in_ep Bulk IN 端点地址（设备→主机）
+     * @param out_ep Bulk OUT 端点地址（主机→设备）
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep, std::uint8_t out_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::VendorSpecific),
+                .interface_subclass = 0x00,
+                .interface_protocol = 0x00,
+                .endpoints = {{UsbEndpoint{.address = in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                                           .max_packet_size = 64,
+                                           .interval = 0},
+                               UsbEndpoint{.address = out_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                                           .max_packet_size = 64,
+                                           .interval = 0}}},
+        };
+        i.with_handler<EchoInterfaceHandler>(string_pool);
+        return i;
+    }
+
     // ===== 生命周期：会话绑定与断连清理（通道内部状态必须在这两个回调里维护） =====
     void on_new_connection(Session &current_session, error_code &ec) override {
         // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
@@ -424,13 +461,46 @@ private:
 两个绑定入口的区别：
 
 - `device->with_handler<T>(...)`——绑定**设备级** handler（每个虚拟设备一个）
-- `interfaces[i].with_handler<T>(...)`——给**单个接口**绑定接口级 handler（方法二必须手动绑）。
+- `interfaces[i].with_handler<T>(...)`——给**单个接口**绑定接口级 handler（方法二手动
+  绑，或用该 handler 的 `make_interface` 自动绑）。
   `setup_interface_handlers()` 只注册绑定了 handler 的接口的端点，**没绑 handler 的接口
   主机访问不到**（设备级 handler 不会自动创建接口 handler；方法一的 PipeDeviceHandler
   会在 setup_interface_handlers 时给所有接口自动绑管道接口 handler，所以方法一不需要手动绑）
 
-把上面各段拼起来，一个完整的自定义设备文件长这样（接口定义用第一步的 vendor
-接口；数据面在接口 handler 内部，设备不需要业务线程）：
+### make_interface 工厂
+
+库内置 handler（`KeyboardHandler`/`RelativeMouseHandler`/`AbsoluteMouseHandler`/
+`GamepadHandler`/`DigitizerHandler`/`MscBulkOnlyHandler`/`CdcAcmCommunicationInterfaceHandler`/
+`CdcAcmDataInterfaceHandler`）都提供同名静态工厂：
+
+```cpp
+// 形参 = 该接口每个端点一个地址（参数名即用途），调用方可显式指定任意地址；
+// 端点属性（attributes/max_packet_size/interval/方向）由工厂给定合理默认，
+// 返回值是已绑好 handler 的完整 UsbInterface
+static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep, std::uint8_t out_ep);
+```
+
+约定：
+
+- **端点地址必须显式传**（不能省）——外界要能控制端点号，参数名即该端点的用途
+- **handler 构造带业务参数**（如 AbsoluteMouseHandler 的屏幕尺寸、DigitizerHandler 的
+  坐标上限）：工厂把这些参数透传（带默认值），只暴露真正需要改的
+- **同方向多端点需要区分"作用"**（如同一接口两个 IN 端点用途不同）：工厂的地址参数
+  不足以表达语义，由该 handler 的**构造函数**额外收一份「用途端点地址」，工厂在
+  with_handler 时透传，handler 内部按用途记住地址、按 ep 分流。框架层不做映射猜测
+- 自定义 handler 可选提供同名工厂（上面 EchoInterfaceHandler 就是范例），不提供也不
+  影响——`UsbInterface` 仍可手写聚合 + `with_handler` 直接绑定
+- **UsbDevice 可以手动构造**：需要比 make 参数更灵活的配置时（如接口数量动态变化），
+  直接 `UsbDevice{...}` 聚合初始化即可（所有成员都可改）；**UsbInterface 则建议一律
+  走工厂**——接口 handler 内部可能硬编码了接口的端点结构（构造时记录端点地址、
+  假定端点数量/属性），手写接口与 handler 的假设不一致会在枚举或数据传输时出问题
+- 设备级同理：`UsbDevice::make(busid, vid, pid, interfaces, ...)` 一步建好设备——
+  默认参数按改动频率从高到低排列（`bus_num`/`dev_num`/`device_class`/`path`/`speed` 在前，
+  后面是 `device_bcd`/`device_subclass`/`device_protocol`/`configuration_value`/
+  `num_configurations`），EP0 按 speed 自动生成；返回后仍可改任意字段再绑定设备级 handler
+
+把上面各段拼起来，一个完整的自定义设备文件长这样（接口定义用
+`EchoInterfaceHandler::make_interface`；数据面在接口 handler 内部，设备不需要业务线程）：
 
 ```cpp
 #include "usbipdcpp/Device.h"
@@ -448,10 +518,10 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    // 第一步里的 interfaces 定义（vendor 类，bulk IN 0x81 + bulk OUT 0x02）
-    interfaces[0].with_handler<EchoInterfaceHandler>(string_pool);
-
-    auto device = std::make_shared<UsbDevice>(UsbDevice{ /* 第一步里的设备定义 */ });
+    // EchoInterfaceHandler::make_interface 返回已绑定 EchoInterfaceHandler 的
+    // 完整接口（vendor 类，bulk IN 0x81 + bulk OUT 0x02）
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678,
+                                  {EchoInterfaceHandler::make_interface(string_pool, 0x81, 0x02)});
     auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();   // 必须：注册端点路由 + 接口 handler
 

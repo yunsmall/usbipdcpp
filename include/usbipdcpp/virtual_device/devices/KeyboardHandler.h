@@ -53,6 +53,28 @@ public:
     KeyboardHandler(UsbInterface &handle_interface, StringPool &string_pool);
     ~KeyboardHandler() override = default;
 
+    /**
+     * @brief 创建标准的 HID 键盘接口（已绑定本 handler）
+     *
+     * 接口定义：HID 类、Boot 键盘子类/协议（03/01/01），一个中断 IN 端点。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param in_ep 中断 IN 端点地址（设备→主机，键盘/媒体键报告）
+     * @return 已绑好 KeyboardHandler 的完整 UsbInterface
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                .interface_subclass = 0x01, // Boot Interface Subclass
+                .interface_protocol = 0x01, // Keyboard
+                .endpoints = {{UsbEndpoint{.address = in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                                           .max_packet_size = 16, // Report ID 1 完整报告需 ≥9 字节
+                                           .interval = 10}}},
+        };
+        i.with_handler<KeyboardHandler>(string_pool);
+        return i;
+    }
+
     // ========== HidVirtualInterfaceHandler 接口实现 ==========
 
     void on_new_connection(Session &current_session, error_code &ec) override;

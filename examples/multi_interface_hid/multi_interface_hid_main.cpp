@@ -22,45 +22,16 @@ int main(int argc, char **argv) {
 
     // 接口 0: 相对鼠标
     // 接口 1: 键盘
+    // 接口 0: 相对鼠标（make_interface 提供非 boot 的 HID 鼠标定义 03/00/00）
+    // 接口 1: 键盘
     std::vector<UsbInterface> interfaces = {
-            UsbInterface{.interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-                         .interface_subclass = 0x01, // Boot Interface
-                         .interface_protocol = 0x02, // Mouse
-                         .endpoints = {{UsbEndpoint{.address = 0x81,
-                                                    .attributes = 0x03,
-                                                    .max_packet_size = 8,
-                                                    .interval = 10}}}},
-            UsbInterface{.interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-                         .interface_subclass = 0x01, // Boot Interface
-                         .interface_protocol = 0x01, // Keyboard
-                         .endpoints = {{UsbEndpoint{.address = 0x82,
-                                                    .attributes = 0x03,
-                                                    .max_packet_size = 16,
-                                                    .interval = 10}}}},
+            RelativeMouseHandler::make_interface(string_pool, 0x81),
+            KeyboardHandler::make_interface(string_pool, 0x82),
     };
-    interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
-    interfaces[1].with_handler<KeyboardHandler>(string_pool);
 
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/multi_interface_hid",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Low),
-            .vendor_id = 0x1234,
-            .product_id = 0x5679,
-            .device_bcd = 0xabcd,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Low),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Low),
-    });
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    auto device = UsbDevice::make(busid, 0x1234, 0x5679, interfaces, 1, 1, 0, "/usbipdcpp/multi_interface_hid",
+                                  UsbSpeed::Low, 0xabcd);
+    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(device->interfaces[0].handler);
     auto &keyboard = *std::dynamic_pointer_cast<KeyboardHandler>(device->interfaces[1].handler);

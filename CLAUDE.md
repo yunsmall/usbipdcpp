@@ -29,6 +29,11 @@ push前先提交代码，push和提交请分别执行不要放在一起
 `usbip -t 53240 attach/list ...`这种命令，注意-t必须紧跟usbip的后面，
 处于attach list等所有子命令的前面
 
+**usbip 的 attach 必须用 sudo**：attach 要写 /sys 并移交 fd 给 vhci_hcd，
+WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（极易误判成
+服务器/协议问题）。list 只读不需要 sudo，但为统一可直接
+`sudo usbip -t 53240 ...`。验证导入状态用 `sudo usbip port`。
+
 ## mock 设备本地验证的坑
 
 在 WSL 里起 mock 服务器并 attach 验证时，两个坑容易踩到：
@@ -39,3 +44,9 @@ push前先提交代码，push和提交请分别执行不要放在一起
 - **清理旧进程时禁用 `pkill -f mock_xxx`**：`-f` 按整条命令行匹配，
   会把自己的 shell（bash -lc 命令串里含 "mock_xxx"）杀掉。改用精确
   进程名 `pkill -x mock_xxx`（可执行名，不含路径/参数）
+- **进程名超 15 字符会被内核截断**（Linux comm 上限）：`pkill -x` 匹配的
+  是截断后的名字，如 `mock_cdc_throttle`→`mock_cdc_thrott`、
+  `multi_interface_hid`→`multi_interface`、`multi_devices` 恰好 13 字符不截断。
+  杀不掉时先 `ps -eo comm | grep -i mock` 看真实 comm 名再用 `pkill -x <真实名>`，
+  杀完 `ss -tln | grep 53240` 确认端口释放（端口被占会导致下一个服务器起不来，
+  误 attach 到旧设备上）

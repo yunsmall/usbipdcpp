@@ -43,24 +43,8 @@ int main(int argc, char **argv) {
             },
     };
 
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_pipe",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-            .vendor_id = 0x1234,
-            .product_id = 0x5690,
-            .device_bcd = 0x0100,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
+    // 管道设备没有接口 handler（PipeDeviceHandler 自动管道化所有端点），接口手动定义
+    auto device = UsbDevice::make(busid, 0x1234, 0x5690, interfaces, 1, 1, 0, "/usbipdcpp/mock_pipe");
     auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
 
     // 标准请求行为配置（可选，默认行为：接受存在的 alt、其余回错误）：

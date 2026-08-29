@@ -21,43 +21,12 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    std::vector<UsbInterface> interfaces = {UsbInterface{.interface_class = 0x08, // Mass Storage
-                                                         .interface_subclass = 0x06, // SCSI transparent
-                                                         .interface_protocol = 0x50, // Bulk-Only Transport
-                                                         .endpoints = {{// Bulk IN
-                                                                        UsbEndpoint{.address = 0x81,
-                                                                                    .attributes = 0x02, // Bulk
-                                                                                    .max_packet_size = 512,
-                                                                                    .interval = 0},
-                                                                        // Bulk OUT
-                                                                        UsbEndpoint{.address = 0x02,
-                                                                                    .attributes = 0x02, // Bulk
-                                                                                    .max_packet_size = 512,
-                                                                                    .interval = 0}}}}};
-
     auto backend = std::unique_ptr<StorageBackend>(std::make_unique<RawImageBackend>(image_path, 4096));
-    interfaces[0].with_handler<MscBulkOnlyHandler>(string_pool, std::move(backend));
-
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_msc",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::High),
-            .vendor_id = 0x1234,
-            .product_id = 0x5681,
-            .device_bcd = 0x0100,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    // make_interface 返回已绑好 MscBulkOnlyHandler 的完整 Mass Storage 接口
+    auto device = UsbDevice::make(busid, 0x1234, 0x5681,
+                                  {MscBulkOnlyHandler::make_interface(string_pool, 0x81, 0x02, std::move(backend))},
+                                  1, 1, 0, "/usbipdcpp/mock_msc", UsbSpeed::High);  // 磁盘是高速设备，EP0 也按 High 生成（原笔误为 Full）
+    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     Server server;
     server.add_device(std::move(device));

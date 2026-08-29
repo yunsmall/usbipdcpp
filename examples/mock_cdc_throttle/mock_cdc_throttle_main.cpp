@@ -33,52 +33,17 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // CDC ACM 需要两个接口：通信接口和数据接口（与 mock_cdc_acm 一致的描述符）
+    // CDC ACM 需要两个接口：通信接口和数据接口（与 mock_cdc_acm 一致的描述符）。
+    // 数据接口用限流工厂：窗口内最多收 limit_bytes 字节，超出后 NAK window_ms
     std::vector<UsbInterface> interfaces = {
-            UsbInterface{.interface_class = 0x02,         // CDC Communication
-                         .interface_subclass = 0x02,      // ACM
-                         .interface_protocol = 0x01,      // AT Commands (v25ter)
-                         .endpoints = {{UsbEndpoint{.address = 0x83,  // Interrupt IN
-                                                    .attributes = 0x03,
-                                                    .max_packet_size = 64,
-                                                    .interval = 16}}}},
-            UsbInterface{.interface_class = 0x0A,         // CDC Data
-                         .interface_subclass = 0x00,
-                         .interface_protocol = 0x00,
-                         .endpoints = {{UsbEndpoint{.address = 0x81,  // Bulk IN
-                                                    .attributes = 0x02,
-                                                    .max_packet_size = 64,
-                                                    .interval = 0},
-                                        UsbEndpoint{.address = 0x02,  // Bulk OUT
-                                                    .attributes = 0x02,
-                                                    .max_packet_size = 64,
-                                                    .interval = 0}}}},
+            CdcAcmCommunicationInterfaceHandler::make_interface(string_pool, 0x83),
+            ThrottleCdcAcmDataInterfaceHandler::make_interface(string_pool, 0x81, 0x02, limit_bytes, window_ms),
     };
 
-    interfaces[0].with_handler<CdcAcmCommunicationInterfaceHandler>(string_pool);
-    // 数据接口用限流 handler：窗口内最多收 limit_bytes 字节，超出后 NAK window_ms
-    interfaces[1].with_handler<ThrottleCdcAcmDataInterfaceHandler>(string_pool, limit_bytes, window_ms);
-
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_cdc_throttle",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-            .vendor_id = 0x1234,
-            .product_id = 0x5681,  // throttled CDC ACM device
-            .device_bcd = 0x0100,
-            .device_class = 0x02,  // CDC Communication (at device level for IAD)
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    device_handler->setup_interface_handlers();
+    // IAD 复合设备需在设备级声明 CDC 类
+    auto device = UsbDevice::make(busid, 0x1234, 0x5681, std::move(interfaces),
+                                  1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_throttle");
+    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     // 关联通信接口和数据接口处理器
     auto &comm_handler =

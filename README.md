@@ -33,40 +33,19 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    // 1. Describe the USB device: one HID keyboard interface with an IN endpoint
-    std::vector<UsbInterface> interfaces = {
-        UsbInterface{
-            .interface_class = 0x03,    // HID
-            .interface_subclass = 0x01, // Boot interface
-            .interface_protocol = 0x01, // Keyboard
-            .endpoints = {{UsbEndpoint{
-                .address = 0x81,        // IN endpoint 1
-                .attributes = 0x03,     // Interrupt
-                .max_packet_size = 16,
-                .interval = 10,         // 10 ms
-            }}},
-        },
-    };
-    // 2. Bind a handler that implements the endpoint logic of the interface
-    interfaces[0].with_handler<KeyboardHandler>(string_pool);
+    StringPool string_pool;
 
-    // 3. Create the device and register its device-level handler
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/usbipdcpp/keyboard",
-        .busid = "1-1",
-        .bus_num = 1, .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234, .product_id = 0x5679,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,           // class defined per-interface
-        .configuration_value = 1, .num_configurations = 1,
-        .interfaces = interfaces,
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
+    // 1. Build a ready-to-use HID keyboard interface: KeyboardHandler::make_interface
+    //    fills in the class/subclass/protocol and creates the interrupt IN endpoint
+    //    at the given address, with the handler already bound.
+    // 2. Build the device from the interface list — UsbDevice::make provides sensible
+    //    defaults for the remaining fields (speed=Full, EP0 derived from it, ...);
+    //    then register its device-level handler.
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
+                                  {KeyboardHandler::make_interface(string_pool, 0x81)});
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    // 4. Start the USB/IP server (TCP, listen on port 53240)
+    // 3. Start the USB/IP server (TCP, listen on port 53240)
     Server server;
     server.add_device(std::move(device));
 
@@ -350,6 +329,10 @@ To implement custom USB devices:
 2. Implement device logic via `AbstDeviceHandler` subclass
 3. Handle interface-specific operations with `VirtualInterfaceHandler`, and implements the logic of the endpoints inside
    the interface
+
+For interface definitions, prefer each handler's `make_interface` factory — it creates the interface with the exact
+endpoints the handler expects (a hand-written `UsbInterface` can mismatch internal assumptions of the interface handler).
+`UsbDevice` itself can always be constructed manually for full control.
 
 For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op implementations for standard requests.
 

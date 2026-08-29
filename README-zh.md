@@ -36,40 +36,17 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    // 1. 描述 USB 设备：一个 HID 键盘接口，含 1 个 IN 端点
-    std::vector<UsbInterface> interfaces = {
-        UsbInterface{
-            .interface_class = 0x03,    // HID
-            .interface_subclass = 0x01, // Boot 接口
-            .interface_protocol = 0x01, // 键盘
-            .endpoints = {{UsbEndpoint{
-                .address = 0x81,        // IN 端点 1
-                .attributes = 0x03,     // 中断
-                .max_packet_size = 16,
-                .interval = 10,         // 10ms
-            }}},
-        },
-    };
-    // 2. 给接口绑定实现端点逻辑的 handler
-    interfaces[0].with_handler<KeyboardHandler>(string_pool);
+    StringPool string_pool;
 
-    // 3. 创建设备并注册设备级 handler
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-        .path = "/usbipdcpp/keyboard",
-        .busid = "1-1",
-        .bus_num = 1, .dev_num = 1,
-        .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-        .vendor_id = 0x1234, .product_id = 0x5679,
-        .device_bcd = 0x0100,
-        .device_class = 0x00,           // 类定义在接口级
-        .configuration_value = 1, .num_configurations = 1,
-        .interfaces = interfaces,
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
+    // 1. 创建可直接使用的 HID 键盘接口：KeyboardHandler::make_interface 已填好
+    //    类/子类/协议、在给定地址建中断 IN 端点，并绑定好 handler
+    // 2. 从接口列表创建设备——UsbDevice::make 为其余字段提供合理默认
+    //    （speed=Full、EP0 按它自动生成等）；再绑定设备级 handler
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
+                                  {KeyboardHandler::make_interface(string_pool, 0x81)});
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    // 4. 启动 USB/IP 服务器（TCP，监听 53240 端口）
+    // 3. 启动 USB/IP 服务器（TCP，监听 53240 端口）
     Server server;
     server.add_device(std::move(device));
 
@@ -347,6 +324,10 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 1. 使用 `usbipdcpp::UsbDevice` 定义设备描述符
 2. 继承 `AbstDeviceHandler` 实现设备逻辑
 3. 使用 `VirtualInterfaceHandler` 处理接口操作，同时实现接口内的端点的逻辑
+
+接口定义建议用各 handler 的 `make_interface` 工厂——它创建的接口与 handler 内部
+预期的端点结构一致（手写 `UsbInterface` 可能和接口 handler 的硬编码假设不符）。
+`UsbDevice` 本身则完全可以手动构造，方便更灵活的配置。
 
 简单设备可直接使用 `SimpleVirtualDeviceHandler`，它为标准请求提供了空实现
 

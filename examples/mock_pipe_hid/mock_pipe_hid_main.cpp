@@ -75,24 +75,8 @@ int main(int argc, char **argv) {
             },
     };
 
-    auto device = std::make_shared<UsbDevice>(UsbDevice{
-            .path = "/usbipdcpp/mock_pipe_hid",
-            .busid = busid,
-            .bus_num = 1,
-            .dev_num = 1,
-            .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
-            .vendor_id = 0x1234,
-            .product_id = 0x5691,
-            .device_bcd = 0x0100,
-            .device_class = 0x00,
-            .device_subclass = 0x00,
-            .device_protocol = 0x00,
-            .configuration_value = 1,
-            .num_configurations = 1,
-            .interfaces = interfaces,
-            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
-    });
+    // 管道设备没有接口 handler（PipeDeviceHandler 自动管道化所有端点），接口手动定义
+    auto device = UsbDevice::make(busid, 0x1234, 0x5691, interfaces, 1, 1, 0, "/usbipdcpp/mock_pipe_hid");
 
     auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
     // HID 描述符（0x21）：追加在配置描述符的接口描述符之后，驱动加载必需

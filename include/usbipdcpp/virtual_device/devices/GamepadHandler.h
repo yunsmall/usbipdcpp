@@ -48,6 +48,28 @@ public:
     GamepadHandler(UsbInterface &handle_interface, StringPool &string_pool);
     ~GamepadHandler() override = default;
 
+    /**
+     * @brief 创建标准的 HID 游戏手柄接口（已绑定本 handler）
+     *
+     * 接口定义：HID 类（03/00/00），一个中断 IN 端点。
+     * @param string_pool 字符串池（需活得比 handler 久）
+     * @param in_ep 中断 IN 端点地址（设备→主机，手柄报告）
+     * @return 已绑好 GamepadHandler 的完整 UsbInterface
+     */
+    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep) {
+        UsbInterface i{
+                .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+                .interface_subclass = 0x00,
+                .interface_protocol = 0x00,
+                .endpoints = {{UsbEndpoint{.address = in_ep,
+                                           .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                                           .max_packet_size = 16, // 11 字节报告 + 对齐余量
+                                           .interval = 8}}},
+        };
+        i.with_handler<GamepadHandler>(string_pool);
+        return i;
+    }
+
     // ========== HidVirtualInterfaceHandler 接口实现 ==========
 
     void on_new_connection(Session &current_session, error_code &ec) override;
