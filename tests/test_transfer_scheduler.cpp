@@ -132,6 +132,47 @@ TEST(TransferSchedulerTest, MultiplePacketsExtendDelay) {
     fx.scheduler.stop();
 }
 
+TEST(TransferSchedulerTest, DataDurationOverridesInterval) {
+    // 显式数据时长优先于 包数×间隔：3 包 × 10ms = 30ms，数据时长 60ms → 按 60ms 延迟
+    // （模拟自适应 OUT 跟随主机数据量：响应间隔 = 数据对应的音频时长）
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x81, EndpointAttributes::Isochronous, 10ms, 3,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(9, 10), 60ms);
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 3s));
+    EXPECT_GE(std::chrono::steady_clock::now() - t0, 50ms);
+    fx.scheduler.stop();
+}
+
+TEST(TransferSchedulerTest, DataDurationShorterThanIntervalProduct) {
+    // 数据时长比 包数×间隔 短时同样按数据时长：2 包 × 20ms = 40ms，数据时长 10ms → 约 10ms
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x81, EndpointAttributes::Isochronous, 20ms, 2,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(11, 10), 10ms);
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
+    auto elapsed = std::chrono::steady_clock::now() - t0;
+    EXPECT_GE(elapsed, 8ms);
+    EXPECT_LE(elapsed, 150ms); // 上限只需排除按 40ms 延迟（定时器慢的机器也远够）
+    fx.scheduler.stop();
+}
+
+TEST(TransferSchedulerTest, NegativeDataDurationRespondsImmediately) {
+    // 负数据时长 = 提前响应（水位闭环修正主机提交开销用）：deadline 不早于
+    // 当前时刻，到点即完成，不等待包数×间隔
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x81, EndpointAttributes::Isochronous, 20ms, 3,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(12, 10), -500us);
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
+    EXPECT_LE(std::chrono::steady_clock::now() - t0, 200ms);
+    EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 12);
+    fx.scheduler.stop();
+}
+
 TEST(TransferSchedulerTest, ZeroPacketsRespondImmediately) {
     // 无等时包：不占调度窗口，立即响应
     TestFixture fx;

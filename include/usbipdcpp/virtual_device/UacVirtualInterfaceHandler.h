@@ -36,7 +36,7 @@ class USBIPDCPP_API UacAudioControlHandler : public VirtualInterfaceHandler {
 public:
     UacAudioControlHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
-    /// 应用设备配置（必须在 UacDeviceHelper::setup 调用 setup_interface_handlers 之前完成）
+    /// 应用设备配置（必须在 UacDeviceHelper::setup_microphone 调用 setup_interface_handlers 之前完成）
     void set_config(const UacDeviceConfig &config);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
@@ -57,14 +57,6 @@ public:
 
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
 
     /// 当前静音状态（供 AS handler 查询）
     [[nodiscard]] bool is_muted() const {
@@ -96,9 +88,9 @@ private:
 };
 
 /// AudioStreaming 接口处理器 — 类描述符 + 采样率协商 + ISO PCM 推流
-class USBIPDCPP_API UacAudioStreamingHandler : public VirtualInterfaceHandler {
+class USBIPDCPP_API UacAudioStreamingSourceHandler : public VirtualInterfaceHandler {
 public:
-    UacAudioStreamingHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    UacAudioStreamingSourceHandler(UsbInterface &handle_interface, StringPool &string_pool,
                              std::unique_ptr<AudioSource> source);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
@@ -123,14 +115,6 @@ public:
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
 
     // AS 的类描述符（General + Format Type）必须出现在每个 alt，
@@ -187,7 +171,7 @@ private:
 };
 
 /// AudioStreaming 接口处理器（扬声器方向）— 类描述符 + 采样率协商 + ISO OUT 收流
-/// 与 UacAudioStreamingHandler（麦克风 IN 推流）对称：数据面反转为消费主机发来的
+/// 与 UacAudioStreamingSourceHandler（麦克风 IN 推流）对称：数据面反转为消费主机发来的
 /// PCM（写入 AudioSink），控制面（采样率协商、类描述符）逻辑相同
 class USBIPDCPP_API UacAudioStreamingSinkHandler : public VirtualInterfaceHandler {
 public:
@@ -216,14 +200,6 @@ public:
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
 
     // AS 的类描述符（General + Format Type）必须出现在每个 alt，
@@ -254,15 +230,26 @@ private:
     std::unique_ptr<AudioSink> sink;
     data_type class_desc;
     bool streaming = false;
+
+    // 收流速率闭环：主机每 URB 提交存在固定开销（usbip-win 收 RET → 重提交 →
+    // TCP 往返，实测 ~60µs），按数据时长延迟响应会让接收速率恒低于消费速率，
+    // 缓冲水位缓降导致周期性欠载（播放沙沙）。用墙钟窗口实测接收速率做反馈，
+    // 修正响应延迟（负 = 提前响应），把接收速率锁到消费速率。单位 µs
+    std::int64_t pacing_delta_us = 0;
+    // 闭环测速：每 100 个 URB（约 1 秒）用 received 累计增量/墙钟时间算接收速率
+    std::uint32_t urb_stat_count = 0;
+    std::uint64_t urb_stat_bytes = 0;
+    std::int64_t urb_stat_last_bytes = 0;   // 上一窗口的累计接收字节
+    std::int64_t urb_stat_last_time_us = 0; // 上一窗口的墙钟时刻（steady_clock µs）
 };
 
 /// UAC 设备辅助类 — 在 device 上注册 AC/AS 接口 handler 并设置描述符
 class USBIPDCPP_API UacDeviceHelper {
 public:
-    /// 向 device 注入 UAC 接口 handler（麦克风方向）。
+    /// 向 device 注入 UAC 接口 handler（麦克风方向，与 setup_speaker 对称）。
     /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO IN 端点
-    static void setup(std::shared_ptr<UsbDevice> device, StringPool &string_pool, std::unique_ptr<AudioSource> source,
-                      const UacDeviceConfig &config = {});
+    static void setup_microphone(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
+                                 std::unique_ptr<AudioSource> source, const UacDeviceConfig &config = {});
 
     /// 向 device 注入 UAC 接口 handler（扬声器方向，ISO OUT 收流）。
     /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO OUT 端点；

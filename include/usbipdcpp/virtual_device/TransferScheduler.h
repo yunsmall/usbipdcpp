@@ -61,11 +61,18 @@ public:
     /// num_iso_packets 为等时包数——仅等时传输使用，其他类型传 0。
     /// 等时：延迟 num_iso_packets × 间隔后响应，同一端点 URB 按提交顺序
     /// 串行完成；num_iso_packets <= 0 时不占调度窗口，立即响应。
-    /// 连接已断（stop 后）时丢弃，不响应
+    /// data_duration 为本次 URB 数据对应的实际时长（默认 0 = 未指定）：
+    /// 指定时按它延迟（替代 包数×间隔）——完成速率 = 主机数据速率，
+    /// 设备本地时钟与主机时钟的频偏不累积（自适应 OUT 端点跟随主机
+    /// 数据量的正确行为，见 UacAudioStreamingSinkHandler 注释）。
+    /// 可为负：负 = 提前响应（水位闭环修正主机每 URB 的固定提交开销用，
+    /// 延迟 ≤ 0 时立即完成）。连接已断（stop 后）时丢弃，不响应
     void submit(const UsbEndpoint &ep, EndpointAttributes type, int num_iso_packets,
-                UsbIpResponse::UsbIpRetSubmit &&submit);
+                UsbIpResponse::UsbIpRetSubmit &&submit,
+                std::chrono::microseconds data_duration = std::chrono::microseconds::zero());
     void submit(std::uint8_t ep_address, EndpointAttributes type, std::chrono::microseconds interval,
-                int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit);
+                int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit,
+                std::chrono::microseconds data_duration = std::chrono::microseconds::zero());
 
     /// 取消 seqnum 对应的待处理 URB（UNLINK 用）。返回 true 表示取消成功
     ///（调用方应答 RET_UNLINK(-ECONNRESET)，且不再发 RET_SUBMIT）；false

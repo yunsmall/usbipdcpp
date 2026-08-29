@@ -1,6 +1,5 @@
 #include "PlaybackSink.h"
 
-#include <algorithm>
 #include <cstring>
 
 // 单头文件库：仅此编译单元提供实现
@@ -43,6 +42,10 @@ bool PlaybackSink::set_format(std::uint16_t channels, std::uint8_t bits_per_samp
     }
     bool restart = !discarding && (channels != format.channels || sample_rate != format.sample_rate);
     format = {channels, bits_per_sample, sample_rate};
+    // 采样率切换时清空残留缓冲：旧采样率的 PCM 与新格式不匹配，
+    // 且残留水位会让收流速率闭环长时间停在错误方向（实测切换后
+    // 缓冲残留几十万字节，闭环一直延迟响应导致欠载沙沙）
+    buffer.clear();
     lock.unlock();
     if (restart) {
         // 不能持锁重启：ma_device_uninit 等回调线程退出，回调拿同一把锁会死锁
@@ -84,6 +87,9 @@ void PlaybackSink::open_device() {
     config.sampleRate = format.sample_rate;
     config.dataCallback = data_callback;
     config.pUserData = this;
+    // Android 的 AAudio/OpenSL 默认缓冲偏大（数百 ms 级，实测听感半秒延迟），
+    // 显式设小回调周期（20ms）压播放延迟；抖动由设备侧 RingBuffer 吸收
+    config.periodSizeInMilliseconds = 20;
 
     ma_result result;
     if (device_name.empty()) {
@@ -115,7 +121,14 @@ void PlaybackSink::open_device() {
             }
         }
         if (!found) {
-            SPDLOG_ERROR("PlaybackSink: 找不到播放设备 '{}'，进入丢弃模式", device_name);
+            // 报错时列出可用设备名，方便用户指定正确的 --device
+            std::string names;
+            for (ma_uint32 i = 0; i < count; i++) {
+                names += devices[i].name;
+                if (i + 1 < count)
+                    names += ", ";
+            }
+            SPDLOG_ERROR("PlaybackSink: 找不到播放设备 '{}'，可用设备：[{}]，进入丢弃模式", device_name, names);
             discarding = true;
             return;
         }
@@ -134,7 +147,10 @@ void PlaybackSink::open_device() {
         discarding = true;
         return;
     }
-    SPDLOG_INFO("PlaybackSink: 开始播放（{}ch {}Hz）", format.channels, format.sample_rate);
+    // TODO: 临时日志（排查播放快进）：实际设备采样率与请求值是否一致
+    auto *dev = static_cast<ma_device *>(device);
+    SPDLOG_INFO("PlaybackSink: 开始播放（请求 {}ch {}Hz，设备实际 sampleRate={} channels={}）",
+                format.channels, format.sample_rate, dev->sampleRate, dev->playback.channels);
 }
 
 void PlaybackSink::close_device() {

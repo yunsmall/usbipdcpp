@@ -45,7 +45,9 @@ private:
     std::string device_name;
     AudioFormatInfo format{1, 16, 48000};
     mutable std::mutex mutex; // 收流线程写缓冲 vs 播放回调读缓冲
-    RingBuffer buffer{128 * 1024}; // 约 0.7s @48kHz 单声道，满则丢新数据（回调填静音）
+    // 512KB 约 2.7s @96kHz 单声道（0.7s @48kHz 双声道）：吸收主机 URB 突发与
+    // 网络尖峰的抖动余量；满则丢新数据（回调填静音）
+    RingBuffer buffer{512 * 1024};
     std::uint64_t received = 0;
     bool discarding = false; // 播放设备不可用：仅计数
 

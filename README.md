@@ -456,7 +456,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 13. mock_audio
 
    A virtual USB microphone (UAC 1.0). Demonstrates the
-   `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` combination
+   `UacAudioControlHandler` + `UacAudioStreamingSourceHandler` + `AudioSource` combination
    (Feature Unit mute/volume control, sampling rate negotiation, ISO PCM streaming).
 
    Three audio sources are available:
@@ -608,7 +608,7 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `VideoSource` | Abstract video source interface for UVC devices |
 | `ColorBarSource` | Test pattern video source (color bars) |
 | `UacAudioControlHandler` | UAC AudioControl interface (Feature Unit mute/volume control) |
-| `UacAudioStreamingHandler` | UAC AudioStreaming interface (ISO PCM streaming) |
+| `UacAudioStreamingSourceHandler` | UAC AudioStreaming interface (ISO PCM streaming) |
 | `AudioSource` | Abstract PCM audio source interface for UAC devices |
 | `SineWaveSource` | Sine wave test tone audio source |
 | `FourierSource` | Fourier series synthesis audio source (multiple harmonics with per-harmonic phase) |

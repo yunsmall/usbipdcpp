@@ -445,7 +445,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 13. mock_audio
 
    虚拟 USB 麦克风（UAC 1.0）。演示
-   `UacAudioControlHandler` + `UacAudioStreamingHandler` + `AudioSource` 组合
+   `UacAudioControlHandler` + `UacAudioStreamingSourceHandler` + `AudioSource` 组合
    （Feature Unit 静音/音量控制、采样率协商、ISO PCM 推流）。
 
    支持三种音源：
@@ -595,7 +595,7 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `VideoSource` | UVC 虚拟摄像头视频源抽象接口 |
 | `ColorBarSource` | 彩条测试图视频源 |
 | `UacAudioControlHandler` | UAC AudioControl 接口（Feature Unit 静音/音量控制） |
-| `UacAudioStreamingHandler` | UAC AudioStreaming 接口（ISO PCM 推流） |
+| `UacAudioStreamingSourceHandler` | UAC AudioStreaming 接口（ISO PCM 推流） |
 | `AudioSource` | UAC 虚拟麦克风 PCM 音频源抽象接口 |
 | `SineWaveSource` | 正弦波测试音源 |
 | `FourierSource` | 傅里叶级数合成音源（多谐波叠加，各谐波独立相位） |

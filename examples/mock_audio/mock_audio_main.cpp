@@ -215,7 +215,7 @@ int main(int argc, char **argv) {
     });
 
     // UacDeviceHelper 创建 AC/AS handler 并注册 + 设置描述符
-    UacDeviceHelper::setup(device, string_pool, std::move(source));
+    UacDeviceHelper::setup_microphone(device, string_pool, std::move(source));
 
     Server server;
     server.add_device(std::move(device));

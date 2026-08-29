@@ -41,14 +41,16 @@ void TransferScheduler::stop() {
 }
 
 void TransferScheduler::submit(const UsbEndpoint &ep, EndpointAttributes type, int num_iso_packets,
-                               UsbIpResponse::UsbIpRetSubmit &&submit) {
+                               UsbIpResponse::UsbIpRetSubmit &&submit,
+                               std::chrono::microseconds data_duration) {
     // 端点版：间隔按 bInterval 与设备速度推导（对齐 USB 规范）。
     // 参数名 submit 遮蔽了成员函数，需 this-> 显式解析
-    this->submit(ep.address, type, endpoint_interval(ep, speed), num_iso_packets, std::move(submit));
+    this->submit(ep.address, type, endpoint_interval(ep, speed), num_iso_packets, std::move(submit), data_duration);
 }
 
 void TransferScheduler::submit(std::uint8_t ep_address, EndpointAttributes type, std::chrono::microseconds interval,
-                               int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit) {
+                               int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit,
+                               std::chrono::microseconds data_duration) {
     // 无等时包：不占调度窗口，立即响应
     if (num_iso_packets <= 0) {
         Session *s;
@@ -82,7 +84,13 @@ void TransferScheduler::submit(std::uint8_t ep_address, EndpointAttributes type,
 
     auto &state = endpoints[ep_address];
     auto now = std::chrono::steady_clock::now();
-    auto deadline = std::max(now, state.last_deadline) + interval * num_iso_packets;
+    // 显式数据时长优先：跟随主机数据量而非本地时钟固定间隔，
+    // 设备与主机时钟的频偏不累积（自适应端点跟随行为）。
+    // 允许负值（提前响应，水位闭环修正主机提交开销用）；
+    // 结果为负/零时 deadline 不早于当前时刻，到点即完成
+    auto delay = data_duration != std::chrono::microseconds::zero() ? data_duration
+                                                                   : interval * num_iso_packets;
+    auto deadline = std::max(now, state.last_deadline) + delay;
     state.last_deadline = deadline;
     state.queue.push_back(PendingUrb{deadline, std::move(submit)});
     kick();
