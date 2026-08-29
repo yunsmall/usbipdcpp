@@ -119,43 +119,54 @@ private:
 };
 
 /**
- * @brief IN 数据通道基类（CRTP 静态分发）
+ * @brief IN 数据通道基类（CRTP 静态分发）：管理「主机的 IN 请求」与「设备要发的数据」配对应答
  *
- * 封装「挂起-应答」模式的公共部分：IN 请求先挂起（有数据立即应答）、数据
- * 到达时匹配挂起请求、双锁、断连清理与唤醒。缓冲与消费语义由派生类实现
- * （消息模式整条消费 / 字节流模式按长度分片），类型在编译期确定，无虚函数。
+ * 数据方向：设备 → 主机（USB IN 端点）。主机的 IN 请求到来时设备可能还没数据，
+ * 请求先挂起；业务侧把数据写进通道后自动匹配挂起的请求应答（主机读走）。
+ * 主机 IN 回调与业务数据写入可能在不同线程，通道内部已上锁，直接调用即可。
  *
- * 派生类必须实现（CRTP 要求，均要求在持有双锁时调用）：
- * - buffer_empty()：缓冲是否为空
- * - try_send_one(ep, seqnum, length, transfer)：从缓冲取数据应答一个请求
- *   （取数据填 transfer 后调 session->submit_ret_submit 提交）
- * - try_pull_data(length)：可选 pull 模型：缓冲空且无挂起请求时现场生成数据，
- *   默认返回空
- * - send_pulled_locked(ep, seqnum, length, transfer, pulled)：消费 pull 生成的
- *   数据（字节流：本次请求优先发 min 部分，剩余入缓冲；消息模式整条入缓冲）
- * - push_locked(data)：数据入缓冲（满时按各自语义：消息丢最旧 / 字节流丢弃超出部分）
- * - buffer_clear()：清空缓冲
+ * 按数据处理形式选派生类（编译期确定，无虚函数）：
+ *  - MessageInChannel    一条数据 = 一个完整消息（HID 输入报告、UVC 状态通知）
+ *  - ByteStreamInChannel 数据是连续字节流，按请求长度分片（CDC 数据口、通用管道）
  *
- * 典型接入（handler 内）：
- *  - 主机 IN 回调里调 on_in_request(...)：缓冲有数据立即应答，没数据则挂起请求
- *  - 业务线程产生数据：push()（消息模式，一条数据=一个消息）或 write()/write_nb()
- *    （字节流模式，按请求长度分片），通道自动匹配挂起的请求应答
- *  - 生命周期：on_new_connection 时调 bind_session + on_new_connection，
- *    on_disconnection 时调 on_disconnection（清空缓冲与挂起请求）
+ * 接入三件事（handler 内，缺一不可）：
+ *  1. 生命周期：on_new_connection 时调 on_new_connection(会话)，
+ *     断连时调 on_disconnection()（清空缓冲与挂起请求、唤醒阻塞写者）
+ *  2. 主机 IN 请求到达：在接口的 IN 传输回调里调 on_in_request(ep, seqnum, length, transfer)
+ *  3. 业务侧产生数据：调 push()（消息模式）或 write()/write_nb()（字节流模式）
+ *
+ * 派生类需实现（锁内调用的 CRTP 接口，见各派生类声明）：
+ *  buffer_empty / buffer_clear：缓冲为空/清空
+ *  try_send_one：从缓冲取数据应答一个请求
+ *  try_pull_data / send_pulled_locked：可选 pull 模型（请求到达时现场生成数据）
+ *  push_locked：数据入缓冲
  */
 template <typename Derived>
 class InEndpointChannelBase {
 public:
-    /// 绑定会话（handler 的 on_new_connection / on_disconnection 时调用）
-    void bind_session(Session *current_session) {
-        session = current_session;
+    /**
+     * @brief 新连接激活通道：设会话指针并复位状态（缓冲清空、断连标记清除）。
+     * handler 的 on_new_connection 里传当前会话调用；无参（测试桩复位）时保持
+     * 已绑定的会话不变
+     */
+    void on_new_connection(Session *current_session = nullptr) {
+        std::lock_guard lock(channel_mutex);
+        if (current_session) {
+            session = current_session;
+        }
+        disconnected = false;
+        self().buffer_clear();
     }
 
     /**
-     * @brief 处理一个 IN 请求（handler 的 IN 请求回调里调用）
-     * @param ep 端点地址（含方向位）
-     * @note 请求侧逻辑：同端点无挂起请求且缓冲有数据 → 立即应答；否则尝试
-     * 派生类 pull 现场生成数据；再不行则挂起请求
+     * @brief 处理一个主机 IN 请求（接口 IN 传输回调里转发，session receiver 线程）
+     *
+     * 通道自动判断：有缓冲数据 / 能现场 pull → 立即回 RET_SUBMIT；否则请求挂起，
+     * 等业务数据写入后自动应答。
+     * @param ep 端点地址（含方向位，如 0x81）
+     * @param seqnum 本次命令序列号（CMD_SUBMIT 头里的）
+     * @param length 主机请求的字节数（transfer_buffer_length）
+     * @param transfer 本次传输句柄，应答时用它承载数据发给主机
      */
     void on_in_request(std::uint8_t ep, std::uint32_t seqnum, std::uint32_t length, TransferHandle transfer) {
         std::lock(channel_mutex, requests_mutex);
@@ -184,22 +195,20 @@ public:
     }
 
     /**
-     * @brief 取消挂起的请求（UNLINK 处理）
-     * @return 真的取消了返回 true（回 -ECONNRESET），请求不存在返回 false（回 0）
+     * @brief 取消一个挂起的 IN 请求（处理主机的 UNLINK 命令时调用）
+     * @param unlink_seqnum 要取消的请求 seqnum
+     * @return true = 请求确实还在挂起队列里、已取消（应答 -ECONNRESET）；
+     *         false = 请求不存在或已应答过（应答 0）
      */
     bool cancel_pending(std::uint32_t unlink_seqnum) {
         std::lock_guard lock(requests_mutex);
         return endpoint_requests.cancel_by_seqnum(unlink_seqnum);
     }
 
-    /// 新连接：从干净状态开始（缓冲清空、断连标记清除）
-    void on_new_connection() {
-        std::lock_guard lock(channel_mutex);
-        disconnected = false;
-        self().buffer_clear();
-    }
-
-    /// 断连：清空缓冲与挂起请求，唤醒阻塞的写者让它们按断连返回
+    /**
+     * @brief 断连：清空缓冲与挂起的请求（transfer 析构自动释放）、唤醒阻塞
+     * 的写者。之后写接口返回 0/短写；连接状态由 handler 管理
+     */
     void on_disconnection() {
         {
             std::lock_guard lock(channel_mutex);
@@ -261,8 +270,11 @@ protected:
 class MessageInChannel : public InEndpointChannelBase<MessageInChannel> {
 public:
     /**
-     * @brief 推入一条消息（非阻塞）
-     * @note 任意线程可调用。有挂起请求时直接应答，否则入缓冲
+     * @brief 推入一条消息（非阻塞，任意线程可调）
+     *
+     * 有挂起的 IN 请求时直接应答；没有则入缓冲等主机来读。
+     * 缓冲超上限时丢最旧的一条（保持「最新消息优先」语义）。
+     * @param data 一条完整消息
      */
     void push(data_type data) {
         std::lock(this->channel_mutex, this->requests_mutex);
@@ -272,13 +284,19 @@ public:
         this->try_send_pending_locked();
     }
 
-    /// 设置缓冲上限（0 = 无限），默认 0
+    /**
+     * @brief 设置缓冲上限（0 = 无限，默认）
+     * @note 主机一直不读时 push 按此上限丢最旧，防内存无限增长
+     */
     void set_max_pending(std::size_t max_pending) {
         std::lock_guard lock(this->channel_mutex);
         max_pending_ = max_pending;
     }
 
-    /// 缓冲中待发消息数（HID 的 has_pending_input_reports 等查询用）
+    /**
+     * @brief 缓冲中待发（未应答）的消息数
+     * @note 供 has_pending_input_reports 等查询用；任意线程可调
+     */
     std::size_t size() const {
         std::lock_guard lock(this->channel_mutex);
         return pending.size();
@@ -347,8 +365,8 @@ private:
 class ByteStreamInChannel : public InEndpointChannelBase<ByteStreamInChannel> {
 public:
     /**
-     * @brief 非阻塞写：写入可用空间，立即尝试应答挂起请求
-     * @return 实际写入字节数（满时小于 size）
+     * @brief 非阻塞写：把数据写入缓冲并尝试应答挂起的 IN 请求（任意线程可调）
+     * @return 实际写入字节数；断连返回 0；缓冲满时可能小于 size（超出部分丢弃）
      */
     std::size_t write_nb(const std::uint8_t *data, std::size_t size) {
         std::lock(this->channel_mutex, this->requests_mutex);
@@ -367,8 +385,12 @@ public:
     }
 
     /**
-     * @brief 阻塞写：缓冲满时等待宿主取走数据（timeout_ms=0 无限等）
-     * @return 实际写入字节数；超时可能小于 size；断连返回已写入量
+     * @brief 阻塞写：把数据全部写入缓冲才返回。缓冲满时等待主机读走
+     * （timeout_ms=0 无限等，对齐内核 FIFO「写满阻塞」语义）。
+     * @param data 数据起始指针
+     * @param size 要写的字节数
+     * @param timeout_ms 每阶段等待缓冲空间的超时（毫秒）；0 = 无限等
+     * @return 实际写入字节数；断连返回已写入量；超时返回部分写入（< size）
      */
     std::size_t write(const std::uint8_t *data, std::size_t size, std::uint32_t timeout_ms = 0) {
         std::size_t total_written = 0;
@@ -429,32 +451,37 @@ public:
         return write(data.data(), data.size(), timeout_ms);
     }
 
-    /// 设置缓冲容量（默认 64KB），必须在连接前调用
+    /**
+     * @brief 设置缓冲容量（字节，默认 64KB）
+     * @note 必须在连接前调用；连接后再改无效
+     */
     void set_capacity(std::size_t capacity) {
         std::lock_guard lock(this->channel_mutex);
         buffer.resize(capacity);
     }
 
+    /** @brief 缓冲总容量（字节） */
     std::size_t capacity() const {
         std::lock_guard lock(this->channel_mutex);
         return buffer.capacity();
     }
 
-    /// 缓冲中待发字节数
+    /** @brief 缓冲中待发（未读走）的字节数 */
     std::size_t size() const {
         std::lock_guard lock(this->channel_mutex);
         return buffer.size();
     }
 
-    /// 缓冲可写字节数
+    /** @brief 缓冲剩余可写字节数 */
     std::size_t available() const {
         std::lock_guard lock(this->channel_mutex);
         return buffer.available();
     }
 
     /**
-     * @brief 设置 pull 回调：IN 请求到达且缓冲/队列都空时调用，可现场生成数据
-     * @note 在锁内调用，回调里不要调用本通道的写方法（会死锁）
+     * @brief 设置 pull 回调：IN 请求到达且缓冲/挂起队列都空时调用，可现场生成
+     * 数据（如 CDC 数据口由派生数据生成器产生持续输出）。
+     * @note 回调在通道持锁时被调用，回调里不要调用本通道的写方法（会死锁）
      */
     void set_pull_callback(std::function<data_type(std::uint32_t length)> callback) {
         pull_callback = std::move(callback);

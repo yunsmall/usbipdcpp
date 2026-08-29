@@ -214,8 +214,7 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
 void CdcAcmCommunicationInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
-    notification_channel.bind_session(&current_session);
-    notification_channel.on_new_connection();
+    notification_channel.on_new_connection(&current_session);
 }
 
 void CdcAcmCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) {
@@ -240,7 +239,7 @@ CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_inte
     // pull 回调：主机请求数据且缓冲/队列都空时调用子类的 on_data_requested
     // 现场生成数据。通道在锁内调用（与原来 handle_bulk_transfer 的双锁内
     // 调用语义一致），故回调里不能调用 send_data 等函数（会死锁）
-    tx_channel.set_pull_callback([this](std::uint32_t length) {
+    in_channel.set_pull_callback([this](std::uint32_t length) {
         return on_data_requested(static_cast<std::uint16_t>(length));
     });
 }
@@ -248,23 +247,21 @@ CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_inte
 void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
-    tx_channel.bind_session(&current_session);
-    tx_channel.on_new_connection();
-    out_channel.bind_session(&current_session);
-    out_channel.on_new_connection();
+    in_channel.on_new_connection(&current_session);
+    out_channel.on_new_connection(&current_session);
 }
 
 void CdcAcmDataInterfaceHandler::on_disconnection(std::error_code &ec) {
     // 先清通道（缓冲 + 挂起请求，TransferHandle 析构时自动释放；唤醒阻塞
     // 的写者/取者让它们按断连返回），再调父类清 session
     out_channel.on_disconnection();
-    tx_channel.on_disconnection();
+    in_channel.on_disconnection();
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
     // 挂起请求分散在 IN/OUT 两通道里，逐个尝试取消
-    bool cancelled = tx_channel.cancel_pending(unlink_seqnum);
+    bool cancelled = in_channel.cancel_pending(unlink_seqnum);
     if (!cancelled) {
         cancelled = out_channel.cancel_pending(unlink_seqnum);
     }
@@ -282,7 +279,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, cons
     if (ep.is_in()) {
         // Bulk IN：主机请求数据。通道内部处理：缓冲有数据立即应答，否则先
         // pull（on_data_requested 现场生成），再不行挂起请求等待 send_data
-        tx_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
+        in_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
         // Bulk OUT：先给子类当场消费机会（如把数据生成响应塞给 IN 方向）。
@@ -333,7 +330,7 @@ void CdcAcmDataInterfaceHandler::on_rts_changed(bool rts) {
 
 std::size_t CdcAcmDataInterfaceHandler::send_data(const std::uint8_t *data, std::size_t size) {
     // 非阻塞写入通道（满时只写入可用空间，断连返回 0），内部会应答挂起请求
-    return tx_channel.write_nb(data, size);
+    return in_channel.write_nb(data, size);
 }
 
 std::size_t CdcAcmDataInterfaceHandler::send_data(const data_type &data) {
@@ -351,7 +348,7 @@ std::size_t CdcAcmDataInterfaceHandler::send_data(std::string_view data) {
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const std::uint8_t *data, std::size_t size,
                                                            std::uint32_t timeout_ms) {
     // 阻塞写入通道：缓冲满时等待宿主取走（timeout_ms=0 无限等），断连返回已写入量
-    return tx_channel.write(data, size, timeout_ms);
+    return in_channel.write(data, size, timeout_ms);
 }
 
 std::size_t CdcAcmDataInterfaceHandler::send_data_blocking(const data_type &data, std::uint32_t timeout_ms) {
@@ -378,22 +375,22 @@ std::optional<OutEndpointChannel::Pending> CdcAcmDataInterfaceHandler::try_take_
 
 void CdcAcmDataInterfaceHandler::set_tx_buffer_capacity(std::size_t capacity) {
     // 通道内部锁保护缓冲；水位线随容量联动（默认 3/4 与 1/4）
-    tx_channel.set_capacity(capacity);
-    tx_high_watermark_ = capacity * 3 / 4;
-    tx_low_watermark_ = capacity / 4;
+    in_channel.set_capacity(capacity);
+    in_high_watermark_ = capacity * 3 / 4;
+    in_low_watermark_ = capacity / 4;
 }
 
 void CdcAcmDataInterfaceHandler::set_tx_watermarks(std::size_t high, std::size_t low) {
-    tx_high_watermark_ = high;
-    tx_low_watermark_ = low;
+    in_high_watermark_ = high;
+    in_low_watermark_ = low;
 }
 
 std::size_t CdcAcmDataInterfaceHandler::get_tx_buffer_size() const {
-    return tx_channel.size();
+    return in_channel.size();
 }
 
 std::size_t CdcAcmDataInterfaceHandler::get_tx_buffer_available() const {
-    return tx_channel.available();
+    return in_channel.available();
 }
 
 // ===== 流控状态 =====

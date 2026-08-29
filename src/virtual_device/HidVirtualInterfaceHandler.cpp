@@ -56,8 +56,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::cons
 void usbipdcpp::HidVirtualInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
-    input_channel.bind_session(&current_session);
-    input_channel.on_new_connection();
+    input_channel.on_new_connection(&current_session);
 }
 
 void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec) {

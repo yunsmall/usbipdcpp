@@ -263,8 +263,7 @@ ByteStreamInChannel &PipeDeviceHandler::get_in_channel(std::uint8_t ep_addr) {
         auto &ch = it->second;
         // 新会话懒创建：容量取当前配置，绑定会话并重置断连状态
         ch.set_capacity(fifo_capacity);
-        ch.bind_session(session);
-        ch.on_new_connection();
+        ch.on_new_connection(session);
     }
     return it->second;
 }
@@ -276,8 +275,7 @@ OutEndpointChannel &PipeDeviceHandler::get_out_channel(std::uint8_t ep_addr) {
         it = out_channels.try_emplace(ep_addr).first;
         auto &ch = it->second;
         // 新会话懒创建：绑定会话并重置断连状态
-        ch.bind_session(session);
-        ch.on_new_connection();
+        ch.on_new_connection(session);
     }
     return it->second;
 }

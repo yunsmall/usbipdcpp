@@ -49,7 +49,7 @@ bool MockCdcAcmDataInterfaceHandler::on_data_received(data_type &&data) {
     }
 
     // 回显：把主机数据原样塞给 IN 方向，阻塞发送确保不丢（生成的数据经
-    // tx_channel 等主机 IN 请求取走）
+    // in_channel 等主机 IN 请求取走）
     SPDLOG_DEBUG("Echo {} bytes", data.size());
     send_data_blocking(std::move(data));
     return true;

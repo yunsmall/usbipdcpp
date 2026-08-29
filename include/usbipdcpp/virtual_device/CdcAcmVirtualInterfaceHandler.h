@@ -376,21 +376,21 @@ public:
 
 protected:
     /**
-     * @brief TX 通道（字节流模式）
+     * @brief IN 数据通道（字节流模式，发回主机）
      *
      * 封装「挂起-应答」+ 阻塞写：主机 bulk IN 请求先挂起，send_data /
      * send_data_blocking 写入数据时匹配应答；缓冲满时阻塞等待宿主取走。
      * on_data_requested 通过 set_pull_callback 接入（锁内调用，与原来的
      * handle_bulk_transfer 双锁内调用语义一致）
      */
-    ByteStreamInChannel tx_channel;
+    ByteStreamInChannel in_channel;
 
     /// OUT 数据挂起通道：主机 bulk OUT 请求先挂起不应答（NAK 背压），
     /// take_out() 取走时读出数据并应答
     OutEndpointChannel out_channel;
 
-    std::size_t tx_high_watermark_ = 48 * 1024;
-    std::size_t tx_low_watermark_ = 16 * 1024;
+    std::size_t in_high_watermark_ = 48 * 1024;
+    std::size_t in_low_watermark_ = 16 * 1024;
 
     /**
      * @brief 关联的通信接口处理器

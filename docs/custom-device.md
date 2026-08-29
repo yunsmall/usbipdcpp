@@ -344,8 +344,7 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override {
         // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
         VirtualInterfaceHandler::on_new_connection(current_session, ec);
-        echo_channel.bind_session(&current_session);
-        echo_channel.on_new_connection();
+        echo_channel.on_new_connection(&current_session);
     }
 
     void on_disconnection(error_code &ec) override {

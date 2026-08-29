@@ -364,8 +364,7 @@ void UvcVideoControlHandler::send_vc_status(data_type status) {
 void UvcVideoControlHandler::on_new_connection(Session &current_session, error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
-    status_channel.bind_session(&current_session);
-    status_channel.on_new_connection();
+    status_channel.on_new_connection(&current_session);
 }
 
 void UvcVideoControlHandler::on_disconnection(std::error_code &ec) {

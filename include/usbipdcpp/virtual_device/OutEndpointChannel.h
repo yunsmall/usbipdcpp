@@ -37,7 +37,7 @@ namespace usbipdcpp {
  *  - 主机 OUT 回调里调 on_out_request(...)：请求挂起，数据留在 transfer 里
  *  - 业务线程取数据：take()（阻塞，取走时读出数据并应答，空位释放主机恢复发送）
  *    或 try_take()（非阻塞，没数据立即返回 nullopt）
- *  - 生命周期：on_new_connection 时调 bind_session + on_new_connection，
+ *  - 生命周期：on_new_connection 时传会话调 on_new_connection(会话)，
  *    on_disconnection 时调 on_disconnection（清挂起请求、唤醒阻塞的 take）
  */
 template <typename Derived>
@@ -50,25 +50,26 @@ public:
         data_type data;                        // OUT 数据（纯通知请求为空）
     };
 
-    /// 绑定会话（handler 的 on_new_connection 时调用）
-    void bind_session(Session *current_session) {
-        session = current_session;
-    }
-
-    /// 设置挂起上限（0 = 无限，默认）；达到上限后新请求回 EPIPE（设备忙）
+    /**
+     * @brief 设置挂起上限（0 = 无限，默认）
+     * @note 挂起请求数达到上限后，主机新 OUT 请求立即回 EPIPE（设备忙）、不占
+     * 队列；业务消费腾出空位后才放行
+     */
     void set_max_pending(std::size_t max_pending) {
         std::lock_guard lock(mutex_);
         max_pending_ = max_pending;
     }
 
-    /// 挂起中的请求数
+    /** @brief 当前挂起中（已收未消费）的请求数 */
     std::size_t size() const {
         std::lock_guard lock(mutex_);
         return pending.size();
     }
 
-    /// 挂起队列最旧请求的 seqnum（无请求返回 nullopt）
-    /// 供跨端点排序（read 按全局到达顺序取：seqnum 单调递增）
+    /**
+     * @brief 挂起队列最旧一个请求的 seqnum（空队列返回 nullopt）
+     * @note 供跨通道/跨端点按 USB 全局到达顺序取数据：seqnum 单调递增
+     */
     std::optional<std::uint32_t> front_seqnum() const {
         std::lock_guard lock(mutex_);
         if (pending.empty()) {
@@ -78,10 +79,14 @@ public:
     }
 
     /**
-     * @brief 处理一个 OUT 请求（handler 的 OUT 回调里调用）
+     * @brief 处理一个主机 OUT 请求（接口 OUT 传输回调里转发，session receiver 线程）
      *
-     * 请求挂起（数据在 transfer 里），等业务侧 take()。setup 仅控制请求
-     * （ep==0）传入；纯通知请求可不带 transfer（take 只返回 setup 不应答）
+     * 请求挂起、不立即回 RET_SUBMIT——主机 URB 挂着即背压停发；等业务侧
+     * take()/try_take() 取走数据时再应答（NAK 背压，对齐内核 u_serial 的 OUT 处理）。
+     * @param ep 端点地址（含方向位，如 0x02）
+     * @param seqnum 命令序列号
+     * @param transfer 本次 OUT 句柄，数据在句柄里，take() 时经 op 读出
+     * @param setup_req 仅非标准控制请求（ep==0）透传给业务侧；普通端点 OUT 不用传
      */
     void on_out_request(std::uint8_t ep, std::uint32_t seqnum, TransferHandle transfer,
                         std::optional<SetupPacket> setup_req = std::nullopt) {
@@ -98,7 +103,11 @@ public:
         data_cv.notify_one();
     }
 
-    /// 非阻塞取一条；无数据返回 nullopt
+    /**
+     * @brief 非阻塞取一条已挂起的 OUT 请求（业务线程调）
+     * @return 有请求则返回 Pending（含端点与读出数据），并自动应答（主机恢复发送）；
+     *         队列空返回 nullopt
+     */
     std::optional<Pending> try_take() {
         std::lock_guard lock(mutex_);
         if (pending.empty()) {
@@ -108,8 +117,9 @@ public:
     }
 
     /**
-     * @brief 阻塞取一条。timeout_ms=0 无限等；断连立即返回 nullopt
-     * @return 有数据返回 Pending；超时或断连返回 nullopt
+     * @brief 阻塞取一条已挂起的 OUT 请求（业务线程调）
+     * @param timeout_ms 等待超时（毫秒）；0 = 无限等
+     * @return 有请求返回 Pending（含端点与读出数据，自动应答）；超时或断连返回 nullopt
      */
     std::optional<Pending> take(std::uint32_t timeout_ms = 0) {
         std::unique_lock lock(mutex_);
@@ -130,7 +140,11 @@ public:
         return take_locked();
     }
 
-    /// 取消挂起的请求（UNLINK 处理）
+    /**
+     * @brief 取消一个挂起的 OUT 请求（主机的 UNLINK 命令处理）
+     * @return true = 请求确实还在挂起队列里、已取消（应答 -ECONNRESET）；
+     *         false = 请求不存在或已应答过（应答 0）
+     */
     bool cancel_pending(std::uint32_t unlink_seqnum) {
         std::lock_guard lock(mutex_);
         for (auto it = pending.begin(); it != pending.end(); ++it) {
@@ -142,13 +156,23 @@ public:
         return false;
     }
 
-    /// 新连接：从干净状态开始（断连标记清除；队列由上次断连清空）
-    void on_new_connection() {
+    /**
+     * @brief 新连接激活通道：设会话指针并复位断连标记（队列由上次断连清空）。
+     * handler 的 on_new_connection 里传当前会话调用；无参（测试桩复位）时保持
+     * 已绑定的会话不变
+     */
+    void on_new_connection(Session *current_session = nullptr) {
         std::lock_guard lock(mutex_);
+        if (current_session) {
+            session = current_session;
+        }
         disconnected = false;
     }
 
-    /// 断连：清挂起请求，唤醒阻塞的消费者让它们按断连返回
+    /**
+     * @brief 断连：清挂起请求（transfer 析构自动释放）、唤醒阻塞的 take 按断连返回。
+     * 之后 take 立即返回 nullopt；连接状态由 handler 管理
+     */
     void on_disconnection() {
         {
             std::lock_guard lock(mutex_);
@@ -208,6 +232,12 @@ private:
  */
 class OutEndpointChannel : public OutEndpointChannelBase<OutEndpointChannel> {
 public:
+    /**
+     * @brief 应答一个挂起的请求（本通道的 CRTP 实现，内部调用，无需直接使用）
+     * @param seqnum 对应请求的序列号
+     * @param length 已消费的数据长度（status==0 时主机以为本次大小）
+     * @param status 0 = 正常完成；非 0 = 错误状态（如上限拒绝的 EPIPE，长度填 0）
+     */
     void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) {
         if (status == 0) {
             session->submit_ret_submit(
