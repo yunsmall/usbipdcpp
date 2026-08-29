@@ -133,9 +133,10 @@ public:
     }
 };
 
-// 构造一个传输句柄（op 必须比 handle 活得久：handle 析构时用 op 释放）
+// 构造一个传输句柄（op 为进程级单例：队列中残留请求的 handle 可能在测试结束、
+// channel 析构时才销毁，静态 op 保证它始终有效，不依赖局部变量生命周期）
 struct TransferMaker {
-    GenericTransferOperator op;
+    static inline GenericTransferOperator op;  // 无状态，多线程并发 free 安全
     TransferHandle make() {
         return TransferHandle(new GenericTransfer{}, &op);
     }
