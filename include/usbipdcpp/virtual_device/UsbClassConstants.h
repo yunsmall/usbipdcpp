@@ -111,6 +111,9 @@ struct InterfaceDesc {
 static_assert(sizeof(InterfaceDesc) == 9, "接口描述符固定 9 字节");
 
 /// 端点描述符（USB 2.0 Table 9-13，固定 7 字节）
+/// 注意：audio10.pdf Table 4-20 要求音频 ISO 端点 9 字节（bRefresh/bSynchAddress），
+/// 但 usbip-win2 基于 UDE 框架，Udecx.sys 按 7 字节解析端点描述符，9 字节会导致
+/// 后续描述符错位、Windows 枚举失败，必须保持 7 字节（勿扩展）
 struct EndpointDesc {
     std::uint8_t bLength;
     std::uint8_t bDescriptorType;

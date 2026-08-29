@@ -11,8 +11,9 @@
 namespace usbipdcpp {
 
 /// 把收流 PCM 写成 WAV 文件的音频汇（PCM 16 位小端）
-/// 收流开始时自动创建文件（写 44 字节占位头），finalize/reset/析构时回填
-/// RIFF 与 data 长度字段。格式协商变化时关闭当前文件，下次收流重新创建
+/// 收流开始时自动创建文件，每次写入后回填 RIFF 与 data 长度字段（运行期间
+/// 文件即可播放，强杀进程不会丢失头）。格式协商变化时关闭当前文件，下次
+/// 收流重新创建
 class USBIPDCPP_API WavFileSink : public AudioSink {
 public:
     explicit WavFileSink(std::filesystem::path path);
@@ -24,12 +25,13 @@ public:
     void write_pcm(const std::uint8_t *data, std::size_t size) override;
     void reset() override;
 
-    /// 关闭文件并回填 WAV 头（幂等，析构自动调用）
+    /// 关闭文件（幂等，析构自动调用）
     void finalize();
 
 private:
     void open_file();
     void finalize_locked(); // 调用方必须已持有 mutex
+    void update_header_locked(); // 回填头长度字段，调用方必须已持有 mutex
     static void write_u32le(std::ofstream &file, std::uint32_t value);
     static void write_u16le(std::ofstream &file, std::uint16_t value);
 

@@ -47,6 +47,9 @@ void WavFileSink::write_pcm(const std::uint8_t *data, std::size_t size) {
     }
     file.write(reinterpret_cast<const char *>(data), static_cast<std::streamsize>(size));
     data_size += static_cast<std::uint32_t>(size);
+    // 边写边回填头：finalize/析构只在进程正常退出时触发，强杀（TerminateProcess）
+    // 不会执行析构，头里的 data size 恒为占位 0 导致文件无法播放
+    update_header_locked();
     auto mb = data_size / (1024 * 1024);
     if (mb > last_reported_mb) {
         last_reported_mb = mb;
@@ -68,17 +71,22 @@ void WavFileSink::finalize_locked() {
     if (!file_open) {
         return;
     }
-    // 回填 RIFF chunk size（offset 4）与 data size（offset 40）后关闭
+    // 回填头后关闭
+    update_header_locked();
+    file.close();
+    file_open = false;
+    data_size = 0;
+    SPDLOG_INFO("WavFileSink: 已写入 {}", path.string());
+}
+
+void WavFileSink::update_header_locked() {
+    // 回填 RIFF chunk size（offset 4）与 data size（offset 40）
     auto end = file.tellp();
     file.seekp(4);
     write_u32le(file, 36 + data_size);
     file.seekp(40);
     write_u32le(file, data_size);
     file.seekp(end);
-    file.close();
-    file_open = false;
-    data_size = 0;
-    SPDLOG_INFO("WavFileSink: 已写入 {}", path.string());
 }
 
 void WavFileSink::open_file() {

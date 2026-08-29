@@ -830,6 +830,17 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                 // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
                 // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
                 // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
+                // 标准端点描述符保持 7 字节：音频规范虽要求 9（audio10.pdf Table
+                // 4-20），但 usbip-win 场景下实测 9 字节致 Windows usbaudio 启动失败，
+                // 7 字节可用（mock_audio 长期验证，勿改）
+                // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
+                // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
+                // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
+                // 标准端点描述符保持 7 字节：audio10.pdf Table 4-20 虽要求音频端点
+                // 9 字节（bRefresh/bSynchAddress），但 usbip-win2 基于 UDE 框架，
+                // Udecx.sys 按 7 字节 USB_ENDPOINT_DESCRIPTOR 解析配置描述符，
+                // 9 字节导致后续描述符错位、Windows 枚举直接失败（服务器收不到
+                // 任何控制请求）。7 字节实测可用（mock_audio 长期验证），勿改
                 if (intf.interface_class == CC_AUDIO && intf.interface_subclass == SC_AUDIOSTREAMING &&
                     (endpoint.attributes & 0x03) == 0x01) {
                     AsEpGeneralDesc{AS_EP_DESC_GENERAL_LEN,

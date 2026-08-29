@@ -3,6 +3,9 @@
 #ifndef USBIPDCPP_STRACE
     #undef SPDLOG_ACTIVE_LEVEL
     #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+#else
+    #undef SPDLOG_ACTIVE_LEVEL
+    #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
 
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
@@ -1015,6 +1018,10 @@ void UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, StringPoo
 
     // 声道数：config 未指定（0）时从 sink 推断
     auto resolved = config;
+    // 扬声器工厂强制 USB streaming 输入终端：AC 拓扑方向由 input_terminal_type
+    // 决定（build_class_descriptor 按它判断扬声器），调用方漏传会生成麦克风拓扑
+    // （IT=mic/OT=USB streaming）配 OUT 数据端点，Windows usbaudio 启动失败
+    resolved.input_terminal_type = TT_USB_STREAMING;
     if (resolved.channels == 0) {
         resolved.channels = as->get_sink()->current_format().channels;
     }
