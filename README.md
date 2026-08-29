@@ -33,8 +33,6 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    StringPool string_pool;
-
     // 1. Build a ready-to-use HID keyboard interface: KeyboardHandler::make_interface
     //    fills in the class/subclass/protocol and creates the interrupt IN endpoint
     //    at the given address, with the handler already bound.

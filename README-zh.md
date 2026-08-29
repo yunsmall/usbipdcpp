@@ -36,8 +36,6 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    StringPool string_pool;
-
     // 1. 创建可直接使用的 HID 键盘接口：KeyboardHandler::make_interface 已填好
     //    类/子类/协议、在给定地址建中断 IN 端点，并绑定好 handler
     // 2. 从接口列表创建设备——UsbDevice::make 为其余字段提供合理默认
