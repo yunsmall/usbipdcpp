@@ -32,8 +32,11 @@ class Session;
 ///   endpoint_interval）后响应；同一端点 URB 串行完成（等价 vudc 的
 ///   already_seen 每帧每端点只服务一个 URB），平均速率恒为
 ///   1 URB / (num_iso_packets × 间隔)。
-/// - Bulk / Interrupt：预留，后续按 vudc 的帧内撮合语义接入（URB 挂起
-///   直到设备数据就绪 / 带宽预算 NAK），当前无设备使用
+/// - Bulk / Interrupt：对齐 vudc 帧驱动语义（v_timer 每 1ms tick 一次、
+///   already_seen 每帧每端点只服务一个 URB），URB 对齐到下一个帧边界完成
+///   （等待 0-1ms）、同端点串行；端点间独立，一个端点挂起（NAK）不影响
+///   其他端点。带宽预算对虚拟设备无实际意义（网络带宽才是瓶颈），不实现
+/// - Control：不走帧调度，立即响应（控制请求必须快速，对齐 vudc 的 ep0）
 ///
 /// 线程模型：自持 io_context + 一个调度线程，连接建立时 start()、断开时
 /// stop()（对齐 vudc 的 v_start_timer / v_stop_timer）。队列空时定时器不

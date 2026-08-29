@@ -173,6 +173,68 @@ TEST(TransferSchedulerTest, NegativeDataDurationRespondsImmediately) {
     fx.scheduler.stop();
 }
 
+TEST(TransferSchedulerTest, BulkDelayedOneFrame) {
+    // bulk 对齐 vudc 帧驱动语义：URB 对齐帧边界完成（不立即响应）。
+    // 断言上限放宽到 100ms：Windows 定时器默认 ~15.6ms 粒度，亚毫秒
+    // deadline 无法精确触发（见 TransferScheduler.cpp 帧对齐注释）
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x01, EndpointAttributes::Bulk, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(13, 10));
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
+    auto elapsed = std::chrono::steady_clock::now() - t0;
+    EXPECT_GT(elapsed, 0us);
+    EXPECT_LT(elapsed, 100ms);
+    EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 13);
+    fx.scheduler.stop();
+}
+
+TEST(TransferSchedulerTest, InterruptDelayedOneFrame) {
+    // interrupt 同 bulk：对齐帧边界完成（不立即响应），上限放宽同 bulk
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x82, EndpointAttributes::Interrupt, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(14, 10));
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
+    auto elapsed = std::chrono::steady_clock::now() - t0;
+    EXPECT_GT(elapsed, 0us);
+    EXPECT_LT(elapsed, 100ms);
+    EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 14);
+    fx.scheduler.stop();
+}
+
+TEST(TransferSchedulerTest, BulkSerialCompletionSameEndpoint) {
+    // 同端点 2 个 bulk URB：串行完成（同端点不重叠）。间隔断言放宽：
+    // Windows 定时器粒度下可能同批到期（平均吞吐仍受限，见帧对齐注释）
+    TestFixture fx;
+    fx.start();
+    fx.scheduler.submit(0x01, EndpointAttributes::Bulk, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(16, 10));
+    fx.scheduler.submit(0x01, EndpointAttributes::Bulk, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(17, 10));
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(2, 2s));
+    auto responses = fx.scheduler.take_responses();
+    ASSERT_EQ(responses.size(), 2);
+    EXPECT_EQ(responses[0].header.seqnum, 16);
+    EXPECT_EQ(responses[1].header.seqnum, 17);
+    fx.scheduler.stop();
+}
+
+TEST(TransferSchedulerTest, ControlRespondsImmediately) {
+    // 控制请求不走帧调度：立即响应（对齐 vudc 的 ep0 无延迟）
+    TestFixture fx;
+    fx.start();
+    auto t0 = std::chrono::steady_clock::now();
+    fx.scheduler.submit(0x00, EndpointAttributes::Control, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(15, 10));
+    ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
+    EXPECT_LE(std::chrono::steady_clock::now() - t0, 200ms);
+    EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 15);
+    fx.scheduler.stop();
+}
+
 TEST(TransferSchedulerTest, ZeroPacketsRespondImmediately) {
     // 无等时包：不占调度窗口，立即响应
     TestFixture fx;

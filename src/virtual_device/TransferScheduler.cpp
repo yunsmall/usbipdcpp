@@ -4,7 +4,6 @@
 #include <vector>
 
 #include "usbipdcpp/Session.h"
-#include "spdlog/spdlog.h"
 
 namespace usbipdcpp {
 
@@ -51,22 +50,9 @@ void TransferScheduler::submit(const UsbEndpoint &ep, EndpointAttributes type, i
 void TransferScheduler::submit(std::uint8_t ep_address, EndpointAttributes type, std::chrono::microseconds interval,
                                int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit,
                                std::chrono::microseconds data_duration) {
-    // 无等时包：不占调度窗口，立即响应
-    if (num_iso_packets <= 0) {
-        Session *s;
-        {
-            std::lock_guard lock(mutex);
-            s = session;
-        }
-        if (s)
-            on_urb_completed(*s, std::move(submit));
-        return;
-    }
-
-    // 非等时传输的帧调度语义尚未接入（预留：vudc 的帧内撮合/带宽预算），
-    // 当前调度器只被等时设备使用，此处不应出现其他类型
-    if (type != EndpointAttributes::Isochronous) {
-        SPDLOG_ERROR("TransferScheduler 暂不支持 {} 类型的帧调度", static_cast<int>(type));
+    // 控制请求与无等时包的 iso URB：不占调度窗口，立即响应
+    //（控制端点必须快速，对齐 vudc 的 ep0 无延迟处理）
+    if (type == EndpointAttributes::Control || (type == EndpointAttributes::Isochronous && num_iso_packets <= 0)) {
         Session *s;
         {
             std::lock_guard lock(mutex);
@@ -84,13 +70,30 @@ void TransferScheduler::submit(std::uint8_t ep_address, EndpointAttributes type,
 
     auto &state = endpoints[ep_address];
     auto now = std::chrono::steady_clock::now();
-    // 显式数据时长优先：跟随主机数据量而非本地时钟固定间隔，
-    // 设备与主机时钟的频偏不累积（自适应端点跟随行为）。
-    // 允许负值（提前响应，水位闭环修正主机提交开销用）；
-    // 结果为负/零时 deadline 不早于当前时刻，到点即完成
-    auto delay = data_duration != std::chrono::microseconds::zero() ? data_duration
-                                                                   : interval * num_iso_packets;
-    auto deadline = std::max(now, state.last_deadline) + delay;
+    // 服务开始时刻：同端点串行（对齐 vudc 的 already_seen 每帧每端点一个）
+    auto service_start = std::max(now, state.last_deadline);
+    // 等时：显式数据时长优先（跟随主机数据量，设备与主机时钟的频偏不累积，
+    // 自适应端点跟随行为；允许负值 = 提前响应，收流速率闭环用），否则按
+    // 包数×间隔延迟。
+    // bulk/interrupt：对齐内核 vudc 的帧驱动语义（v_timer 每 1ms tick 一次，
+    // vudc_transfer.c）——从服务开始时刻对齐到下一个帧边界完成（等待
+    // 0-1ms，平均 0.5ms），同端点串行保证每帧一个；带宽预算对虚拟设备无
+    // 实际意义（网络带宽才是瓶颈），不实现。
+    // 注意：帧对齐精度受平台定时器分辨率限制（Windows 默认 ~15.6ms 粒度，
+    // asio timer 无法精确触发亚毫秒 deadline），实际节流粒度为 1ms~15.6ms，
+    // 批量到期时同端点多个 URB 可能同批完成——平均吞吐仍受限
+    std::chrono::microseconds delay = (type == EndpointAttributes::Isochronous)
+                                              ? (data_duration != std::chrono::microseconds::zero()
+                                                         ? data_duration
+                                                         : interval * num_iso_packets)
+                                              : std::chrono::microseconds(
+                                                        1000 - static_cast<std::int64_t>(
+                                                                        std::chrono::duration_cast<
+                                                                                std::chrono::microseconds>(
+                                                                                service_start.time_since_epoch())
+                                                                                .count() %
+                                                                        1000));
+    auto deadline = service_start + delay;
     state.last_deadline = deadline;
     state.queue.push_back(PendingUrb{deadline, std::move(submit)});
     kick();
