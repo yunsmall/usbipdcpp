@@ -15,8 +15,11 @@ namespace {
 
 /// 临时目录内的独立测试文件（进程隔离，测试结束删除）
 std::filesystem::path make_test_path(const char *name) {
+    // file_clock 的 rep 在部分 libc++（termux/mac）下对 to_string 重载集产生歧义，
+    // 显式转 long long 再格式化
+    auto stamp = static_cast<long long>(std::filesystem::file_time_type::clock::now().time_since_epoch().count());
     auto path = std::filesystem::temp_directory_path() /
-                (std::string(name) + "_" + std::to_string(std::filesystem::file_time_type::clock::now().time_since_epoch().count()) + ".wav");
+                (std::string(name) + "_" + std::to_string(stamp) + ".wav");
     std::filesystem::remove(path);
     return path;
 }

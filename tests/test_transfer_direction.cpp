@@ -26,7 +26,7 @@ struct SocketPair {
     asio::ip::tcp::socket recv_sock;
 
     SocketPair()
-        : acceptor(io, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0)),
+        : acceptor(io, asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)),
           send_sock(io),
           recv_sock(io) {
         auto ep = acceptor.local_endpoint();
