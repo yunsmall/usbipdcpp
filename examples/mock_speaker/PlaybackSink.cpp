@@ -121,14 +121,12 @@ void PlaybackSink::open_device() {
             }
         }
         if (!found) {
-            // 报错时列出可用设备名，方便用户指定正确的 --device
-            std::string names;
+            // 报错时逐行列出可用设备名，方便用户指定正确的 --device
+            SPDLOG_ERROR("PlaybackSink: 找不到播放设备 \"{}\"，可用设备列表：", device_name);
             for (ma_uint32 i = 0; i < count; i++) {
-                names += devices[i].name;
-                if (i + 1 < count)
-                    names += ", ";
+                SPDLOG_INFO("  - \"{}\"", devices[i].name);
             }
-            SPDLOG_ERROR("PlaybackSink: 找不到播放设备 '{}'，可用设备：[{}]，进入丢弃模式", device_name, names);
+            SPDLOG_ERROR("进入丢弃模式");
             discarding = true;
             return;
         }
@@ -146,6 +144,16 @@ void PlaybackSink::open_device() {
         close_device();
         discarding = true;
         return;
+    }
+    // 默认设备（未指定 --device）：打印实际用到的设备名——ma_device 初始化
+    // 后 pContext 有效，按 playback.id 查设备信息
+    if (device_name.empty()) {
+        auto *dev = static_cast<ma_device *>(device);
+        ma_device_info info;
+        if (ma_context_get_device_info(dev->pContext, ma_device_type_playback, &dev->playback.id, &info) ==
+            MA_SUCCESS) {
+            SPDLOG_INFO("PlaybackSink: 使用默认播放设备 \"{}\"", info.name);
+        }
     }
     // TODO: 临时日志（排查播放快进）：实际设备采样率与请求值是否一致
     auto *dev = static_cast<ma_device *>(device);

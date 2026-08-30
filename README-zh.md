@@ -354,33 +354,33 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
 ## 例子
 
-1. libevdev_mouse
+**1. libevdev_mouse**
 
    使用libevdev库，在支持evdev的系统上，通过读取`/dev/input/event*`，模拟一个usbip的鼠标，实现转发本地的鼠标信号
-2. mock_mouse
+**2. mock_mouse**
 
    基于 `RelativeMouseHandler` 的相对鼠标示例。默认每秒切换左键状态，
    加 `--circle` 参数则控制光标绕圈移动。
-3. mock_keyboard
+**3. mock_keyboard**
 
    一个键盘示例，基于 `KeyboardHandler` 类，内置 Consumer Control（音量、播放暂停等媒体键）。
    每秒模拟按下和释放'A'键。
-4. mock_gamepad
+**4. mock_gamepad**
 
    一个游戏手柄示例，基于 `GamepadHandler` 类。D-pad 八方向旋转，左摇杆画圆，按钮 0 交替开关。
-5. mock_cdc_acm
+**5. mock_cdc_acm**
 
    虚拟串口（CDC ACM）示例，展示 USB Bulk 端点的双向数据传输。
-6. mock_cdc_throttle
+**6. mock_cdc_throttle**
 
    限流虚拟串口（CDC ACM）示例，演示 **OUT NAK 背压**：固定窗口 `--window-sec` 秒内最多接收
    `--limit-bytes` 字节；额度用完即停止接收（OUT NAK——主机 URB 挂起），窗口结束恢复并排空
    挂起的请求。数据处理器同时统计收到的 `'1'` 字符数，每半个窗口把累计数发回主机
    （`<数字>\n`）。使用：`mock_cdc_throttle -l 64 -w 5`。
-7. multi_devices
+**7. multi_devices**
 
    包含10个虚拟HID设备的示例。展示了如何使用工厂模式创建多个设备。
-8. absolute_mouse
+**8. absolute_mouse**
 
    绝对坐标鼠标虚拟设备示例，提供完整的鼠标操作API：
    - **屏幕坐标API**：使用像素坐标定位，通过 `set_screen_bounds()` 设置屏幕边界
@@ -394,11 +394,11 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    - 屏幕坐标通过线性映射转换为 HID 坐标 [0, 32767]
    - 超出 bounds 的坐标会被 clamp 到边界值
    - 注意：Windows 主机不接受 HID (0, 0)，建议屏幕坐标避开 (x1, y1) 边界
-9. libusb_server
+**9. libusb_server**
 
    转发本机的usb设备，带一个非常简陋的命令行，输入`h`查看用法，可自行选择转发哪些设备。
    通过添加虚拟usb设备可实现和真实设备共享同一个usbip server
-10. mock_msc
+**10. mock_msc**
 
    虚拟 USB 大容量存储（U盘）设备，用磁盘镜像文件作为存储介质。
    支持 BOT (Bulk-Only Transport) 协议和常见 SCSI 命令（INQUIRY、READ CAPACITY、
@@ -427,13 +427,13 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    启用后通过 `sudo fstrim -v /mountpoint` 手动触发 discard，
    或 `sudo systemctl enable fstrim.timer` 开启定时 trim。
 
-11. mock_uvc
+**11. mock_uvc**
 
    虚拟 UVC 摄像头，使用 `ColorBarSource` 输出 320×240 YUY2 彩条测试图。
    演示如何实现 `UvcVideoControlHandler` + `UvcVideoStreamingHandler` + `VideoSource` 组合。
    Linux 和 Windows 均可使用。
 
-12. mock_uvc_ffmpeg
+**12. mock_uvc_ffmpeg**
 
    虚拟 UVC 摄像头，通过 FFmpeg 读取视频文件作为视频源。支持 FFmpeg 能解码的所有格式
    （MP4、MKV、AVI 等），可选 MJPEG/H264 透传模式。
@@ -442,7 +442,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    需要 FFmpeg 库（libavformat、libavcodec、libswscale、libavutil）。
 
-13. mock_audio
+**13. mock_audio**
 
    虚拟 USB 麦克风（UAC 1.0）。演示
    `UacAudioControlHandler` + `UacAudioStreamingSourceHandler` + `AudioSource` 组合
@@ -456,7 +456,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    使用：`mock_audio --rates 48000,16000,8000`（首个为初始采样率）
 
-14. mock_speaker
+**14. mock_speaker**
 
    虚拟 USB 扬声器（UAC 1.0，ISO OUT 收流方向）。演示
    `UacAudioControlHandler` + `UacAudioStreamingSinkHandler` + `AudioSink` 组合
@@ -470,7 +470,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    使用：`mock_speaker --rates 48000,44100,96000 --channels 2`（首个为初始采样率；
    播放设备用 `--device <名称>` 指定，默认系统默认设备）
 
-15. termux_libusb_server
+**15. termux_libusb_server**
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
@@ -480,18 +480,18 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    termux-usb的使用可查看termux官方的相关文档
 
-16. multi_interface_hid
+**16. multi_interface_hid**
 
    复合 USB 设备示例，在单个设备上同时实现**两个 HID 接口**（鼠标 + 键盘）。
    展示如何使用 `SimpleVirtualDeviceHandler` 创建多接口虚拟设备。
 
-17. mock_pipe
+**17. mock_pipe**
 
    通用虚拟管道设备（vendor 类接口，bulk IN + bulk OUT）。展示 `PipeDeviceHandler` 的
    read()/write() 接口：像读写文件一样操作虚拟设备的端点数据流（FunctionFS 风格的
    FIFO 阻塞语义；非标准控制请求也通过 read() 以带 setup_req 的 PipeXfer 返回）。
 
-18. mock_pipe_hid
+**18. mock_pipe_hid**
 
    用通用 `PipeDeviceHandler` 实现的 **HID 键盘**（无需 `KeyboardHandler`）——"任意
    bulk/interrupt 设备只需 read/write 就能实现"的教程示例。HID 设备的关键步骤：
@@ -510,7 +510,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    控制请求（GET_REPORT / SET_REPORT 等 class 请求）经 read() 以带 setup_req 的
    PipeXfer 返回，IN 方向用 `write(PipeXfer{.ep = 0, .data = ...})` 应答。
 
-19. libusb_windows_service
+**19. libusb_windows_service**
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或

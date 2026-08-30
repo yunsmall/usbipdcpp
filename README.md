@@ -359,36 +359,36 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
 ## Examples
 
-1. libevdev_mouse
+**1. libevdev_mouse**
 
    Through libevdev library, in an OS which supports evdev, by reading `/dev/input/event*`, simulate a usbip mouse
    to implement forwarding local mouse signals.
-2. mock_mouse
+**2. mock_mouse**
 
    A relative mouse example based on `RelativeMouseHandler`. By default, it toggles the left button
    every second. With the `--circle` flag, the cursor traces a circular pattern.
-3. mock_keyboard
+**3. mock_keyboard**
 
    A keyboard demonstration using the `KeyboardHandler` class which simulates pressing and releasing
    the 'A' key every second. Built-in Consumer Control support (volume, play/pause, etc. media keys).
-4. mock_gamepad
+**4. mock_gamepad**
 
    A gamepad demonstration using the `GamepadHandler` class. Rotates the D-pad through 8 directions,
    sweeps the left analog stick in a circle, and toggles button 0 on/off.
-5. mock_cdc_acm
+**5. mock_cdc_acm**
 
    A virtual serial port (CDC ACM) demonstration. Shows bidirectional data transfer over USB bulk endpoints.
-6. mock_cdc_throttle
+**6. mock_cdc_throttle**
 
    A virtual serial port (CDC ACM) demonstrating **OUT NAK throttling**: over a fixed `--window-sec`
    window it accepts at most `--limit-bytes` bytes; once the budget is consumed the device stalls
    reception (OUT NAK — the host URB hangs) until the window lapses, then resumes and drains the
    queued requests. The handler also counts received `'1'` characters and reports the running tally
    to the host every half-window as `<count>\n`. Usage: `mock_cdc_throttle -l 64 -w 5`.
-7. multi_devices
+**7. multi_devices**
 
    A demonstration with 10 virtual HID devices. Shows how to create multiple devices using a factory pattern.
-8. absolute_mouse
+**8. absolute_mouse**
 
    Absolute coordinate mouse virtual device example providing complete mouse operation API:
    - **Screen coordinate API**: Position using pixel coordinates, set screen bounds via `set_screen_bounds()`
@@ -402,12 +402,12 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    - Screen coordinates are linearly mapped to HID coordinates [0, 32767]
    - Coordinates outside bounds are clamped to boundary values
    - Note: Windows host doesn't accept HID (0, 0), avoid screen coordinates at (x1, y1) boundary
-9. libusb_server
+**9. libusb_server**
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
    and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
    with physical usb devices.
-10. mock_msc
+**10. mock_msc**
 
    A virtual USB Mass Storage (flash drive) device backed by a disk image file.
    Supports BOT (Bulk-Only Transport) protocol and common SCSI commands (INQUIRY, READ CAPACITY,
@@ -438,13 +438,13 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    After enabling, trigger discard manually with `sudo fstrim -v /mountpoint`,
    or schedule it with `sudo systemctl enable fstrim.timer`.
 
-11. mock_uvc
+**11. mock_uvc**
 
    A virtual UVC camera using `ColorBarSource` to output a 320×240 YUY2 color bar test pattern.
    Demonstrates the `UvcVideoControlHandler` + `UvcVideoStreamingHandler` + `VideoSource` combination.
    Functional on both Linux and Windows.
 
-12. mock_uvc_ffmpeg
+**12. mock_uvc_ffmpeg**
 
    A virtual UVC camera that reads video files via FFmpeg as the video source. Supports any format
    decodable by FFmpeg (MP4, MKV, AVI, etc.), with optional MJPEG/H264 passthrough mode.
@@ -453,7 +453,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    Requires FFmpeg libraries (libavformat, libavcodec, libswscale, libavutil).
 
-13. mock_audio
+**13. mock_audio**
 
    A virtual USB microphone (UAC 1.0). Demonstrates the
    `UacAudioControlHandler` + `UacAudioStreamingSourceHandler` + `AudioSource` combination
@@ -467,7 +467,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    Usage: `mock_audio --rates 48000,16000,8000` (the first is the initial rate)
 
-14. mock_speaker
+**14. mock_speaker**
 
    A virtual USB speaker (UAC 1.0, ISO OUT receive direction). Demonstrates the
    `UacAudioControlHandler` + `UacAudioStreamingSinkHandler` + `AudioSink` combination
@@ -482,7 +482,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    Usage: `mock_speaker --rates 48000,44100,96000 --channels 2` (the first is the initial
    rate; playback device via `--device <name>`, default = system default)
 
-15. termux_libusb_server
+**15. termux_libusb_server**
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
@@ -492,19 +492,19 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    For the usage of termux-usb, you can refer to the relevant documentation on the official Termux website.
 
-16. multi_interface_hid
+**16. multi_interface_hid**
 
    A demonstration of a composite USB device combining **two HID interfaces** (mouse + keyboard) on a single device.
    Shows how to create multi-interface virtual devices using `SimpleVirtualDeviceHandler`.
 
-17. mock_pipe
+**17. mock_pipe**
 
    A generic virtual pipe device (vendor-specific class, bulk IN + bulk OUT). Demonstrates the
    `PipeDeviceHandler` API: blocking `read()` / `write()` like a file stream over the virtual
    device's endpoints (FunctionFS-style FIFO semantics; control requests are also delivered
    through `read()` as `PipeXfer` with `setup_req`).
 
-18. mock_pipe_hid
+**18. mock_pipe_hid**
 
    A HID keyboard implemented with the generic `PipeDeviceHandler` (no `KeyboardHandler` needed) —
    the tutorial example for "implement any bulk/interrupt device with read/write only".
@@ -524,7 +524,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    Control requests (GET_REPORT / SET_REPORT etc.) arrive through `read()` as `PipeXfer` with
    `setup_req`; answer IN requests with `write(PipeXfer{.ep = 0, .data = ...})`.
 
-19. libusb_windows_service
+**19. libusb_windows_service**
 
    A **Windows Service** wrapper for the libusb server (Windows only). Uses the Windows SCM API to run
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
