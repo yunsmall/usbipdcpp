@@ -56,9 +56,6 @@ public:
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
     void on_setup_interface_handlers() override;
 
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-
     /// 当前静音状态（供 AS handler 查询）
     [[nodiscard]] bool is_muted() const {
         return mute;
@@ -115,7 +112,6 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
 
     // AS 的类描述符（General + Format Type）必须出现在每个 alt，
@@ -206,7 +202,6 @@ public:
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
 
     // AS 的类描述符（General + Format Type）必须出现在每个 alt，

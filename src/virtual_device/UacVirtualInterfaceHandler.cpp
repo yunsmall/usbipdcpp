@@ -305,13 +305,6 @@ void UacAudioControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, s
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
-void UacAudioControlHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    *p_status = (alternate_setting == 0) ? 0 : static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-std::uint8_t UacAudioControlHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-
 data_type UacAudioControlHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                                           std::uint16_t descriptor_length, std::uint32_t *p_status) {
     if (type == CS_INTERFACE) {
@@ -678,10 +671,6 @@ void UacAudioStreamingSourceHandler::request_set_interface(std::uint16_t alterna
     }
 }
 
-std::uint8_t UacAudioStreamingSourceHandler::request_get_interface(std::uint32_t *p_status) {
-    return streaming ? 1 : 0;
-}
-
 data_type UacAudioStreamingSourceHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                                             std::uint16_t descriptor_length, std::uint32_t *p_status) {
     if (type == CS_INTERFACE) {
@@ -1030,10 +1019,6 @@ void UacAudioStreamingSinkHandler::request_set_interface(std::uint16_t alternate
     else {
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
-}
-
-std::uint8_t UacAudioStreamingSinkHandler::request_get_interface(std::uint32_t *p_status) {
-    return streaming ? 1 : 0;
 }
 
 data_type UacAudioStreamingSinkHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,

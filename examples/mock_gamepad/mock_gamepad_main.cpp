@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Mock gamepad started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     // 演示线程：D-pad 旋转 + 左摇杆画圆
     std::atomic<bool> running{true};
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
         gp.set_axis(1, 0);
     });
 
-    std::cin.get();
+    wait_for_exit();
     running = false;
     demo_thread.join();
     server.stop();

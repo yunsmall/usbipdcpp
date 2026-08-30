@@ -63,16 +63,6 @@ public:
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                    std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
     void on_new_connection(Session &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
@@ -121,14 +111,6 @@ public:
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
 
     VideoSource *get_source() {

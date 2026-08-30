@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Mock keyboard started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     // 每隔一秒按下/释放 A 键
     std::atomic<bool> running{true};
@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
         }
     });
 
-    std::cin.get();
+    wait_for_exit();
     running = false;
     key_thread.join();
     server.stop();

@@ -54,9 +54,9 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Mock CDC ACM (virtual serial port) started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Then use: screen /dev/ttyACMx or minicom");
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    std::cin.get();
+    wait_for_exit();
 
     SPDLOG_INFO("Stopping server...");
     server.stop();

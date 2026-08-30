@@ -382,33 +382,6 @@ void UvcVideoControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, s
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
-void UvcVideoControlHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
-    *p_status = (alternate_setting == 0) ? 0 : static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-std::uint8_t UvcVideoControlHandler::request_get_interface(std::uint32_t *p_status) {
-    return 0;
-}
-void UvcVideoControlHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoControlHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                          std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoControlHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoControlHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                            std::uint32_t *p_status) {
-    *p_status = 0;
-}
-std::uint16_t UvcVideoControlHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-std::uint16_t UvcVideoControlHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
-}
-
 data_type UvcVideoControlHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
                                                           std::uint16_t descriptor_length, std::uint32_t *p_status) {
     if (type == CS_INTERFACE) {
@@ -910,27 +883,6 @@ void UvcVideoStreamingHandler::request_set_interface(std::uint16_t alternate_set
 
 std::uint8_t UvcVideoStreamingHandler::request_get_interface(std::uint32_t *p_status) {
     return streaming_ ? 1 : 0;
-}
-
-void UvcVideoStreamingHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoStreamingHandler::request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                            std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoStreamingHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-    *p_status = 0;
-}
-void UvcVideoStreamingHandler::request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                              std::uint32_t *p_status) {
-    *p_status = 0;
-}
-std::uint16_t UvcVideoStreamingHandler::request_get_status(std::uint32_t *p_status) {
-    return 0;
-}
-std::uint16_t UvcVideoStreamingHandler::request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
-    return 0;
 }
 
 data_type UvcVideoStreamingHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,

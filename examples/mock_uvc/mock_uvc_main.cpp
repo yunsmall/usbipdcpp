@@ -92,9 +92,9 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Mock UVC camera started on port {}, busid {}, {}x{}@{}fps", port, busid, width, height, fps);
     SPDLOG_INFO("Connect: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to stop...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    std::cin.get();
+    wait_for_exit();
 
     server.stop();
     return 0;

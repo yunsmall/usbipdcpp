@@ -36,17 +36,25 @@ WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（�
 
 ## mock 设备本地验证的坑
 
-在 WSL 里起 mock 服务器并 attach 验证时，两个坑容易踩到：
+在 WSL 里起 mock 服务器并 attach 验证时，注意：
 
-- **mock 服务器依赖 `std::cin.get()` 等回车**：直接 `< /dev/null` 会让
-  stdin 立即 EOF，server 秒退。必须用管道把 stdin 挂住才能常驻，例如
-  `setsid nohup bash -c 'sleep infinity | ./mock_xxx -p 53240' < /dev/null > log 2>&1 &`
+- **启动**：mock 服务器（wait_for_exit）等退出信号（POSIX：SIGINT/SIGTERM；
+  Windows：控制台事件），后台运行不需要挂 stdin。直接
+  `setsid ./mock_xxx -p 53240 < /dev/null > log 2>&1 &`
+- **关闭**：`kill -TERM <pid>` 或 `pkill -x mock_xxx`（都是 SIGTERM），
+  服务器走正常清理路径（server.stop：关连接、释放端口）优雅退出。
+  退出后 `ss -tln | grep 53240` 确认端口释放（端口被占会导致下一个
+  服务器起不来，误 attach 到旧设备上）
 - **清理旧进程时禁用 `pkill -f mock_xxx`**：`-f` 按整条命令行匹配，
   会把自己的 shell（bash -lc 命令串里含 "mock_xxx"）杀掉。改用精确
   进程名 `pkill -x mock_xxx`（可执行名，不含路径/参数）
 - **进程名超 15 字符会被内核截断**（Linux comm 上限）：`pkill -x` 匹配的
   是截断后的名字，如 `mock_cdc_throttle`→`mock_cdc_thrott`、
   `multi_interface_hid`→`multi_interface`、`multi_devices` 恰好 13 字符不截断。
-  杀不掉时先 `ps -eo comm | grep -i mock` 看真实 comm 名再用 `pkill -x <真实名>`，
-  杀完 `ss -tln | grep 53240` 确认端口释放（端口被占会导致下一个服务器起不来，
-  误 attach 到旧设备上）
+  杀不掉时先 `ps -eo comm | grep -i mock` 看真实 comm 名再用 `pkill -x <真实名>`
+
+**MSC（U盘）块设备读写必须分步，禁止一条命令里混查询和写**：
+attach 后先单独确认新出现的块设备是哪个（如 attach 前后 `lsblk` 对比、
+`dmesg | tail` 看内核枚举的 sdX 名），确认无误后**再单独执行**读写命令。
+严禁 `lsblk ... && dd if=/dev/sdX ...` 这类"查设备 + 写设备"一条命令
+串联——WSL 里还有其他物理硬盘，写错盘符会毁数据

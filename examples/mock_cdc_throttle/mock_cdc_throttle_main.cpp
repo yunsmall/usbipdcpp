@@ -68,9 +68,9 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("设备统计收到的 '1' 字符数，每 {} ms 以「数字\\n」发回主机", window_ms / 2);
     SPDLOG_INFO("主机持续写入超过 {} 字节后，设备暂停接收 {} ms（OUT NAK），之后自动恢复",
                 limit_bytes, window_ms);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    std::cin.get();
+    wait_for_exit();
     server.stop();
     return 0;
 }

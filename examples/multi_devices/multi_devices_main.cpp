@@ -43,12 +43,12 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Server started on port {} with {} devices", port, devices.size());
     SPDLOG_INFO("Use 'usbip list -r localhost --tcp-port {}' to list devices", port);
     SPDLOG_INFO("Use 'usbip attach -r localhost --tcp-port {} -b 1-X' to attach a device", port);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     // 打印所有绑定的设备
     server.print_bound_devices();
 
-    std::cin.get();
+    wait_for_exit();
 
     SPDLOG_INFO("Stopping server...");
     server.stop();

@@ -78,8 +78,13 @@ public:
                                                                           const SetupPacket &setup,
                                                                           TransferHandle transfer, std::error_code &ec);
 
-    // ========== 标准请求回调（默认实现：接受并回成功，子类按需重写）==========
-    // 默认实现都很简单，放头文件内联：头文件即文档，子类无需跳去 cpp 看默认行为
+    // ========== 标准请求回调（默认实现：未实现即回成功/EPIPE，子类按需重写）==========
+    // 默认实现都很简单，放头文件内联：头文件即文档，子类无需跳去 cpp 看默认行为。
+    
+    // feature 类请求回 0（成功）：虚拟设备没有 UDC 硬件层的端点 halt 状态机，
+    // 真实设备上 ENDPOINT_HALT 的 SET/CLEAR_FEATURE 由 UDC 硬件应答成功（软件层
+    // 的 STALL 只发生在不认识 selector 时）——无状态可清 = 成功，回 EPIPE 会让
+    // 主机驱动（初始化/出错恢复时的清 stall）莫名收到失败
 
     virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
         *p_status = 0;
@@ -90,14 +95,16 @@ public:
     }
 
     virtual std::uint8_t request_get_interface(std::uint32_t *p_status) {
-        // 返回当前 alternate setting（设备级在 SET_INTERFACE 成功时已更新）
+        // 返回当前 alternate setting（设备级在 SET_INTERFACE 成功时已更新）。
+        // 对齐内核 f->get_alt：接口无 get_alt 回调时返回 0（只支持 alt 0）
         *p_status = 0;
         return handle_interface.current_altsetting;
     }
     virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
         // 只接受设备定义里存在的 alt（endpoints 外层下标即 alt 号）：请求不存在的
         // alt 回 EPIPE，否则 GET_INTERFACE 返回的值与端点集合不一致（假装成功
-        // 会让主机驱动读到矛盾的接口状态）
+        // 会让主机驱动读到矛盾的接口状态）。对齐内核 composite：接口无 set_alt/
+        // get_alt 回调时只支持 alt 0，请求其他 alt 回 STALL
         if (alternate_setting < handle_interface.endpoints.size()) {
             *p_status = 0;
         }
@@ -107,6 +114,9 @@ public:
     }
 
     virtual std::uint16_t request_get_status(std::uint32_t *p_status) {
+        // GET_STATUS 回 0：主机栈（如 Windows）对状态查询有基础依赖，
+        // 回 0 是"无特殊状态"的宽松响应（对齐内核 GET_STATUS 无 get_status
+        // 回调时返回 0 的语义）
         *p_status = 0;
         return 0;
     }
@@ -145,6 +155,8 @@ public:
      * @return
      */
     virtual std::uint16_t request_endpoint_sync_frame(std::uint8_t ep_address, std::uint32_t *p_status) {
+        // 未实现：对齐 composite 对 SYNC_FRAME 的 STALL 行为
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return 0;
     }
 

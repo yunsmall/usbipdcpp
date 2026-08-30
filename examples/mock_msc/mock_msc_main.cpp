@@ -41,9 +41,9 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Mock MSC (USB Flash Drive) started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Image: {}", image_path);
     SPDLOG_INFO("Connect: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    std::cin.get();
+    wait_for_exit();
 
     SPDLOG_INFO("Stopping...");
     server.stop();

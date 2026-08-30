@@ -139,19 +139,6 @@ public:
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
 
-    // ========== 标准请求默认实现 ==========
-
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
-
     // ========== 子类可选重写的回调 ==========
 
     /**
@@ -294,19 +281,6 @@ public:
                                                       std::error_code &ec) override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
-
-    // ========== 标准请求默认实现 ==========
-
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override;
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override;
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
-    std::uint16_t request_get_status(std::uint32_t *p_status) override;
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override;
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override;
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override;
 
     // ========== 子类可选重写的回调 ==========
 

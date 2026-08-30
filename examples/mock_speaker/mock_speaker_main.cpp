@@ -197,9 +197,9 @@ int main(int argc, char **argv) {
         rates_str += std::to_string(r) + " ";
     SPDLOG_INFO("Mock UAC speaker started on port {}, busid {}, {}ch, rates [{}]", port, busid, channels, rates_str);
     SPDLOG_INFO("Connect: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to stop...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    std::cin.get();
+    wait_for_exit();
 
     server.stop();
     return 0;

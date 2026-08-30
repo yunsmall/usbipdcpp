@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Interface 0: relative mouse (square pattern)");
     SPDLOG_INFO("Interface 1: keyboard (a-z typing)");
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     std::atomic<bool> running{true};
 
@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
         }
     });
 
-    std::cin.get();
+    wait_for_exit();
 
     running = false;
     mouse_thread.join();

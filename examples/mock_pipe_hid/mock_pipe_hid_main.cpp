@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Mock pipe HID keyboard started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
-    SPDLOG_INFO("Press Enter to exit...");
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     // 业务线程使用短超时轮询：退出顺序必须是"业务线程先退出、再 server.stop()"，
     // 否则 handler 随会话析构时业务线程还阻塞在 read/write 上（use-after-free）
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
         }
     });
 
-    std::cin.get();
+    wait_for_exit();
 
     running = false;
     read_thread.join();
