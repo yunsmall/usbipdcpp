@@ -8,7 +8,7 @@
 
 - ✅ **USBIP 服务器**: 基于 libusb 实现，支持所有 libusb 兼容平台
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
-- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、UVC（摄像头）、UAC（麦克风）—— 无需 libusb
+- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、UVC（摄像头）、UAC（麦克风、扬声器）—— 无需 libusb
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
 
@@ -120,7 +120,7 @@ sudo apt install libgtest-dev
 # 如果需要 libusb 转发物理设备（默认 USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON）
 sudo apt install libusb-1.0-0-dev
 
-# 如果需要 mock_audio 的 --audio 音频文件播放（可选，位于 universe 软件源；不装则自动跳过）
+# 如果需要 mock_audio 的 --audio 音频文件播放 / mock_speaker 的本机播放（可选，位于 universe 软件源；不装则自动跳过）
 sudo apt install libminiaudio-dev
 
 # 编译
@@ -163,7 +163,7 @@ cmake --install build
 
 - Visual Studio 生成器是多配置的：`cmake --build` 和 `ctest` 需要加 `--config Release`（或 Debug）。
 - Windows 下依赖库是 DLL，`cmake --install` 会自动把依赖 DLL 拷贝到可执行文件旁。
-- 禁用对应功能时可跳过相应的 vcpkg 包：测试 → `gtest`、示例 → `cxxopts`、libusb 组件 → `libusb`、mock_audio 的音频文件播放 → `miniaudio`。
+- 禁用对应功能时可跳过相应的 vcpkg 包：测试 → `gtest`、示例 → `cxxopts`、libusb 组件 → `libusb`、mock_audio 的音频文件播放 / mock_speaker 的本机播放 → `miniaudio`。
 
 #### Termux (Android)
 
@@ -200,7 +200,7 @@ cmake --install build --prefix $PREFIX
 - 必须开启 `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON`：Termux 的 libasio 是 autotools 构建，只提供 `asio.pc`，没有 CMake config。
 - 不装 cxxopts 也可以，examples 会被整块跳过（configure 时会有 WARNING）；也可通过 `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF` 只编译库。
 - `libevdev_mouse` 和 `mock_uvc_ffmpeg` 依赖的 libevdev / FFmpeg 在 Termux 没有 dev 包，configure 时自动跳过，无需额外选项。
-- Termux 仓库没有 miniaudio，mock_audio 的 `--audio` 选项（`AudioFileSource`）自动跳过；可手动安装头文件启用。stb 头文件在 Termux 放在 `include/stb/` 子目录（vcpkg 在 include 根目录），源码用 `__has_include` 自适应两种布局。
+- Termux 仓库没有 miniaudio，mock_audio 的 `--audio` 选项（`AudioFileSource`）与 mock_speaker 的本机播放自动跳过；可手动安装头文件启用。stb 头文件在 Termux 放在 `include/stb/` 子目录（vcpkg 在 include 根目录），源码用 `__has_include` 自适应两种布局。
 - 如需编译 termux_libusb_server 示例，添加 `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`；运行它需要 `pkg install termux-api`（提供 termux-usb 命令）。
 
 #### 使用vcpkg包管理器
@@ -213,7 +213,7 @@ cmake --install build --prefix $PREFIX
 ```bash
 ./vcpkg install gtest
 ```
-如需 mock_audio 的音频文件播放（`AudioFileSource`），还需安装 miniaudio：
+如需 mock_audio 的音频文件播放（`AudioFileSource`）或 mock_speaker 的本机播放，还需安装 miniaudio：
 ```bash
 ./vcpkg install miniaudio
 ```
@@ -454,9 +454,23 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    - 音频文件播放：`--audio music.mp3`（WAV/MP3/FLAC/OGG，基于 miniaudio，默认循环播放；
      需安装 miniaudio，未找到时自动跳过）
 
-   使用：`mock_audio --rates 48000,16000,8000`（采样率需为 8000 的整数倍，首个为初始采样率）
+   使用：`mock_audio --rates 48000,16000,8000`（首个为初始采样率）
 
-14. termux_libusb_server
+14. mock_speaker
+
+   虚拟 USB 扬声器（UAC 1.0，ISO OUT 收流方向）。演示
+   `UacAudioControlHandler` + `UacAudioStreamingSinkHandler` + `AudioSink` 组合
+   （Feature Unit 静音/音量控制、采样率协商、ISO OUT PCM 收流消费）。
+
+   三种消费方式：
+   - 本机播放（默认）：基于 miniaudio，需安装 miniaudio，未找到时自动跳过
+   - WAV 落盘：`--output out.wav`（收下的 PCM 写入 WAV 文件，无需 miniaudio）
+   - 丢弃计数（无 miniaudio 且未指定 `--output`）：仅统计接收字节
+
+   使用：`mock_speaker --rates 48000,44100,96000 --channels 2`（首个为初始采样率；
+   播放设备用 `--device <名称>` 指定，默认系统默认设备）
+
+15. termux_libusb_server
 
    可在非root安卓设备的termux中使用的libusb server，通过
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`启动。
@@ -466,18 +480,18 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    termux-usb的使用可查看termux官方的相关文档
 
-15. multi_interface_hid
+16. multi_interface_hid
 
    复合 USB 设备示例，在单个设备上同时实现**两个 HID 接口**（鼠标 + 键盘）。
    展示如何使用 `SimpleVirtualDeviceHandler` 创建多接口虚拟设备。
 
-16. mock_pipe
+17. mock_pipe
 
    通用虚拟管道设备（vendor 类接口，bulk IN + bulk OUT）。展示 `PipeDeviceHandler` 的
    read()/write() 接口：像读写文件一样操作虚拟设备的端点数据流（FunctionFS 风格的
    FIFO 阻塞语义；非标准控制请求也通过 read() 以带 setup_req 的 PipeXfer 返回）。
 
-17. mock_pipe_hid
+18. mock_pipe_hid
 
    用通用 `PipeDeviceHandler` 实现的 **HID 键盘**（无需 `KeyboardHandler`）——"任意
    bulk/interrupt 设备只需 read/write 就能实现"的教程示例。HID 设备的关键步骤：
@@ -496,7 +510,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    控制请求（GET_REPORT / SET_REPORT 等 class 请求）经 read() 以带 setup_req 的
    PipeXfer 返回，IN 方向用 `write(PipeXfer{.ep = 0, .data = ...})` 应答。
 
-18. libusb_windows_service
+19. libusb_windows_service
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或
@@ -538,7 +552,7 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | libevdev | 可选 (仅Linux) | 用于evdev输入设备转发 |
 | cxxopts | 可选 | 用于编译示例程序 |
 | GTest | 可选 | 用于编译测试 |
-| miniaudio + stb | 可选 | mock_audio 示例的音频文件播放（--audio，纯头文件） |
+| miniaudio + stb | 可选 | mock_audio 的音频文件播放（--audio）与 mock_speaker 的本机播放（纯头文件） |
 
 ### 平台支持
 
@@ -597,6 +611,8 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `UacAudioControlHandler` | UAC AudioControl 接口（Feature Unit 静音/音量控制） |
 | `UacAudioStreamingSourceHandler` | UAC AudioStreaming 接口（ISO PCM 推流） |
 | `AudioSource` | UAC 虚拟麦克风 PCM 音频源抽象接口 |
+| `UacAudioStreamingSinkHandler` | UAC AudioStreaming 接口（ISO OUT 收流消费，扬声器方向） |
+| `AudioSink` | UAC 虚拟扬声器 PCM 消费端抽象接口 |
 | `SineWaveSource` | 正弦波测试音源 |
 | `FourierSource` | 傅里叶级数合成音源（多谐波叠加，各谐波独立相位） |
 | `AudioFileSource` | mock_audio 示例的音源（WAV/MP3/FLAC/OGG，基于 miniaudio，支持重采样和循环播放；在 examples/mock_audio/） |

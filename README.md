@@ -6,7 +6,7 @@ A C++ library for creating usbip servers
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), UVC (camera), UAC (microphone) — no libusb dependency
+> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), UVC (camera), UAC (microphone, speaker) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -119,7 +119,7 @@ sudo apt install libgtest-dev
 # If building libusb components (USBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON by default)
 sudo apt install libusb-1.0-0-dev
 
-# For mock_audio --audio file playback (optional, universe repository; skipped automatically when missing)
+# For mock_audio --audio file playback / mock_speaker local playback (optional, universe repository; skipped automatically when missing)
 sudo apt install libminiaudio-dev
 
 # Build
@@ -164,7 +164,7 @@ Notes:
 
 - The Visual Studio generator is multi-config: `cmake --build` and `ctest` need `--config Release` (or Debug).
 - Dependencies are DLLs on Windows; `cmake --install` copies them next to the executables automatically.
-- Skip the corresponding vcpkg packages when disabling features: tests → `gtest`, examples → `cxxopts`, libusb components → `libusb`, mock_audio audio file playback → `miniaudio`.
+- Skip the corresponding vcpkg packages when disabling features: tests → `gtest`, examples → `cxxopts`, libusb components → `libusb`, mock_audio audio file playback / mock_speaker local playback → `miniaudio`.
 
 #### Termux (Android)
 
@@ -201,7 +201,7 @@ Notes:
 - `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON` is required: Termux's libasio is built with autotools and only ships `asio.pc`, no CMake config.
 - Installing cxxopts is optional — without it all examples are skipped (with a configure-time warning). You can also build just the libraries with `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF`.
 - `libevdev_mouse` and `mock_uvc_ffmpeg` depend on libevdev / FFmpeg, which have no dev packages in Termux. They are skipped automatically during configure — no extra options needed.
-- miniaudio is not available in the Termux repositories. The `--audio` option (`AudioFileSource`) of `mock_audio` is skipped automatically; install the header manually to enable it. The stb headers live in `include/stb/` on Termux (include root with vcpkg); the source adapts to both layouts via `__has_include`.
+- miniaudio is not available in the Termux repositories. The `--audio` option (`AudioFileSource`) of `mock_audio` and the local playback of `mock_speaker` are skipped automatically; install the header manually to enable it. The stb headers live in `include/stb/` on Termux (include root with vcpkg); the source adapts to both layouts via `__has_include`.
 - To build the `termux_libusb_server` example, add `-DUSBIPDCPP_BUILD_EXAMPLE_TERMUX_LIBUSB_SERVER=ON`. Running it via `termux-usb` requires `pkg install termux-api`.
 
 #### Use vcpkg as the package manager:
@@ -215,7 +215,7 @@ To build tests, also install gtest:
 ```bash
 ./vcpkg install gtest
 ```
-For mock_audio audio file playback (`AudioFileSource`), also install miniaudio:
+For mock_audio audio file playback (`AudioFileSource`) or mock_speaker local playback, also install miniaudio:
 ```bash
 ./vcpkg install miniaudio
 ```
@@ -465,9 +465,24 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    - Audio file playback: `--audio music.mp3` (WAV/MP3/FLAC/OGG via miniaudio, loops by default;
      requires miniaudio to be installed, skipped automatically when not found)
 
-   Usage: `mock_audio --rates 48000,16000,8000` (sample rates must be multiples of 8000, the first is the initial rate)
+   Usage: `mock_audio --rates 48000,16000,8000` (the first is the initial rate)
 
-14. termux_libusb_server
+14. mock_speaker
+
+   A virtual USB speaker (UAC 1.0, ISO OUT receive direction). Demonstrates the
+   `UacAudioControlHandler` + `UacAudioStreamingSinkHandler` + `AudioSink` combination
+   (Feature Unit mute/volume control, sampling rate negotiation, ISO OUT PCM consumption).
+
+   Three consumption modes:
+   - Local playback (default): via miniaudio, requires miniaudio to be installed,
+     skipped automatically when not found
+   - WAV recording: `--output out.wav` (writes received PCM to a WAV file, no miniaudio needed)
+   - Discard counting (no miniaudio and no `--output`): only counts received bytes
+
+   Usage: `mock_speaker --rates 48000,44100,96000 --channels 2` (the first is the initial
+   rate; playback device via `--device <name>`, default = system default)
+
+15. termux_libusb_server
 
    A usbip server which can be used at termux in non-root Android device, execute it by
    `termux-usb -e /path/to/termux_libusb_server /dev/bus/usb/xxx/xxx`
@@ -477,19 +492,19 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    For the usage of termux-usb, you can refer to the relevant documentation on the official Termux website.
 
-15. multi_interface_hid
+16. multi_interface_hid
 
    A demonstration of a composite USB device combining **two HID interfaces** (mouse + keyboard) on a single device.
    Shows how to create multi-interface virtual devices using `SimpleVirtualDeviceHandler`.
 
-16. mock_pipe
+17. mock_pipe
 
    A generic virtual pipe device (vendor-specific class, bulk IN + bulk OUT). Demonstrates the
    `PipeDeviceHandler` API: blocking `read()` / `write()` like a file stream over the virtual
    device's endpoints (FunctionFS-style FIFO semantics; control requests are also delivered
    through `read()` as `PipeXfer` with `setup_req`).
 
-17. mock_pipe_hid
+18. mock_pipe_hid
 
    A HID keyboard implemented with the generic `PipeDeviceHandler` (no `KeyboardHandler` needed) —
    the tutorial example for "implement any bulk/interrupt device with read/write only".
@@ -509,7 +524,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    Control requests (GET_REPORT / SET_REPORT etc.) arrive through `read()` as `PipeXfer` with
    `setup_req`; answer IN requests with `write(PipeXfer{.ep = 0, .data = ...})`.
 
-18. libusb_windows_service
+19. libusb_windows_service
 
    A **Windows Service** wrapper for the libusb server (Windows only). Uses the Windows SCM API to run
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
@@ -551,7 +566,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | libevdev | Optional (Linux) | For evdev-based input device forwarding |
 | cxxopts | Optional | For building example applications |
 | GTest | Optional | For building tests |
-| miniaudio + stb | Optional | For audio file playback in the mock_audio example (`--audio`, header-only) |
+| miniaudio + stb | Optional | For mock_audio audio file playback (`--audio`) and mock_speaker local playback (header-only) |
 
 ### Platform Support
 
@@ -610,6 +625,8 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `UacAudioControlHandler` | UAC AudioControl interface (Feature Unit mute/volume control) |
 | `UacAudioStreamingSourceHandler` | UAC AudioStreaming interface (ISO PCM streaming) |
 | `AudioSource` | Abstract PCM audio source interface for UAC devices |
+| `UacAudioStreamingSinkHandler` | UAC AudioStreaming interface (ISO OUT PCM consumption, speaker direction) |
+| `AudioSink` | Abstract PCM sink interface for the virtual UAC speaker |
 | `SineWaveSource` | Sine wave test tone audio source |
 | `FourierSource` | Fourier series synthesis audio source (multiple harmonics with per-harmonic phase) |
 | `AudioFileSource` | Audio file source for the mock_audio example (WAV/MP3/FLAC/OGG via miniaudio, resampling, looping; in examples/mock_audio/) |
