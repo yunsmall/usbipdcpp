@@ -570,12 +570,42 @@ void UacAudioStreamingSourceHandler::handle_isochronous_transfer(std::uint32_t s
     }
 
     auto *trx = GenericTransfer::from_handle(transfer.get());
+    // 响应延迟 = 主机声明的各包长度之和对应的音频时长（iso IN 缓冲按各包
+    // length 紧凑填充，sum(length) 即本次数据量；数据量在处理时才知道，
+    // 这里用声明值提前折算，与处理时的 total_sent 只差截断的零头）。
+    // 数据填充挪到 TransferScheduler 的服务时刻做（vudc 语义：处理完当场
+    // 发 RET，限速靠"延迟处理时机"——每 URB 处理完当场发 → 主机立即重提交
+    // → 下一 URB 再等数据时长 → 完成节奏恒等于数据速率，等效 URB 的 N 个包
+    // 分布在 N 帧完成。立即处理会让主机驱动的"完成→重提交"循环失去节流，
+    // 实测超发 158 倍）
+    std::chrono::microseconds data_duration{};
+    auto fmt = source->current_format();
+    auto bytes_per_second = static_cast<std::uint64_t>(fmt.sample_rate) * (fmt.bits_per_sample / 8) * fmt.channels;
+    std::uint32_t declared = 0;
+    for (auto &iso: trx->iso_descriptors)
+        declared += iso.length;
+    if (bytes_per_second > 0 && declared > 0) {
+        data_duration = std::chrono::microseconds(
+                static_cast<std::int64_t>(declared) * 1000000 / static_cast<std::int64_t>(bytes_per_second));
+    }
+    device_handler->get_transfer_scheduler().submit(
+            *session, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
+            [this, num_iso_packets](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+                                    TransferHandle &&transfer) {
+                process_iso_in(session, ep, seqnum, num_iso_packets, std::move(transfer));
+            });
+}
+
+void UacAudioStreamingSourceHandler::process_iso_in(Session &session, const UsbEndpoint &ep,
+                                                    std::uint32_t seqnum, int num_iso_packets,
+                                                    TransferHandle transfer) {
+    auto *trx = GenericTransfer::from_handle(transfer.get());
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
 
     // 调试用：确认 ISO URB 是否到达、每包填多少字节（Windows 录音无数据排查）
-    SPDLOG_TRACE("[ISO] seq={} num_packets={} buf_len={} packet_base={} residue_step={}",
-                seqnum, num_iso_packets, transfer_buffer_length, packet_base, packet_residue_step);
+    SPDLOG_TRACE("[ISO] seq={} num_packets={} packet_base={} residue_step={}",
+                seqnum, num_iso_packets, packet_base, packet_residue_step);
 
     // 内核 usb_submit_urb 会把 iso_frame_desc[n].status 初始化为 -EXDEV，
     // 必须清零，否则内核音频驱动会跳过所有包。
@@ -606,26 +636,14 @@ void UacAudioStreamingSourceHandler::handle_isochronous_transfer(std::uint32_t s
         total_sent += iso.actual_length;
     }
 
-    // 数据已填好，交给设备级传输调度器按帧节奏延迟响应（对齐内核 vudc
-    // 帧调度：URB 的 N 个等时包分布在 N 个端点间隔里完成，完成节奏 = 总线
-    // 节奏）。立即响应会让主机驱动的"完成→重提交"循环失去节流（实测超发 158 倍）
     // 调试用：ISO 响应信息（每包实际字节数分布）
-    SPDLOG_TRACE("[ISO] 提交调度 seq={} num_packets={} total={}B", seqnum, num_iso_packets, total_sent);
-    // 响应延迟跟随本次实际生成的数据量（与 sink 方向同理由：本地时钟固定延迟
-    // 会与主机时钟产生频偏累积，按数据时长响应则完成速率恒等于数据速率）
-    std::chrono::microseconds data_duration{};
-    auto fmt = source->current_format();
-    auto bytes_per_second = static_cast<std::uint64_t>(fmt.sample_rate) * (fmt.bits_per_sample / 8) * fmt.channels;
-    if (bytes_per_second > 0 && total_sent > 0) {
-        data_duration = std::chrono::microseconds(
-                static_cast<std::int64_t>(total_sent) * 1000000 / static_cast<std::int64_t>(bytes_per_second));
-    }
-    device_handler->get_transfer_scheduler().submit(
-            ep, EndpointAttributes::Isochronous, num_iso_packets,
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
-                    static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)),
-            data_duration);
+    SPDLOG_TRACE("[ISO] 处理完成 seq={} num_packets={} total={}B", seqnum, num_iso_packets, total_sent);
+    // 处理完自行发送（通知语义，与 handler 其他响应路径一致），再上报
+    // 完成：调度器推进串行点、服务下一个 URB（同步处理，先发后报）
+    session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
+            static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
+    device_handler->get_transfer_scheduler().on_urb_done(ep.address, seqnum);
 }
 
 void UacAudioStreamingSourceHandler::on_new_connection(Session &current_session, error_code &ec) {
@@ -863,6 +881,39 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
     }
 
     auto *trx = GenericTransfer::from_handle(transfer.get());
+    // 响应延迟 = 主机声明的各包长度之和对应的音频时长（OUT 数据按各包 length
+    // 紧凑排列，sum(length) 即本次实际数据量，处理时才统计，这里用声明值提前
+    // 折算）+ 收流速率闭环修正。延迟跟随数据量 → 完成速率恒等于主机数据速率
+    //（对齐真实自适应 OUT 端点的跟随行为；本地时钟固定延迟会与主机时钟频偏
+    // 累积，实测 0.2% 级失步 → usbaudio rate matching 缓冲水位缓降 → 周期性
+    // 欠载沙沙）。数据处理（音量/写 sink/闭环统计）挪到 TransferScheduler 的
+    // 服务时刻做（vudc 语义：处理完当场发 RET，限速靠"延迟处理时机"——每
+    // URB 处理完当场发 → 主机立即重提交 → 下一 URB 再等数据时长 → 完成节奏
+    // 恒等于主机数据速率。立即应答会触发超发，实测 5 倍速灌入，消费跟不上
+    // 被迫丢 80% 数据 → 播放快进/断续）
+    std::chrono::microseconds data_duration{};
+    auto fmt = sink->current_format();
+    auto bytes_per_second = static_cast<std::uint64_t>(fmt.sample_rate) * (fmt.bits_per_sample / 8) * fmt.channels;
+    std::uint32_t declared = 0;
+    for (auto &iso: trx->iso_descriptors)
+        declared += iso.length;
+    if (bytes_per_second > 0 && declared > 0) {
+        data_duration = std::chrono::microseconds(
+                static_cast<std::int64_t>(declared) * 1000000 / static_cast<std::int64_t>(bytes_per_second));
+        data_duration += std::chrono::microseconds(pacing_delta_us.load());
+    }
+    device_handler->get_transfer_scheduler().submit(
+            *session, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
+            [this, num_iso_packets](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+                                    TransferHandle &&transfer) {
+                process_iso_out(session, ep, seqnum, num_iso_packets, std::move(transfer));
+            });
+}
+
+void UacAudioStreamingSinkHandler::process_iso_out(Session &session, const UsbEndpoint &ep,
+                                                   std::uint32_t seqnum, int num_iso_packets,
+                                                   TransferHandle transfer) {
+    auto *trx = GenericTransfer::from_handle(transfer.get());
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
 
@@ -873,9 +924,7 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
 
     // OUT 数据在缓冲中按各包 length 累加紧凑排列（描述符 offset 是客户端本地布局，
     // 不可信，见 LibusbTransferOperator recv_transfer_data 注释），逐包读出交给
-    // sink 消费。响应交给设备级帧调度器延迟（N 个包 × 端点间隔后回 RET）：
-    // usbip-win vhci 的 iso OUT 发送节奏由 RET 反馈驱动，立即应答会触发超发
-    // （实测 5 倍速灌入，消费跟不上被迫丢 80% 数据 → 播放快进/断续）
+    // sink 消费
     std::uint32_t total_received = 0;
     std::size_t data_pos = 0;
     for (auto &iso: iso_descs) {
@@ -905,65 +954,61 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
         }
         data_pos += iso.length;
     }
-    // 响应延迟跟随本次 URB 的实际数据量（对齐真实自适应 OUT 端点的跟随行为）：
-    // 延迟 = 字节数对应的音频时长 → 完成速率恒等于主机数据速率。若按本地时钟
-    // 固定延迟（包数×间隔），设备与主机时钟的频偏会让完成速率偏离主机
-    // （实测 0.2% 级），usbaudio 的 rate matching 检测到失步后缓冲水位缓慢
-    // 耗尽，出现周期性欠载（播放中沙沙/咔哒）。0 字节 URB 不传（走包数×间隔）
-    std::chrono::microseconds data_duration{};
+    // 收流速率闭环（无条件启用，对所有 sink 生效）：
+    // 实测 usbaudio 每 URB 数据恒为 10ms 音频、从不加减数据量，主机提交节奏 =
+    // 我们的响应延迟 ± 小开销 → 接收速率完全由响应延迟决定。反馈用墙钟窗口
+    // 测接收速率（received 累计增量/真实时间）——不能用 URB 到达间隔（usbip-win
+    // 池机制下 URB 突发到达，间隔法窗口边界误差会把速率高估 ~1%，闭环误判
+    // 已收敛导致持续欠载），也不能用瞬时水位（回调相位偏差把修正量推死限幅）。
+    // R 快 → Δ 正（延迟响应）→ R 慢，反之亦然，平衡点自动补偿主机固定提交
+    // 开销（实测 ~60µs，Δ 收敛到 -60µs 附近）。播放 sink 靠它防欠载沙沙；
+    // 文件 sink（WavFileSink）靠它锁接收速率 = 标称采样率，否则录出的文件
+    // 样本数/秒偏少，按标称采样率播放会变速
     auto fmt = sink->current_format();
-    auto bytes_per_second = static_cast<std::uint64_t>(fmt.sample_rate) * (fmt.bits_per_sample / 8) * fmt.channels;
-    if (bytes_per_second > 0 && total_received > 0) {
-        data_duration = std::chrono::microseconds(
-                static_cast<std::int64_t>(total_received) * 1000000 / static_cast<std::int64_t>(bytes_per_second));
-        // 收流速率闭环（无条件启用，对所有 sink 生效）：实测 usbaudio 每 URB
-        // 数据恒为 10ms 音频、从不加减数据量，主机提交节奏 = 我们的响应延迟 ±
-        // 小开销 → 接收速率完全由响应延迟决定。反馈用墙钟窗口测接收速率
-        // （received 累计增量/真实时间）——不能用 URB 到达间隔（usbip-win 池
-        // 机制下 URB 突发到达，间隔法窗口边界误差会把速率高估 ~1%，闭环误判
-        // 已收敛导致持续欠载），也不能用瞬时水位（回调相位偏差把修正量推死
-        // 限幅）。R 快 → Δ 正（延迟响应）→ R 慢，反之亦然，平衡点自动补偿
-        // 主机固定提交开销（实测 ~60µs，Δ 收敛到 -60µs 附近）。播放 sink 靠
-        // 它防欠载沙沙；文件 sink（WavFileSink）靠它锁接收速率 = 标称采样率，
-        // 否则录出的文件样本数/秒偏少，按标称采样率播放会变速
-        urb_stat_count++;
-        urb_stat_bytes += total_received;
-        if (urb_stat_count >= 100) {
-            auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                  std::chrono::steady_clock::now().time_since_epoch())
-                                  .count();
-            auto frame_bytes = static_cast<std::int64_t>(fmt.bits_per_sample / 8) * fmt.channels;
-            auto time_delta = now_us - urb_stat_last_time_us;
-            auto bytes_delta = static_cast<std::int64_t>(urb_stat_bytes) - urb_stat_last_bytes;
-            if (time_delta > 0 && frame_bytes > 0) {
-                auto r_hz = bytes_delta * 1000000 / time_delta / frame_bytes;
-                auto target_hz = static_cast<std::int64_t>(fmt.sample_rate);
-                // 增益：1% 速率差 → 每轮修正 48µs（约 10 秒收敛）；
-                // 限幅 ±600µs（±6%），防网络尖峰把响应延迟打飞
-                pacing_delta_us += (r_hz - target_hz) * 50 / 1000;
-                pacing_delta_us = std::clamp(pacing_delta_us, std::int64_t{-600}, std::int64_t{600});
-            }
-            urb_stat_count = 0;
-            urb_stat_last_bytes = static_cast<std::int64_t>(urb_stat_bytes);
-            urb_stat_last_time_us = now_us;
+    auto frame_bytes = static_cast<std::int64_t>(fmt.bits_per_sample / 8) * fmt.channels;
+    urb_stat_count++;
+    urb_stat_bytes += total_received;
+    if (urb_stat_count >= 100) {
+        auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+        // 显式 int64_t：duration 的 rep 在 Android LP64 是 long long、int64_t
+        // 是 long，auto 推导混用会让 clamp 的类型推导冲突（Windows 上两者
+        // 都是 long long 不触发）
+        auto time_delta = static_cast<std::int64_t>(now_us - urb_stat_last_time_us);
+        auto bytes_delta = static_cast<std::int64_t>(urb_stat_bytes) - urb_stat_last_bytes;
+        if (time_delta > 0 && frame_bytes > 0) {
+            auto r_hz = bytes_delta * 1000000 / time_delta / frame_bytes;
+            auto target_hz = static_cast<std::int64_t>(fmt.sample_rate);
+            // 增益：1% 速率差 → 每轮修正 48µs（约 10 秒收敛）；
+            // 限幅 ±600µs（±6%），防网络尖峰把响应延迟打飞。
+            // 单写者（调度线程）多读者（网络线程提交时 load），用原子读写
+            auto delta = pacing_delta_us.load() + (r_hz - target_hz) * 50 / 1000;
+            pacing_delta_us.store(std::clamp(delta, std::int64_t{-600}, std::int64_t{600}));
         }
-        data_duration += std::chrono::microseconds(pacing_delta_us);
+        urb_stat_count = 0;
+        urb_stat_last_bytes = static_cast<std::int64_t>(urb_stat_bytes);
+        urb_stat_last_time_us = now_us;
     }
-    device_handler->get_transfer_scheduler().submit(
-            ep, EndpointAttributes::Isochronous, num_iso_packets,
-            UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
-                    seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_received, 0,
-                    static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)),
-            data_duration);
+    // 处理完自行发送（通知语义，与 handler 其他响应路径一致），再上报
+    // 完成：调度器推进串行点、服务下一个 URB（同步处理，先发后报）
+    session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+            seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_received, 0,
+            static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
+    device_handler->get_transfer_scheduler().on_urb_done(ep.address, seqnum);
 }
 
 void UacAudioStreamingSinkHandler::on_new_connection(Session &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     streaming = false;
     sink->reset();
-    // 闭环状态从零开始：新连接的水位/节奏与上次无关
+    // 闭环状态从零开始：新连接的水位/节奏与上次无关（统计字段全清，
+    // 否则残留的字节数/墙钟时刻会污染重连后第一个测速窗口）
     pacing_delta_us = 0;
     urb_stat_count = 0;
+    urb_stat_bytes = 0;
+    urb_stat_last_bytes = 0;
+    urb_stat_last_time_us = 0;
 }
 
 void UacAudioStreamingSinkHandler::on_disconnection(error_code &ec) {

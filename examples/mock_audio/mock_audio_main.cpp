@@ -3,6 +3,15 @@
 #include <memory>
 #include <sstream>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN // 阻止 windows.h 拉入 winsock.h（项目用 winsock2，顺序冲突）
+#define NOMINMAX // 阻止 windows.h 定义 min/max 宏（项目用 std::min/std::max）
+#include <windows.h>
+#include <mmsystem.h>
+// MSVC/clang-cl 链接 winmm（timeBeginPeriod）
+#pragma comment(lib, "winmm.lib")
+#endif
+
 #include "../example_utils.h"
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"

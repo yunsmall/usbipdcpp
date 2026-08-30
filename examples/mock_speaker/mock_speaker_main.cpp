@@ -4,6 +4,15 @@
 #include <sstream>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN // 阻止 windows.h 拉入 winsock.h（项目用 winsock2，顺序冲突）
+#define NOMINMAX // 阻止 windows.h 定义 min/max 宏（项目用 std::min/std::max）
+#include <windows.h>
+#include <mmsystem.h>
+// MSVC/clang-cl 链接 winmm（timeBeginPeriod）
+#pragma comment(lib, "winmm.lib")
+#endif
+
 #include "../example_utils.h"
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
@@ -32,6 +41,12 @@ static std::vector<std::uint32_t> parse_sample_rates(const std::string &str) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    // Windows 定时器默认粒度 ~15.6ms，asio 的亚毫秒 deadline 无法精确触发。
+    // 进程级请求 1ms 粒度（系统取所有进程的最小值），TransferScheduler 的
+    // 帧对齐/数据时长延迟才能按计划触发（播放延迟、闭环收敛都依赖它）
+    timeBeginPeriod(1);
+#endif
     auto opts = make_example_options("mock_speaker", "USB/IP virtual UAC speaker");
     auto options_group = opts.add_options();
     options_group

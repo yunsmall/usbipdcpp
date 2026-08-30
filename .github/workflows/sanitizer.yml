@@ -56,7 +56,7 @@ jobs:
         shell: bash
         working-directory: build
         run: |
-          ctest --repeat until-fail:10 --timeout 120 --output-on-failure \
+          ctest --repeat until-fail:30 --timeout 120 --output-on-failure \
             -R "TestNetworkConnection\.(ServerCanRestartAfterStop|StopWithMultipleClients|StopDuringClientConnectRace)"
 
   # TSan：独立 job（与 ASan 运行时互斥）。只跑并发聚焦测试——连接/停止竞态、
@@ -92,10 +92,10 @@ jobs:
         run: cmake --build build --parallel
 
       # TSan 是动态检测，竞态需两线程真正并发访问才报——单次可能恰好调度
-      # 串行化而漏报，重复 10 轮提高调度覆盖率（TSan 慢，只能到此为止）
+      # 串行化而漏报，重复 30 轮提高调度覆盖率（TSan 慢，只能到此为止）
       - name: Test (concurrency-focused)
         shell: bash
         working-directory: build
         run: |
-          setarch $(uname -m) -R ctest --repeat until-fail:10 --timeout 120 --output-on-failure \
+          setarch $(uname -m) -R ctest --repeat until-fail:30 --timeout 120 --output-on-failure \
             -R "TestNetworkConnection\.|TestNetworkVdev\.|TestPipeDeviceHandler\.|TransferSchedulerTest\."

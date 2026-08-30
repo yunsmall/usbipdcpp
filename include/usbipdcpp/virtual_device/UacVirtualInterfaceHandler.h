@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <deque>
 #include <memory>
 
@@ -148,6 +149,12 @@ private:
     /// 按当前采样率更新每 microframe 包字节数的调度参数（对齐内核 gadget u_audio.c）
     void update_packet_bytes();
 
+    /// TransferScheduler 处理器（通知语义）：调度线程在服务时刻（数据时长
+    /// 后）调用，填 PCM 数据、自行 session.submit_ret_submit 发送响应，
+    /// 并 on_urb_done 上报完成（同端点串行依赖上报）
+    void process_iso_in(Session &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
+                        TransferHandle transfer);
+
     UacAudioControlHandler *ac_handler = nullptr;
 
     std::unique_ptr<AudioSource> source;
@@ -225,6 +232,13 @@ private:
     bool handle_sampling_freq_control(std::uint32_t seqnum, std::uint8_t request, GenericTransfer *trx,
                                       TransferHandle &transfer, std::uint32_t transfer_buffer_length);
 
+    /// TransferScheduler 处理器（通知语义）：调度线程在服务时刻（数据时长
+    /// 后）调用，消费 PCM（音量应用 + 写 sink + 收流闭环统计）、自行
+    /// session.submit_ret_submit 发送响应，并 on_urb_done 上报完成
+    ///（同端点串行依赖上报）
+    void process_iso_out(Session &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
+                         TransferHandle transfer);
+
     UacAudioControlHandler *ac_handler = nullptr;
 
     std::unique_ptr<AudioSink> sink;
@@ -234,8 +248,10 @@ private:
     // 收流速率闭环：主机每 URB 提交存在固定开销（usbip-win 收 RET → 重提交 →
     // TCP 往返，实测 ~60µs），按数据时长延迟响应会让接收速率恒低于消费速率，
     // 缓冲水位缓降导致周期性欠载（播放沙沙）。用墙钟窗口实测接收速率做反馈，
-    // 修正响应延迟（负 = 提前响应），把接收速率锁到消费速率。单位 µs
-    std::int64_t pacing_delta_us = 0;
+    // 修正响应延迟（负 = 提前响应），把接收速率锁到消费速率。单位 µs。
+    // 原子：网络线程（handle 提交时算 data_duration）读、调度线程
+    //（process_iso_out 闭环统计）写
+    std::atomic<std::int64_t> pacing_delta_us{0};
     // 闭环测速：每 100 个 URB（约 1 秒）用 received 累计增量/墙钟时间算接收速率
     std::uint32_t urb_stat_count = 0;
     std::uint64_t urb_stat_bytes = 0;

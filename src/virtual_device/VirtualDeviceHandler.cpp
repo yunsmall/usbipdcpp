@@ -99,7 +99,7 @@ void VirtualDeviceHandler::on_new_connection(Session &current_session, error_cod
     // 先启动设备级传输调度器：ISO URB 入队后由它按帧节奏延迟响应
     // （对齐 vudc 的 v_start_timer）。仅启用调度器的设备启动线程
     if (use_transfer_scheduler) {
-        transfer_scheduler.start(current_session);
+        transfer_scheduler.start();
     }
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
