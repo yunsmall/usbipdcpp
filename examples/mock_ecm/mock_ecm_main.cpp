@@ -10,6 +10,10 @@
 #include "usbipdcpp/virtual_device/EcmVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/network_backends/EthernetEchoBackend.h"
+// TunBackend 仅 Linux 内核提供 /dev/net/tun（含 Android/termux），Windows/macOS 不编译
+#if defined(__linux__) || defined(__ANDROID__)
+#include "usbipdcpp/virtual_device/network_backends/TunBackend.h"
+#endif
 
 using namespace usbipdcpp;
 
@@ -63,7 +67,14 @@ int main(int argc, char **argv) {
     auto opts = make_example_options("mock_ecm", "USB/IP virtual ethernet adapter (CDC ECM)");
     opts.add_options()("mac", "Device MAC address", cxxopts::value<std::string>()->default_value("02:10:83:00:00:01"))
             ("ip", "Device-side IPv4 address", cxxopts::value<std::string>()->default_value("192.168.53.1"))
-            ("tcp-port", "Device-side TCP echo port", cxxopts::value<std::uint16_t>()->default_value("5000"));
+            ("tcp-port", "Device-side TCP echo port", cxxopts::value<std::uint16_t>()->default_value("5000"))
+#if defined(__linux__) || defined(__ANDROID__)
+            // Linux/Android 才有 /dev/net/tun（TunBackend），其他平台不注册该选项
+            ("tun", "Use Linux TUN backend instead of user-space echo: route the virtual NIC into this host's kernel "
+                    "network stack (needs root); value = interface name (e.g. usbip%d)",
+             cxxopts::value<std::string>())
+#endif
+            ;
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
@@ -75,9 +86,23 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // 后端（栈对象，声明在设备前：handler 持有其指针，需活得比设备久）。
-    // 收到主机帧时同步应答 ARP/ICMP/TCP，无需内部线程
-    EthernetEchoBackend backend(mac, ip, tcp_port);
+    // 后端：默认 echo 模式纯用户态应答 ARP/ICMP/TCP（无需 root）；--tun 模式把
+    // 虚拟网卡接入本机内核协议栈（需 root，仅 Linux）。handler 持有其指针，
+    // 须活得比设备久
+    std::unique_ptr<NetworkBackend> backend;
+#if defined(__linux__) || defined(__ANDROID__)
+    if (result.count("tun")) {
+        auto tun_name = result["tun"].as<std::string>();
+        auto tun = std::make_unique<TunBackend>(tun_name, ip, std::array<std::uint8_t, 4>{255, 255, 255, 0});
+        SPDLOG_INFO("TUN backend: interface '{}', device IP {}.{}.{}.{} (ARP/ICMP/TCP answered by kernel stack)",
+                    tun->interface_name(), ip[0], ip[1], ip[2], ip[3]);
+        backend = std::move(tun);
+    }
+    else
+#endif
+    {
+        backend = std::make_unique<EthernetEchoBackend>(mac, ip, tcp_port);
+    }
 
     // ECM 双接口：通信接口（中断 IN 通知）+ 数据接口（alt0 空 / alt1 双 bulk）
     std::vector<UsbInterface> interfaces = {
@@ -89,7 +114,7 @@ int main(int argc, char **argv) {
     auto device = UsbDevice::make(busid, 0x1234, 0x56E1, std::move(interfaces),
                                   1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_ecm");
     device->interfaces[0].with_handler<EcmCommunicationInterfaceHandler>(string_pool, mac);
-    device->interfaces[1].with_handler<EcmDataInterfaceHandler>(string_pool, &backend);
+    device->interfaces[1].with_handler<EcmDataInterfaceHandler>(string_pool, backend.get());
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     Server server;
@@ -105,7 +130,12 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Mock ECM (virtual ethernet adapter) started on port {}, busid {}", port, busid);
     SPDLOG_INFO("Device MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}, device IP: {}.{}.{}.{}", mac[0], mac[1],
                 mac[2], mac[3], mac[4], mac[5], ip[0], ip[1], ip[2], ip[3]);
-    SPDLOG_INFO("Device-side services: ping (ICMP echo), TCP echo on port {}", tcp_port);
+    if (result.count("tun")) {
+        SPDLOG_INFO("Device-side services: provided by this host's kernel network stack (via TUN)");
+    }
+    else {
+        SPDLOG_INFO("Device-side services: ping (ICMP echo), TCP echo on port {}", tcp_port);
+    }
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Then on host: ip addr add {}.{}.{}.2/24 dev usbX, ping {}.{}.{}.{}, nc {}.{}.{}.{} {}",
                 ip[0], ip[1], ip[2], ip[0], ip[1], ip[2], ip[3], ip[0], ip[1], ip[2], ip[3], tcp_port);
@@ -114,12 +144,12 @@ int main(int argc, char **argv) {
     // 帧统计线程：每 5 秒打印一次收发统计
     std::atomic<bool> running{true};
     std::thread stat_thread([&]() {
-        auto last_tx = backend.tx_frames();
-        auto last_rx = backend.rx_frames();
+        auto last_tx = backend->tx_frames();
+        auto last_rx = backend->rx_frames();
         while (running) {
             std::this_thread::sleep_for(std::chrono::seconds(5));
-            auto tx = backend.tx_frames();
-            auto rx = backend.rx_frames();
+            auto tx = backend->tx_frames();
+            auto rx = backend->rx_frames();
             SPDLOG_INFO("Frames - rx: {} (+{}), tx: {} (+{})", rx, rx - last_rx, tx, tx - last_tx);
             last_tx = tx;
             last_rx = rx;
@@ -132,7 +162,7 @@ int main(int argc, char **argv) {
     stat_thread.join();
     server.stop();
 
-    SPDLOG_INFO("Mock ECM stopped. Received {} frames ({} bytes), sent {} frames ({} bytes)", backend.rx_frames(),
-                backend.rx_bytes(), backend.tx_frames(), backend.tx_bytes());
+    SPDLOG_INFO("Mock ECM stopped. Received {} frames ({} bytes), sent {} frames ({} bytes)", backend->rx_frames(),
+                backend->rx_bytes(), backend->tx_frames(), backend->tx_bytes());
     return 0;
 }

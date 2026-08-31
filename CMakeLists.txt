@@ -121,6 +121,13 @@ file(GLOB VIRTUAL_DEVICE_VIDEO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_d
 file(GLOB VIRTUAL_DEVICE_AUDIO_SOURCES_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/audio_sources/*.cpp)
 file(GLOB VIRTUAL_DEVICE_AUDIO_SINKS_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/audio_sinks/*.cpp)
 file(GLOB VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES CONFIGURE_DEPENDS src/virtual_device/network_backends/*.cpp)
+# TunBackend 依赖 Linux 的 /dev/net/tun + TUNSETIFF ioctl（Android/termux 内核同样
+# 提供），macOS 无此接口（utun 是三层设备且无公开 TAP API），不编译
+list(FILTER VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES EXCLUDE REGEX ".*TunBackend\\.cpp$")
+if (UNIX AND NOT APPLE)
+    list(APPEND VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/virtual_device/network_backends/TunBackend.cpp)
+endif ()
 file(GLOB LIBUSB_SRC_FILES CONFIGURE_DEPENDS src/LibusbHandler/*.cpp)
 
 # 控制编译动态库还是静态库

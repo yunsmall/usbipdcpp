@@ -1,12 +1,11 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 #include "usbipdcpp/Export.h"
-#include "usbipdcpp/virtual_device/network_backends/NetworkingConstants.h"
+#include "usbipdcpp/virtual_device/NetworkingConstants.h"
 #include "usbipdcpp/virtual_device/network_backends/NetworkBackend.h"
 
 namespace usbipdcpp {
@@ -25,12 +24,6 @@ public:
     EthernetEchoBackend(std::array<std::uint8_t, 6> mac, std::array<std::uint8_t, 4> ip, std::uint16_t tcp_port);
 
     void send_frame(const std::uint8_t *data, std::size_t size) override;
-
-    /// 收/发帧计数（供日志统计）
-    std::uint64_t rx_frames() const { return rx_frames_; }
-    std::uint64_t rx_bytes() const { return rx_bytes_; }
-    std::uint64_t tx_frames() const { return tx_frames_; }
-    std::uint64_t tx_bytes() const { return tx_bytes_; }
 
 private:
     /// 处理一帧（调用方在 send_frame 内，全部同步）
@@ -68,11 +61,6 @@ private:
     std::uint8_t peer_mac_[6]{}; // 对端 MAC（handle_frame 每帧记录，本地链路单对端）
     std::uint32_t tcp_my_seq_ = 0x10000000; // 我方序列号（固定初始值即可，演示用途）
     std::uint32_t tcp_peer_seq_ = 0; // 对方下一个期望序列号（对端已发数据的下一字节）
-
-    std::atomic<std::uint64_t> rx_frames_{0};
-    std::atomic<std::uint64_t> rx_bytes_{0};
-    std::atomic<std::uint64_t> tx_frames_{0};
-    std::atomic<std::uint64_t> tx_bytes_{0};
 };
 
 } // namespace usbipdcpp

@@ -213,6 +213,7 @@ void EcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const U
     if (ep.is_in()) {
         // Bulk IN：主机请求帧。通道内部处理：缓冲有帧立即应答（一条消息 = 一帧，
         // 帧比请求短发短包，主机 usbnet 以短包/整包边界定帧），否则挂起等待
+        SPDLOG_TRACE("[ECM] IN req seq={} len={} buf={}", seqnum, transfer_buffer_length, in_channel.size());
         in_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
@@ -221,6 +222,7 @@ void EcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const U
         // 背压），子类之后用 take_frame() 取出数据并应答
         auto *trx = GenericTransfer::from_handle(transfer.get());
         auto received_size = static_cast<std::uint32_t>(trx->data.size());
+        SPDLOG_TRACE("[ECM] OUT frame size={}", received_size);
         if (backend_) {
             backend_->send_frame(trx->data.data(), trx->data.size());
             session->submit_ret_submit(
@@ -260,7 +262,9 @@ std::size_t EcmDataInterfaceHandler::send_frame(const std::uint8_t *data, std::s
     if (data == nullptr || size == 0) {
         return 0;
     }
+    SPDLOG_TRACE("[ECM] push frame size={} buf_before={}", size, in_channel.size());
     in_channel.push(data_type(data, data + size));
+    SPDLOG_TRACE("[ECM] pushed, buf_after={}", in_channel.size());
     return size;
 }
 

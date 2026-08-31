@@ -56,8 +56,7 @@ EthernetEchoBackend::EthernetEchoBackend(std::array<std::uint8_t, 6> mac, std::a
 }
 
 void EthernetEchoBackend::send_frame(const std::uint8_t *data, std::size_t size) {
-    rx_frames_.fetch_add(1);
-    rx_bytes_.fetch_add(size);
+    count_rx(size);
     handle_frame(data, size);
 }
 
@@ -242,8 +241,7 @@ void EthernetEchoBackend::send_frame_to_host(const std::uint8_t *dst_mac, std::u
         std::memset(frame + total, 0, ETH_MIN_FRAME - total);
         total = ETH_MIN_FRAME;
     }
-    tx_frames_.fetch_add(1);
-    tx_bytes_.fetch_add(total);
+    // 发帧计数在基类 send_to_host 内累计
     send_to_host(frame, total);
 }
 
