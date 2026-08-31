@@ -8,10 +8,12 @@
 #include <chrono>
 #include <thread>
 
+#include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
 #include "usbipdcpp/utils/utils.h"
+#include "usbipdcpp/virtual_device/TransferResponder.h"
 
 namespace usbipdcpp {
 namespace test {
@@ -128,6 +130,78 @@ inline bool wait_sessions_gone(Server &server, std::chrono::milliseconds timeout
 
         return received;
     }
+
+// ---- 虚拟设备数据面测试公共工具 ----
+
+// 记录型 TransferResponder 桩：捕获所有提交的应答，测试直接断言内容。
+// 替换真实 Session 后，handler/通道/调度器的数据面可脱离网络测试
+class CaptureResponder : public TransferResponder {
+public:
+    void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) override {
+        submits.push_back(std::move(submit));
+    }
+    void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) override {
+        unlinks.push_back(std::move(unlink));
+    }
+    void enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) override {
+        enqueued_submits.push_back(std::move(submit));
+    }
+    void enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) override {
+        enqueued_unlinks.push_back(std::move(unlink));
+    }
+    void wakeup_sender() override {
+        ++wakeup_count;
+    }
+    void stop_transfer() override {
+        stopped = true;
+    }
+
+    std::vector<UsbIpResponse::UsbIpRetSubmit> submits;
+    std::vector<UsbIpResponse::UsbIpRetUnlink> unlinks;
+    std::vector<UsbIpResponse::UsbIpRetSubmit> enqueued_submits;
+    std::vector<UsbIpResponse::UsbIpRetUnlink> enqueued_unlinks;
+    int wakeup_count = 0;
+    bool stopped = false;
+};
+
+// 从 RET_SUBMIT 取数据阶段（未接管 transfer 时为空，如 OUT 应答）
+inline data_type ret_submit_data(const UsbIpResponse::UsbIpRetSubmit &ret) {
+    if (auto *trx = GenericTransfer::from_handle(ret.transfer.get())) {
+        return trx->data;
+    }
+    return {};
+}
+
+// 构造 CMD_SUBMIT（对齐 CmdSubmit::from_socket 的分配：IN/OUT 都分配
+// transfer，IN 请求不读数据阶段、OUT 请求带数据）。op 由调用方持有，
+// 必须活得比 submit 长（TransferHandle 析构时用它释放）
+inline UsbIpCommand::UsbIpCmdSubmit make_cmd_submit(GenericTransferOperator &op, std::uint32_t seqnum,
+                                                    std::uint8_t ep_num, std::uint32_t direction,
+                                                    std::uint32_t transfer_buffer_length,
+                                                    const SetupPacket &setup = {}, const data_type &out_data = {},
+                                                    int num_iso = 0) {
+    UsbIpCommand::UsbIpCmdSubmit submit{};
+    submit.header.command = USBIP_CMD_SUBMIT;
+    submit.header.seqnum = seqnum;
+    submit.header.devid = 1;
+    submit.header.direction = direction;
+    submit.header.ep = ep_num; // 线格式端点号（不带方向位，方向由 direction 字段给出）
+    submit.transfer_flags = 0;
+    submit.transfer_buffer_length = transfer_buffer_length;
+    submit.start_frame = 0;
+    submit.number_of_packets = num_iso;
+    submit.interval = 0;
+    submit.setup = setup;
+    UsbIpHeaderBasic header{};
+    header.direction = direction;
+    auto *trx = GenericTransfer::from_handle(op.alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup));
+    if (direction == UsbIpDirection::Out && !out_data.empty()) {
+        trx->data = out_data;
+    }
+    TransferHandle handle(trx, &op);
+    submit.transfer = std::move(handle);
+    return submit;
+}
 
 }
 }

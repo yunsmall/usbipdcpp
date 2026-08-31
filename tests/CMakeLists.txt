@@ -61,6 +61,22 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_pipe_device_handler)
     target_link_libraries(test_pipe_device_handler PRIVATE usbipdcpp_virtual_device)
 
+    # MSC Bulk-Only（U 盘）BOT 状态机数据面测试
+    add_test_file(test_msc_handler)
+    target_link_libraries(test_msc_handler PRIVATE usbipdcpp_virtual_device)
+
+    # ECM 网卡数据面测试（bulk 收/发帧）
+    add_test_file(test_ecm_handler)
+    target_link_libraries(test_ecm_handler PRIVATE usbipdcpp_virtual_device)
+
+    # UVC 摄像头 iso IN 取帧/帧时钟测试
+    add_test_file(test_uvc_handler)
+    target_link_libraries(test_uvc_handler PRIVATE usbipdcpp_virtual_device)
+
+    # UAC 扬声器（OUT 收流）iso 数据面测试（调度器延迟消费 + 流状态切换）
+    add_test_file(test_uac_speaker_stream)
+    target_link_libraries(test_uac_speaker_stream PRIVATE usbipdcpp_virtual_device)
+
     # 传输调度器（vudc 帧调度等价物）测试
     add_test_file(test_transfer_scheduler)
     target_link_libraries(test_transfer_scheduler PRIVATE usbipdcpp_virtual_device)

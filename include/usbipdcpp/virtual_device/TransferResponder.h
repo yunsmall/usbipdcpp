@@ -10,10 +10,16 @@ namespace usbipdcpp {
  * @brief 传输应答接口：设备侧（DeviceHandler/InterfaceHandler/通道/TransferScheduler）
  * 提交传输结果（RET_SUBMIT / RET_UNLINK）与传输停止控制的唯一出口
  *
- * 设备侧不直接依赖 Session（Session 与 usbip 协议和网络线程强绑定），只持本接口
- * 指针——测试时用桩实现替换即可，无需构造真实 Session/Server。
- * Session 内部持有一个本接口的实现（SessionResponder），经 Session::responder()
- * 暴露给设备侧；on_new_connection 等生命周期回调也统一传本接口。
+ * 背景：这套提交应答的工作原本全部由 Session 承担，设备侧直接持有 Session 指针调用。
+ * 但 Session 与 usbip 协议、网络线程、Server 生命周期强绑定，导致两个问题：
+ * ① 难测试——单测设备行为必须起真实 Server + TCP 连接 + import 握手；
+ * ② 难扩展——虚拟设备侧实际是一套用户态 USB 设备栈，将来要接其他后端
+ * （如 qemu 的 usbredir）时，设备侧代码与 Session 纠缠无法复用。
+ * 因此把「提交应答」这一职责抽成本接口：设备侧只持本接口指针，不依赖 Session。
+ *
+ * 使用方式：Session 内部持有一个本接口的实现（SessionResponder），经
+ * Session::responder() 暴露给设备侧；on_new_connection 等生命周期回调也统一
+ * 传本接口。测试时用桩实现替换即可，无需构造真实 Session/Server。
  * 传输停止走 stop_transfer（AbstDeviceHandler::trigger_session_stop 委托给本接口）。
  */
 class USBIPDCPP_API TransferResponder {
