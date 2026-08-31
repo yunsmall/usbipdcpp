@@ -366,8 +366,14 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
                     ec == asio::error::invalid_argument) {
                     continue;
                 }
+                // 与 stop() 的 cancel 持同一把锁：本线程 close 的同时 stop()
+                // 可能正在主线程 cancel（asio 不保证跨线程 close/cancel 并发
+                // 安全，clang TSan 实测报数据竞争）
                 std::error_code close_ec;
-                acceptor.close(close_ec);
+                {
+                    std::lock_guard lock(acceptor_mutex);
+                    acceptor.close(close_ec);
+                }
                 // 此处不置 running=false：stop() 的完整清理路径（cancel/join/等待
                 // 会话析构归零/清空会话表）依赖 running 为 true 才走主流程，若
                 // 这里提前置 false，stop() 会短路返回并跳过全部清理，导致存活

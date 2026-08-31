@@ -259,7 +259,9 @@ protected:
     // - async_accept：网络线程协程，唯一操作者
     // - cancel（stop()）：主线程，在 acceptor_mutex_ 下调用（async_accept 是
     //   asio 支持跨线程取消的异步操作，cancel() 是其官方取消接口）
-    // - close（stop()）：主线程，join 网络线程之后（无并发）
+    // - close：stop() 主线程（join 之后）与 accept_loop 错误分支（EMFILE 等
+    //   致命错误）都在 acceptor_mutex_ 下调用——错误分支的 close 与 stop()
+    //   的 cancel 可能并发，同一把锁互斥
     asio::ip::tcp::acceptor acceptor{asio_io_context};
     // 保护 acceptor 的取消操作（stop() 在锁内 cancel 挂起的异步 accept）。
     // 协程的注册发生在 co_await 求值（await_suspend）时，无法持锁，

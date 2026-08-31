@@ -135,6 +135,11 @@ inline bool wait_sessions_gone(Server &server, std::chrono::milliseconds timeout
 
 // 记录型 TransferResponder 桩：捕获所有提交的应答，测试直接断言内容。
 // 替换真实 Session 后，handler/通道/调度器的数据面可脱离网络测试
+//
+// 生命周期：submits 里的 RetSubmit 持 TransferHandle（绑定 make_cmd_submit
+// 的 op），析构本桩时 handle 析构要调用 op 释放。因此 op 必须活得比桩久：
+// 测试里把 op 放在 stub 之前声明，或做成 fixture 成员（fixture 先于 stub
+// 声明、逆序析构时后死）——否则 clang ASan 报 stack-use-after-scope
 class CaptureResponder : public TransferResponder {
 public:
     void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) override {

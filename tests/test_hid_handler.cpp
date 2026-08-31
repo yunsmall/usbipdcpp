@@ -51,6 +51,10 @@ public:
 // 构造一个最小可用的 UsbInterface 与 StringPool
 struct HidTestEnv {
     StringPool pool;
+    // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
+    // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放，
+    // op 活得比 stub 久才不会有 use-after-scope
+    GenericTransferOperator op;
     CaptureResponder stub;
     UsbInterface intf{.interface_class = 3, .interface_subclass = 0, .interface_protocol = 0};
     TestHidHandler handler{intf, pool};
@@ -189,10 +193,9 @@ TEST(VirtualDeviceHandlers, HidInterruptInServedBySendInputReport) {
     HidTestEnv env;
 
     const std::array<std::uint8_t, 4> report = {0x11, 0x22, 0x33, 0x44};
-    GenericTransferOperator op;
     env.handler.handle_interrupt_transfer(
             1, UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
-            0, report.size(), make_cmd_submit(op, 1, 0x01, UsbIpDirection::In, report.size()).transfer, env.ec);
+            0, report.size(), make_cmd_submit(env.op, 1, 0x01, UsbIpDirection::In, report.size()).transfer, env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 无报告：请求挂起未应答
 
@@ -217,10 +220,9 @@ TEST(VirtualDeviceHandlers, HidSetReportDeliveredToOverride) {
             .length = 3,
     };
     const data_type payload = {'L', 'E', 'D'};
-    GenericTransferOperator op;
     env.handler.handle_non_standard_request_type_control_urb(
             2, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, payload.size(), setup,
-            make_cmd_submit(op, 2, 0x00, UsbIpDirection::Out, payload.size(), setup, payload).transfer, env.ec);
+            make_cmd_submit(env.op, 2, 0x00, UsbIpDirection::Out, payload.size(), setup, payload).transfer, env.ec);
     ASSERT_FALSE(env.ec);
 
     EXPECT_EQ(env.handler.last_output_report, payload);
@@ -251,10 +253,9 @@ TEST(VirtualDeviceHandlers, HidInputReportQueueDropsOldestOverLimit) {
         env.handler.send_input_report(asio::buffer(report));
     }
 
-    GenericTransferOperator op;
     env.handler.handle_interrupt_transfer(
             1, UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
-            0, 2, make_cmd_submit(op, 1, 0x01, UsbIpDirection::In, 2).transfer, env.ec);
+            0, 2, make_cmd_submit(env.op, 1, 0x01, UsbIpDirection::In, 2).transfer, env.ec);
     ASSERT_FALSE(env.ec);
 
     ASSERT_EQ(env.stub.submits.size(), 1u);

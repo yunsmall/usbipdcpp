@@ -72,6 +72,9 @@ struct StubSource : VideoSource {
 
 struct UvcTestEnv {
     StringPool pool;
+    // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
+    // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
+    GenericTransferOperator op;
     UsbInterface intf{.interface_class = 0x0E, .interface_subclass = 0x02, .interface_protocol = 0x00};
     StubSource *source = nullptr;
     UvcVideoStreamingHandler handler{intf, pool, std::unique_ptr<StubSource>()};
@@ -104,7 +107,6 @@ struct UvcTestEnv {
                 .index = 0,
                 .length = 26,
         };
-        GenericTransferOperator op;
         handler.handle_non_standard_request_type_control_urb(
                 1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 26, setup,
                 make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 26, setup, commit).transfer, ec);
@@ -116,7 +118,7 @@ struct UvcTestEnv {
     }
 
     // 发一个 iso IN URB（默认 4 包 × 512 字节）
-    void deliver_iso_in(std::uint32_t seqnum, GenericTransferOperator &op, int num_packets = 4) {
+    void deliver_iso_in(std::uint32_t seqnum, int num_packets = 4) {
         auto submit = make_cmd_submit(op, seqnum, 0x01, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
         auto *trx = GenericTransfer::from_handle(submit.transfer.get());
         for (int i = 0; i < num_packets; i++) {
@@ -138,8 +140,7 @@ TEST(TestUvcHandler, IsoInBeforeCommitStalls) {
     // 未开流（未 SET_INTERFACE / 未 COMMIT）时 iso IN 回 EPIPE
     UvcTestEnv env;
 
-    GenericTransferOperator op;
-    env.deliver_iso_in(2, op);
+    env.deliver_iso_in(2);
 
     ASSERT_GE(env.stub.submits.size(), 1u);
     EXPECT_EQ(env.stub.submits.back().header.seqnum, 2u);
@@ -153,8 +154,7 @@ TEST(TestUvcHandler, IsoInServesFrameWithHeaders) {
     UvcTestEnv env;
     env.start_streaming();
 
-    GenericTransferOperator op;
-    env.deliver_iso_in(2, op);
+    env.deliver_iso_in(2);
 
     // 应答：seqnum 2，总发送 = 2 字节 header + 64 字节帧
     const auto *ret = &env.stub.submits.back();
@@ -188,9 +188,8 @@ TEST(TestUvcHandler, FrameIntervalGateEmitsEmptyPacket) {
     UvcTestEnv env;
     env.start_streaming();
 
-    GenericTransferOperator op;
-    env.deliver_iso_in(2, op); // 传完第一帧
-    env.deliver_iso_in(3, op); // 立即第二帧：帧间隔未到
+    env.deliver_iso_in(2); // 传完第一帧
+    env.deliver_iso_in(3); // 立即第二帧：帧间隔未到
 
     ASSERT_GE(env.stub.submits.size(), 2u);
     const auto *ret = &env.stub.submits.back();
@@ -207,10 +206,9 @@ TEST(TestUvcHandler, LargeFrameSpansMultipleUrbs) {
     env.start_streaming();
 
     // 2 包 URB 容量 = 2×510 = 1020 字节/次；3000 = 1020 + 1020 + 960
-    GenericTransferOperator op;
-    env.deliver_iso_in(2, op, 2);
-    env.deliver_iso_in(3, op, 2);
-    env.deliver_iso_in(4, op, 2);
+    env.deliver_iso_in(2, 2);
+    env.deliver_iso_in(3, 2);
+    env.deliver_iso_in(4, 2);
 
     // 三个 URB 的数据按序拼接 = 整帧
     data_type assembled;
@@ -248,8 +246,7 @@ TEST(TestUvcHandler, GetFrameFailureStalls) {
     env.source->fail_next = true;
     env.start_streaming();
 
-    GenericTransferOperator op;
-    env.deliver_iso_in(2, op);
+    env.deliver_iso_in(2);
 
     ASSERT_GE(env.stub.submits.size(), 1u);
     EXPECT_EQ(env.stub.submits.back().header.seqnum, 2u);
@@ -273,15 +270,14 @@ TEST(TestUvcHandler, ShortCommitFallsBackToDefaults) {
             .index = 0,
             .length = 10,
     };
-    GenericTransferOperator op;
     env.handler.handle_non_standard_request_type_control_urb(
             1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 10, setup,
-            make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 10, setup, commit).transfer, env.ec);
+            make_cmd_submit(env.op, 1, 0x00, UsbIpDirection::Out, 10, setup, commit).transfer, env.ec);
     EXPECT_FALSE(env.ec);
     EXPECT_EQ(env.stub.submits.back().status, 0u); // commit ack 成功
 
     env.handler.request_set_interface(1, &status);
-    env.deliver_iso_in(2, op);
+    env.deliver_iso_in(2);
 
     // 流正常取帧（默认格式）
     ASSERT_GE(env.stub.submits.size(), 2u);

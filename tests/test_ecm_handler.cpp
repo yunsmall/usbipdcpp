@@ -39,6 +39,9 @@ public:
 // 最小可用的 ECM 数据接口（CDC Data 类）+ handler
 struct EcmTestEnv {
     StringPool pool;
+    // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
+    // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
+    GenericTransferOperator op;
     StubBackend backend;
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
     EcmDataInterfaceHandler handler{intf, pool, &backend};
@@ -61,9 +64,8 @@ TEST(TestEcmDataHandler, OutFrameDeliveredToBackendAndAcked) {
 
     const data_type frame = {0xAA, 0xBB, 0x00, 0x01, 0x02, 0x03, 0x00, 0x11, 0x22, 0x33,
                              0x44, 0x55, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04};
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
-                                     0, frame.size(), make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out,
+                                     0, frame.size(), make_cmd_submit(env.op, 1, EP_OUT, UsbIpDirection::Out,
                                                                       frame.size(), {}, frame).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
@@ -81,6 +83,7 @@ TEST(TestEcmDataHandler, OutFrameHangsUntilTakeFrame) {
     // 无消费方（子类 on_frame_received 返回 false）：OUT 挂起（NAK 背压），
     // 业务线程 take_frame 取走时应答
     StringPool pool;
+    GenericTransferOperator op; // 先于 stub 声明（TransferHandle 析构要用它）
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
     HangingEcmHandler handler(intf, pool, nullptr);
     CaptureResponder stub;
@@ -89,7 +92,6 @@ TEST(TestEcmDataHandler, OutFrameHangsUntilTakeFrame) {
     ASSERT_FALSE(ec);
 
     const data_type frame = {'h', 'i', 0, 1, 2, 3};
-    GenericTransferOperator op;
 
     std::optional<OutEndpointChannel::Pending> taken;
     std::thread reader([&]() { taken = handler.take_frame(2000); });
@@ -117,9 +119,8 @@ TEST(TestEcmDataHandler, InRequestServesSentFrame) {
     const data_type frame = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
     EXPECT_EQ(env.handler.send_frame(frame), frame.size());
 
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(2, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, frame.size(), make_cmd_submit(op, 2, EP_IN, UsbIpDirection::In,
+                                     0, frame.size(), make_cmd_submit(env.op, 2, EP_IN, UsbIpDirection::In,
                                                                       frame.size()).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
@@ -135,9 +136,8 @@ TEST(TestEcmDataHandler, InRequestHangsThenSendFrameServesIt) {
     // 主机 IN 请求先挂起（无帧），send_frame 推入时直接应答
     EcmTestEnv env;
 
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(3, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 挂起未应答
@@ -155,9 +155,8 @@ TEST(TestEcmDataHandler, UnlinkPendingInRequest) {
     // RET_SUBMIT（请求已从队列移除）
     EcmTestEnv env;
 
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty());
@@ -172,6 +171,7 @@ TEST(TestEcmDataHandler, UnlinkPendingInRequest) {
 TEST(TestEcmDataHandler, UnlinkPendingOutRequest) {
     // 挂起的 OUT 请求（无消费方）被 UNLINK 取消：回 RET_UNLINK(-ECONNRESET)
     StringPool pool;
+    GenericTransferOperator op; // 先于 stub 声明（TransferHandle 析构要用它）
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
     HangingEcmHandler handler(intf, pool, nullptr);
     CaptureResponder stub;
@@ -179,7 +179,6 @@ TEST(TestEcmDataHandler, UnlinkPendingOutRequest) {
     handler.on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
     const data_type frame = {1, 2, 3};
     handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
                                  0, frame.size(), make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out,
@@ -205,12 +204,11 @@ TEST(TestEcmDataHandler, TxBufferDropsOldestOverLimit) {
     env.handler.send_frame(data_type{2, 2, 2});
     env.handler.send_frame(data_type{3, 3, 3}); // 挤掉第 1 帧
 
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     env.handler.handle_bulk_transfer(2, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 2, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 2, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -220,7 +218,7 @@ TEST(TestEcmDataHandler, TxBufferDropsOldestOverLimit) {
 
     // 第三个 IN 请求挂起（缓冲已空）
     env.handler.handle_bulk_transfer(3, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     EXPECT_EQ(env.stub.submits.size(), 2u);
 }
@@ -231,9 +229,8 @@ TEST(TestEcmDataHandler, FrameLongerThanInRequestTruncated) {
     EcmTestEnv env;
 
     env.handler.send_frame(data_type{1, 2, 3, 4, 5, 6});
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 4, make_cmd_submit(op, 1, EP_IN, UsbIpDirection::In, 4).transfer,
+                                     0, 4, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 4).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -255,9 +252,8 @@ TEST(TestEcmDataHandler, SendFrameAfterDisconnectDropsData) {
     // 重连后 IN 请求挂起（缓冲为空，无残留数据）
     std::error_code conn_ec;
     env.handler.on_new_connection(env.stub, conn_ec);
-    GenericTransferOperator op;
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 挂起未应答

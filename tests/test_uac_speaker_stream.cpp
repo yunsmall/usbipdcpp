@@ -57,6 +57,9 @@ struct SpeakerFixture {
     VirtualDeviceHandler *dh = nullptr;
     RecordingSink *sink = nullptr;
     UsbEndpoint ep_iso_out;
+    // 传输分配器：fixture 成员（fixture 先于测试局部 stub 声明，析构在后）——
+    // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
+    GenericTransferOperator op;
 };
 
 SpeakerFixture make_speaker_device(StringPool &string_pool) {
@@ -96,8 +99,7 @@ SpeakerFixture make_speaker_device(StringPool &string_pool) {
 }
 
 // 发 SET_INTERFACE 控制请求切换 AS 接口 alt（streaming 状态机开关）
-void set_as_interface(SpeakerFixture &fx, std::uint16_t alt, GenericTransferOperator &op, CaptureResponder &stub,
-                      usbipdcpp::error_code &ec) {
+void set_as_interface(SpeakerFixture &fx, std::uint16_t alt, CaptureResponder &stub, usbipdcpp::error_code &ec) {
     const SetupPacket setup{
             .request_type = 0x01, // Host | Interface | OUT
             .request = 0x0B,      // SET_INTERFACE
@@ -105,7 +107,7 @@ void set_as_interface(SpeakerFixture &fx, std::uint16_t alt, GenericTransferOper
             .index = 1, // AS 接口号
             .length = 0,
     };
-    fx.dh->receive_urb(make_cmd_submit(op, 100, 0x00, UsbIpDirection::Out, 0, setup), fx.device->ep0_in,
+    fx.dh->receive_urb(make_cmd_submit(fx.op, 100, 0x00, UsbIpDirection::Out, 0, setup), fx.device->ep0_in,
                        std::nullopt, ec);
     ASSERT_FALSE(ec);
 }
@@ -130,8 +132,7 @@ TEST(TestUacSpeakerStream, IsoOutBeforeStreamingStalls) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
-    fx.dh->receive_urb(make_cmd_submit(op, 1, 0x01, UsbIpDirection::Out, 384, {}, {}, 2), fx.ep_iso_out,
+    fx.dh->receive_urb(make_cmd_submit(fx.op, 1, 0x01, UsbIpDirection::Out, 384, {}, {}, 2), fx.ep_iso_out,
                        fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
@@ -155,15 +156,14 @@ TEST(TestUacSpeakerStream, IsoOutWritesSinkThenResponds) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
-    set_as_interface(fx, 1, op, stub, ec); // alt 1：开流
+    set_as_interface(fx, 1, stub, ec); // alt 1：开流
 
     // 两个 iso 包各 192 字节（48000Hz 16bit 单声道 2ms），数据紧凑排列
     data_type payload(384);
     for (std::size_t i = 0; i < payload.size(); i++) {
         payload[i] = static_cast<std::uint8_t>(i);
     }
-    auto submit = make_cmd_submit(op, 2, 0x01, UsbIpDirection::Out, 384, {}, payload, 2);
+    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 384, {}, payload, 2);
     auto *trx = GenericTransfer::from_handle(submit.transfer.get());
     trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
     trx->iso_descriptors[1] = {.offset = 192, .length = 192, .actual_length = 0, .status = 0};
@@ -208,11 +208,10 @@ TEST(TestUacSpeakerStream, SwitchingBackToAlt0StopsStreaming) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
-    set_as_interface(fx, 1, op, stub, ec);
-    set_as_interface(fx, 0, op, stub, ec); // 关流
+    set_as_interface(fx, 1, stub, ec);
+    set_as_interface(fx, 0, stub, ec); // 关流
 
-    fx.dh->receive_urb(make_cmd_submit(op, 2, 0x01, UsbIpDirection::Out, 192, {}, {}, 1), fx.ep_iso_out,
+    fx.dh->receive_urb(make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 192, {}, {}, 1), fx.ep_iso_out,
                        fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
@@ -235,8 +234,7 @@ TEST(TestUacSpeakerStream, MuteZeroesReceivedPcm) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
-    set_as_interface(fx, 1, op, stub, ec); // alt 1：开流
+    set_as_interface(fx, 1, stub, ec); // alt 1：开流
 
     // SET_CUR(FU_MUTE) 到 AC 接口：wValue 高字节 = 控制选择子（声道 0），
     // wIndex 高字节 = Feature Unit 实体，数据 1 字节 = 静音
@@ -247,12 +245,12 @@ TEST(TestUacSpeakerStream, MuteZeroesReceivedPcm) {
             .index = static_cast<std::uint16_t>(UAC_ENTITY_FEATURE_UNIT << 8),
             .length = 1,
     };
-    fx.dh->receive_urb(make_cmd_submit(op, 101, 0x00, UsbIpDirection::Out, 1, mute_setup, {1}),
+    fx.dh->receive_urb(make_cmd_submit(fx.op, 101, 0x00, UsbIpDirection::Out, 1, mute_setup, {1}),
                        fx.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
 
     // 非零 PCM 收流
-    auto submit = make_cmd_submit(op, 2, 0x01, UsbIpDirection::Out, 192, {}, data_type(192, 0xAB), 1);
+    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 192, {}, data_type(192, 0xAB), 1);
     auto *trx = GenericTransfer::from_handle(submit.transfer.get());
     trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
     fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
@@ -274,11 +272,10 @@ TEST(TestUacSpeakerStream, DeclaredIsoLengthExceedsActualData) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    GenericTransferOperator op;
-    set_as_interface(fx, 1, op, stub, ec);
+    set_as_interface(fx, 1, stub, ec);
 
     data_type payload(100, 0x11);
-    auto submit = make_cmd_submit(op, 2, 0x01, UsbIpDirection::Out, 100, {}, payload, 1);
+    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 100, {}, payload, 1);
     auto *trx = GenericTransfer::from_handle(submit.transfer.get());
     trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0}; // 声明 192 > 实际 100
     fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
