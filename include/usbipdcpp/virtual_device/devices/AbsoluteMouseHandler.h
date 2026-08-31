@@ -38,17 +38,13 @@ public:
     ~AbsoluteMouseHandler() override = default;
 
     /**
-     * @brief 创建标准的 HID 绝对坐标鼠标接口（已绑定本 handler）
+     * @brief 创建标准的 HID 绝对坐标鼠标接口（描述符模板，未绑定 handler）
      *
      * 接口定义：HID 类、Boot 鼠标子类/协议（03/01/02），一个中断 IN 端点。
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param in_ep 中断 IN 端点地址（设备→主机，绝对坐标报告）
-     * @param screen_width 屏幕宽度（像素，默认 1920），传入本 handler 作坐标换算基准
-     * @param screen_height 屏幕高度（像素，默认 1080）
-     * @return 已绑好 AbsoluteMouseHandler 的完整 UsbInterface
+     * @return 未绑定 handler 的 UsbInterface
      */
-    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep,
-                                       int screen_width = 1920, int screen_height = 1080) {
+    static UsbInterface make_interface(std::uint8_t in_ep) {
         UsbInterface i{
                 .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
                 .interface_subclass = 0x01, // Boot Interface Subclass
@@ -58,7 +54,6 @@ public:
                                            .max_packet_size = 8,
                                            .interval = 1}}},
         };
-        i.with_handler<AbsoluteMouseHandler>(string_pool, screen_width, screen_height);
         return i;
     }
 

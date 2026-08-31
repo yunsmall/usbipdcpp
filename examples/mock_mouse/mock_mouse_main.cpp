@@ -23,10 +23,10 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // make_interface 返回已绑定 RelativeMouseHandler 的完整鼠标接口
     auto mock_mouse = UsbDevice::make(busid, 0x1234, 0x5678,
-                                      {RelativeMouseHandler::make_interface(string_pool, 0x81)},
+                                      {RelativeMouseHandler::make_interface(0x81)},
                                       1, 1, 0, "/usbipdcpp/mock_mouse", UsbSpeed::Low, 0xabcd);
+    mock_mouse->interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
     mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(mock_mouse->interfaces[0].handler);

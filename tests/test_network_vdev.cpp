@@ -39,8 +39,6 @@ std::shared_ptr<UsbDevice> make_mock_keyboard(StringPool &string_pool) {
                     }},
             },
     };
-    interfaces[0].with_handler<KeyboardHandler>(string_pool);
-
     auto mock_keyboard = std::make_shared<UsbDevice>(UsbDevice{
             .path = "/test/mock_keyboard",
             .busid = "1-1",
@@ -59,6 +57,7 @@ std::shared_ptr<UsbDevice> make_mock_keyboard(StringPool &string_pool) {
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
     auto device_handler = mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     device_handler->setup_interface_handlers();
     return mock_keyboard;

@@ -40,6 +40,14 @@ struct USBIPDCPP_API UsbInterface {
 
     std::shared_ptr<VirtualInterfaceHandler> handler;
 
+    /**
+     * @brief 绑定接口处理器（handler 构造持本接口引用）
+     * @note 只允许对地址不会变动的 UsbInterface 调用：handler 保存对 *this 的
+     *       引用，接口对象一旦被拷贝/移动/容器扩容，引用即悬垂。正确用法是
+     *       设备创建完成后（接口已入 device->interfaces、地址稳定）调用
+     *       device->interfaces[i].with_handler<T>(...)；make_interface 等工厂
+     *       函数内部禁止调用（见 VirtualInterfaceHandler 类文档）
+     */
     template<typename T, typename... Args>
     std::shared_ptr<T> with_handler(Args &&...args) {
         auto new_handler = std::make_shared<T>(*this, std::forward<Args>(args)...);

@@ -14,6 +14,16 @@ namespace usbipdcpp {
 
 class VirtualDeviceHandler;
 
+/**
+ * @brief 虚拟设备接口处理器基类：响应接口级标准/类请求与数据面传输
+ *
+ * @note 实现静态工厂 make_interface 时禁止在函数内调用 UsbInterface::with_handler：
+ *       handler 构造持接口引用，而 make_interface 里的接口对象是局部/临时对象，
+ *       返回（拷贝/移动）后引用立即悬垂（ECM 曾因在 make_interface 里绑定而崩溃）。
+ *       make_interface 只返回描述符正确的 UsbInterface，handler 由调用方在
+ *       设备创建完成（接口对象入 device->interfaces、地址稳定）后通过
+ *       device->interfaces[i].with_handler<T>(...) 绑定。
+ */
 class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
     explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,

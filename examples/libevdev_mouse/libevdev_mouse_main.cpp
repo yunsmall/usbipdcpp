@@ -72,12 +72,12 @@ int main(int argc, char **argv) {
         // 接口描述与相对鼠标相同（HID 03/00/00 + 中断 IN 8/10），复用其工厂建接口，
         // 再覆盖为本示例的 LibevdevMouseInterfaceHandler（把 libevdev 事件翻译成鼠标报告）
         std::vector<UsbInterface> interfaces = {
-                RelativeMouseHandler::make_interface(string_pool, 0x81),
+                RelativeMouseHandler::make_interface(0x81),
         };
-        interfaces[0].with_handler<LibevdevMouseInterfaceHandler>(string_pool);
 
         auto libevdev_mouse = UsbDevice::make(busid, 0x1234, 0x5678, interfaces, 1, 1, 0, "/usbipdcpp/libevdev_mouse",
                                           UsbSpeed::Low, 0xabcd);
+        libevdev_mouse->interfaces[0].with_handler<LibevdevMouseInterfaceHandler>(string_pool);
         auto device_handler = libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
         device_handler->setup_interface_handlers();
 

@@ -36,17 +36,13 @@ public:
     ~DigitizerHandler() override = default;
 
     /**
-     * @brief 创建标准的 HID 触摸屏接口（已绑定本 handler）
+     * @brief 创建标准的 HID 触摸屏接口（描述符模板，未绑定 handler）
      *
      * 接口定义：HID 类（03/00/00），一个中断 IN 端点。
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param in_ep 中断 IN 端点地址（设备→主机，触摸报告）
-     * @param x_max X 轴最大值（默认 32767），传入本 handler 作坐标归一化基准
-     * @param y_max Y 轴最大值（默认 32767）
-     * @return 已绑好 DigitizerHandler 的完整 UsbInterface
+     * @return 未绑定 handler 的 UsbInterface
      */
-    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep,
-                                       std::uint16_t x_max = DEFAULT_MAX, std::uint16_t y_max = DEFAULT_MAX) {
+    static UsbInterface make_interface(std::uint8_t in_ep) {
         UsbInterface i{
                 .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
                 .interface_subclass = 0x00,
@@ -56,7 +52,6 @@ public:
                                            .max_packet_size = 6, // 报告固定 6 字节
                                            .interval = 10}}},
         };
-        i.with_handler<DigitizerHandler>(string_pool, x_max, y_max);
         return i;
     }
 

@@ -46,10 +46,10 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // make_interface 返回已绑定 AbsoluteMouseHandler 的完整接口（1920x1080 为默认屏幕尺寸）
     auto mouse_device = UsbDevice::make(busid, 0x1234, 0x5680,
-                                        {AbsoluteMouseHandler::make_interface(string_pool, 0x81)},
+                                        {AbsoluteMouseHandler::make_interface(0x81)},
                                         1, 1, 0, "/usbipdcpp/absolute_mouse");
+    mouse_device->interfaces[0].with_handler<AbsoluteMouseHandler>(string_pool);
     mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto mouse = std::dynamic_pointer_cast<AbsoluteMouseHandler>(mouse_device->interfaces[0].handler);

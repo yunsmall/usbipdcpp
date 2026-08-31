@@ -20,10 +20,10 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // make_interface 返回已绑定 GamepadHandler 的完整手柄接口
     auto mock_gamepad = UsbDevice::make(busid, 0x1234, 0x5680,
-                                        {GamepadHandler::make_interface(string_pool, 0x81)},
+                                        {GamepadHandler::make_interface(0x81)},
                                         1, 1, 0, "/usbipdcpp/mock_gamepad");
+    mock_gamepad->interfaces[0].with_handler<GamepadHandler>(string_pool);
     mock_gamepad->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &gp = dynamic_cast<GamepadHandler &>(*mock_gamepad->interfaces[0].handler);

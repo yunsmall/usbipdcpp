@@ -33,21 +33,15 @@ public:
                        MscConfig config = {}, bool read_only = false);
 
     /**
-     * @brief 创建 USB Mass Storage 批量传输接口（已绑定本 handler）
+     * @brief 创建 USB Mass Storage 批量传输接口（描述符模板，未绑定 handler）
      *
      * 接口定义：Mass Storage 类、SCSI transparent 子类、Bulk-Only 协议
      * （08/06/50），一个 Bulk IN + 一个 Bulk OUT 端点（High speed，mps=512）。
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param in_ep Bulk IN 端点地址（设备→主机，命令/数据响应）
      * @param out_ep Bulk OUT 端点地址（主机→设备，CBW/数据）
-     * @param backend 存储后端（如 RawImageBackend）
-     * @param config 可选 SCSI 标识字符串配置；空字段自动从设备字符串描述符补全
-     * @param read_only 是否只读
-     * @return 已绑好 MscBulkOnlyHandler 的完整 UsbInterface
+     * @return 未绑定 handler 的 UsbInterface
      */
-    static UsbInterface make_interface(StringPool &string_pool, std::uint8_t in_ep, std::uint8_t out_ep,
-                                       std::unique_ptr<StorageBackend> backend,
-                                       MscConfig config = {}, bool read_only = false) {
+    static UsbInterface make_interface(std::uint8_t in_ep, std::uint8_t out_ep) {
         UsbInterface i{
                 .interface_class = static_cast<std::uint8_t>(ClassCode::MassStorage),
                 .interface_subclass = 0x06, // SCSI transparent
@@ -61,7 +55,6 @@ public:
                                            .max_packet_size = 512,
                                            .interval = 0}}},
         };
-        i.with_handler<MscBulkOnlyHandler>(string_pool, std::move(backend), config, read_only);
         return i;
     }
 

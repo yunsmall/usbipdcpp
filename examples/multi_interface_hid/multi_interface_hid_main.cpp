@@ -25,12 +25,14 @@ int main(int argc, char **argv) {
     // 接口 0: 相对鼠标（make_interface 提供非 boot 的 HID 鼠标定义 03/00/00）
     // 接口 1: 键盘
     std::vector<UsbInterface> interfaces = {
-            RelativeMouseHandler::make_interface(string_pool, 0x81),
-            KeyboardHandler::make_interface(string_pool, 0x82),
+            RelativeMouseHandler::make_interface(0x81),
+            KeyboardHandler::make_interface(0x82),
     };
 
     auto device = UsbDevice::make(busid, 0x1234, 0x5679, interfaces, 1, 1, 0, "/usbipdcpp/multi_interface_hid",
                                   UsbSpeed::Low, 0xabcd);
+    device->interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
+    device->interfaces[1].with_handler<KeyboardHandler>(string_pool);
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(device->interfaces[0].handler);

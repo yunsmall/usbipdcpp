@@ -17,20 +17,19 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // CDC ACM 需要两个接口：通信接口和数据接口（make_interface 返回各自绑好
-    // 基类 handler 的完整接口；下面用示例内的 Mock handler 覆盖基类绑定）
+    // CDC ACM 需要两个接口：通信接口和数据接口（make_interface 只返回描述符模板，
+    // 设备创建后绑定示例内的 Mock handler）
     std::vector<UsbInterface> interfaces = {
-            CdcAcmCommunicationInterfaceHandler::make_interface(string_pool, 0x83),
-            CdcAcmDataInterfaceHandler::make_interface(string_pool, 0x81, 0x02),
+            CdcAcmCommunicationInterfaceHandler::make_interface(0x83),
+            CdcAcmDataInterfaceHandler::make_interface(0x81, 0x02),
     };
-
-    // 设置接口处理器
-    interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
-    interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);
 
     // 创建设备：IAD 复合设备需在设备级声明 CDC 类
     auto mock_cdc_acm = UsbDevice::make(busid, 0x1234, 0x5680, std::move(interfaces),
                                         1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_acm");
+    // 设置接口处理器
+    mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
+    mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);
     mock_cdc_acm->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     // 关联通信接口和数据接口处理器

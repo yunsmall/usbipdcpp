@@ -26,13 +26,9 @@ public:
     ThrottleCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface, usbipdcpp::StringPool &string_pool,
                                        std::uint32_t limit_bytes, std::uint32_t window_ms);
 
-    /// 创建限流数据接口（已绑定本 handler），复用基类 CDC 数据接口定义
-    static usbipdcpp::UsbInterface make_interface(usbipdcpp::StringPool &string_pool, std::uint8_t in_ep,
-                                                  std::uint8_t out_ep, std::uint32_t limit_bytes,
-                                                  std::uint32_t window_ms) {
-        usbipdcpp::UsbInterface i = usbipdcpp::CdcAcmDataInterfaceHandler::make_interface(string_pool, in_ep, out_ep);
-        i.with_handler<ThrottleCdcAcmDataInterfaceHandler>(string_pool, limit_bytes, window_ms);
-        return i;
+    /// 创建限流数据接口（描述符模板，未绑定 handler），复用基类 CDC 数据接口定义
+    static usbipdcpp::UsbInterface make_interface(std::uint8_t in_ep, std::uint8_t out_ep) {
+        return usbipdcpp::CdcAcmDataInterfaceHandler::make_interface(in_ep, out_ep);
     }
 
     bool on_data_received(usbipdcpp::data_type &&data) override;

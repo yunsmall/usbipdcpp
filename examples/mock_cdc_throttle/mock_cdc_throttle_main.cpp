@@ -36,13 +36,15 @@ int main(int argc, char **argv) {
     // CDC ACM 需要两个接口：通信接口和数据接口（与 mock_cdc_acm 一致的描述符）。
     // 数据接口用限流工厂：窗口内最多收 limit_bytes 字节，超出后 NAK window_ms
     std::vector<UsbInterface> interfaces = {
-            CdcAcmCommunicationInterfaceHandler::make_interface(string_pool, 0x83),
-            ThrottleCdcAcmDataInterfaceHandler::make_interface(string_pool, 0x81, 0x02, limit_bytes, window_ms),
+            CdcAcmCommunicationInterfaceHandler::make_interface(0x83),
+            ThrottleCdcAcmDataInterfaceHandler::make_interface(0x81, 0x02),
     };
 
     // IAD 复合设备需在设备级声明 CDC 类
     auto device = UsbDevice::make(busid, 0x1234, 0x5681, std::move(interfaces),
                                   1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_throttle");
+    device->interfaces[0].with_handler<CdcAcmCommunicationInterfaceHandler>(string_pool);
+    device->interfaces[1].with_handler<ThrottleCdcAcmDataInterfaceHandler>(string_pool, limit_bytes, window_ms);
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     // 关联通信接口和数据接口处理器

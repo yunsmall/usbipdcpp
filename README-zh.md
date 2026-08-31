@@ -36,12 +36,14 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    // 1. 创建可直接使用的 HID 键盘接口：KeyboardHandler::make_interface 已填好
-    //    类/子类/协议、在给定地址建中断 IN 端点，并绑定好 handler
+    // 1. 用 KeyboardHandler::make_interface 建 HID 键盘接口描述符模板
+    //    （类/子类/协议 + 给定地址的中断 IN 端点）；make_interface 不绑 handler，
+    //    绑定须在设备创建后（接口入设备、地址稳定，见下）
     // 2. 从接口列表创建设备——UsbDevice::make 为其余字段提供合理默认
-    //    （speed=Full、EP0 按它自动生成等）；再绑定设备级 handler
+    //    （speed=Full、EP0 按它自动生成等）；先绑接口 handler 再绑设备级 handler
     auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
-                                  {KeyboardHandler::make_interface(string_pool, 0x81)});
+                                  {KeyboardHandler::make_interface(0x81)});
+    device->interfaces[0].with_handler<KeyboardHandler>(string_pool);
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     // 3. 启动 USB/IP 服务器（TCP，监听 53240 端口）
@@ -325,6 +327,8 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 接口定义建议用各 handler 的 `make_interface` 工厂——它创建的接口与 handler 内部
 预期的端点结构一致（手写 `UsbInterface` 可能和接口 handler 的硬编码假设不符）。
+工厂只返回描述符模板、不绑定 handler：接口 handler 构造持接口引用，须在设备创建
+完成后（接口入 `device->interfaces`、地址稳定）用 `device->interfaces[i].with_handler<T>(...)` 绑定。
 `UsbDevice` 本身则完全可以手动构造，方便更灵活的配置。
 
 简单设备可直接使用 `SimpleVirtualDeviceHandler`，它为标准请求提供了空实现

@@ -33,14 +33,16 @@ using namespace usbipdcpp;
 int main() {
     StringPool string_pool;
 
-    // 1. Build a ready-to-use HID keyboard interface: KeyboardHandler::make_interface
-    //    fills in the class/subclass/protocol and creates the interrupt IN endpoint
-    //    at the given address, with the handler already bound.
+    // 1. Build the HID keyboard interface descriptor with KeyboardHandler::make_interface
+    //    (class/subclass/protocol + interrupt IN endpoint at the given address).
+    //    It does NOT bind the handler — binding must happen after the device is
+    //    created, when the interface object has a stable address (see below).
     // 2. Build the device from the interface list — UsbDevice::make provides sensible
-    //    defaults for the remaining fields (speed=Full, EP0 derived from it, ...);
-    //    then register its device-level handler.
+    //    defaults for the remaining fields (speed=Full, EP0 derived from it, ...).
+    //    Bind the interface handler first, then the device-level handler.
     auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
-                                  {KeyboardHandler::make_interface(string_pool, 0x81)});
+                                  {KeyboardHandler::make_interface(0x81)});
+    device->interfaces[0].with_handler<KeyboardHandler>(string_pool);
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     // 3. Start the USB/IP server (TCP, listen on port 53240)
@@ -330,6 +332,9 @@ To implement custom USB devices:
 
 For interface definitions, prefer each handler's `make_interface` factory — it creates the interface with the exact
 endpoints the handler expects (a hand-written `UsbInterface` can mismatch internal assumptions of the interface handler).
+The factory returns a descriptor template only and does NOT bind the handler: interface handlers hold a reference to
+their interface, so binding must happen after the device is created (interface in `device->interfaces`, address stable)
+via `device->interfaces[i].with_handler<T>(...)`.
 `UsbDevice` itself can always be constructed manually for full control.
 
 For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op implementations for standard requests.

@@ -18,10 +18,10 @@ int main(int argc, char **argv) {
 
     StringPool string_pool;
 
-    // make_interface 返回已绑定 KeyboardHandler 的完整键盘接口
     auto mock_keyboard = UsbDevice::make(busid, 0x1234, 0x5679,
-                                         {KeyboardHandler::make_interface(string_pool, 0x81)},
+                                         {KeyboardHandler::make_interface(0x81)},
                                          1, 1, 0, "/usbipdcpp/mock_keyboard", UsbSpeed::Full, 0xABCD);
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
     mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
     auto &kb = dynamic_cast<KeyboardHandler &>(*mock_keyboard->interfaces[0].handler);

@@ -1,5 +1,24 @@
 协议解析部分的修改请务必慎重，这部分是调试很久的结果，其他架构部分可以修改。
 
+解析/构造协议字段（USB 描述符、以太网/IP/TCP 头等）时用 packed 结构体 + 命名成员字段访问，
+禁止用 std::vector、std::array + 手算字节偏移读写（偏移极易算错、字段增删时无法自动发现错误）。
+多字节字段按网络序存内存，访问时用 bswap/htons 类函数显式转换。
+
+## spdlog 日志级别被编译期裁剪时的调试手法
+
+Release/RelWithDebInfo 构建下 SPDLOG_ACTIVE_LEVEL 编译期定为 INFO，TRACE/DEBUG 日志
+打不出来（spdlog::set_level 运行时设置无效）。需要看某个文件的 TRACE/DEBUG 日志时，
+**不要逐行把日志级别改高**，参照 Session.cpp 顶部的方式：在该 cpp 文件最顶部
+（include 之前）强制重定义宏，让本文件日志全量输出，调试完删除：
+
+```cpp
+// 调试用：<这里写为什么要开，排查完删除>
+#ifdef SPDLOG_ACTIVE_LEVEL
+    #undef SPDLOG_ACTIVE_LEVEL
+#endif
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+```
+
 改各种api时需要考虑这种嵌入式平台的实现难易度
 
 这个项目的开源协议是lgpl，别搞混了
