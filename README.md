@@ -529,7 +529,21 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    Control requests (GET_REPORT / SET_REPORT etc.) arrive through `read()` as `PipeXfer` with
    `setup_req`; answer IN requests with `write(PipeXfer{.ep = 0, .data = ...})`.
 
-**19. libusb_windows_service**
+**19. mock_ecm**
+
+   A virtual Ethernet adapter (CDC ECM, shows up as a network card on the host). Two backends:
+
+   - Default: user-space `EthernetEchoBackend` — answers ARP/ICMP/TCP echo in pure user
+     space (no root needed, works on all platforms)
+   - `--tun <ifname>` (Linux/Android only, needs root): `TunBackend` routes the virtual NIC
+     into this host's kernel network stack through a TAP interface (e.g. `usbip%d`), so
+     ARP/ICMP/TCP and routing are handled by the real kernel
+
+   Usage: `mock_ecm --tun usbip%d` then on the host `ip addr add 192.168.53.2/24 dev usbX`
+   and `ping 192.168.53.1`. macOS has no TAP interface (utun is layer-3 only, tuntaposx is
+   disabled on new systems), so `--tun` is not built there.
+
+**20. libusb_windows_service**
 
    A **Windows Service** wrapper for the libusb server (Windows only). Uses the Windows SCM API to run
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
@@ -635,6 +649,11 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `SineWaveSource` | Sine wave test tone audio source |
 | `FourierSource` | Fourier series synthesis audio source (multiple harmonics with per-harmonic phase) |
 | `AudioFileSource` | Audio file source for the mock_audio example (WAV/MP3/FLAC/OGG via miniaudio, resampling, looping; in examples/mock_audio/) |
+| `EcmCommunicationInterfaceHandler` | CDC ECM communication interface (ethernet link/status notifications) |
+| `EcmDataInterfaceHandler` | CDC ECM data interface (ethernet frame I/O) |
+| `NetworkBackend` | Abstract network backend for the virtual ethernet adapter (frame RX/TX + statistics) |
+| `EthernetEchoBackend` | User-space echo backend for mock_ecm (answers ARP/ICMP/TCP echo, no root) |
+| `TunBackend` | Linux TAP backend: routes virtual NIC frames into the host kernel network stack (Linux/Android only, needs root) |
 
 ### Class Hierarchy
 

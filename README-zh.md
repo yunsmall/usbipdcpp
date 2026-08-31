@@ -514,7 +514,20 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    控制请求（GET_REPORT / SET_REPORT 等 class 请求）经 read() 以带 setup_req 的
    PipeXfer 返回，IN 方向用 `write(PipeXfer{.ep = 0, .data = ...})` 应答。
 
-**19. libusb_windows_service**
+**19. mock_ecm**
+
+   虚拟以太网卡（CDC ECM，在主机上表现为一块网卡）。两种后端：
+
+   - 默认：纯用户态 `EthernetEchoBackend`——应答 ARP/ICMP/TCP echo（不需要 root，
+     所有平台可用）
+   - `--tun <接口名>`（仅 Linux/Android，需要 root）：`TunBackend` 经 TAP 接口把虚拟
+     网卡接入本机内核协议栈（如 `usbip%d`），ARP/ICMP/TCP 与路由全由真实内核处理
+
+   用法：`mock_ecm --tun usbip%d`，主机侧 `ip addr add 192.168.53.2/24 dev usbX` 后
+   `ping 192.168.53.1`。macOS 没有 TAP 接口（utun 是三层设备，tuntaposx 驱动在新系统
+   已禁用），因此 macOS 不编译 `--tun` 选项。
+
+**20. libusb_windows_service**
 
    将 libusb 服务器包装为 **Windows 服务**（仅 Windows）。使用 Windows SCM API 运行
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或
@@ -620,6 +633,11 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `SineWaveSource` | 正弦波测试音源 |
 | `FourierSource` | 傅里叶级数合成音源（多谐波叠加，各谐波独立相位） |
 | `AudioFileSource` | mock_audio 示例的音源（WAV/MP3/FLAC/OGG，基于 miniaudio，支持重采样和循环播放；在 examples/mock_audio/） |
+| `EcmCommunicationInterfaceHandler` | CDC ECM 通信接口（以太网连接/状态通知） |
+| `EcmDataInterfaceHandler` | CDC ECM 数据接口（以太网帧收发） |
+| `NetworkBackend` | 虚拟以太网卡的网络后端抽象（帧收发 + 统计） |
+| `EthernetEchoBackend` | mock_ecm 的纯用户态 echo 后端（应答 ARP/ICMP/TCP echo，不需要 root） |
+| `TunBackend` | Linux TAP 后端：把虚拟网卡帧接入本机内核协议栈（仅 Linux/Android，需要 root） |
 
 ### 类继承关系
 
