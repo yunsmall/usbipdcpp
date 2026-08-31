@@ -11,9 +11,10 @@ namespace usbipdcpp {
 CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface,
                                                                          StringPool &string_pool) :
     VirtualInterfaceHandler(handle_interface, string_pool) {
-    // 通知通道上限 1 条：只缓存最新一条状态，对齐原来 pending_notification_
-    // 被新通知覆盖的语义（串口状态通知低频，丢旧保新即可）
-    notification_channel.set_max_pending(1);
+    // 通知通道待发缓存上限 30 条：串口状态通知低频（状态变化才发一条），
+    // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
+    // 兜底，同时保留足够余量不丢低频通知（超限丢最旧）
+    notification_channel.set_max_pending(30);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_control_urb(

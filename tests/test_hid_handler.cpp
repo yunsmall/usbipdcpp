@@ -28,6 +28,12 @@ public:
     bool has_pending_reports_for_test() const {
         return has_pending_input_reports();
     }
+
+    // 测试用：模拟已建立连接（通道激活，disconnected 复位）。真实场景设备
+    // 连接后才产生报告；未连接时通道断连检查会拒绝入队（push 返回 false）
+    void connect_for_test() {
+        input_channel.on_new_connection();
+    }
 };
 
 // 构造一个最小可用的 UsbInterface 与 StringPool
@@ -137,6 +143,7 @@ TEST(VirtualDeviceHandlers, HidStandardRequests) {
 
 TEST(VirtualDeviceHandlers, HidSendInputReportQueuesWhenNoRequest) {
     HidTestEnv env;
+    env.handler.connect_for_test(); // 模拟已连接（未连接时 push 被断连检查拒绝）
 
     EXPECT_FALSE(env.handler.has_pending_reports_for_test());
 

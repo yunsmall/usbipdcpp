@@ -15,7 +15,10 @@ using namespace usbipdcpp;
 
 namespace {
 
-// 测试通道：记录发出的应答，模拟消息模式缓冲（整条消费）
+// 测试通道：记录发出的应答，模拟消息模式缓冲（整条消费）。
+// push/push_blocking/push_locked 的实现与真实 MessageInChannel 逐行一致
+// （成员同名 pending/max_pending_，仅 try_send_one/reply_empty 里"用 session
+// 提交应答"改为记录到 sent）；debug_front 是测试专用观察窗口（真实无此 API）
 class RecordingChannel : public InEndpointChannelBase<RecordingChannel> {
 public:
     struct Sent {
@@ -25,34 +28,103 @@ public:
     };
 
     std::vector<Sent> sent;
-    std::deque<data_type> buffer;
-    std::function<data_type(std::uint32_t)> pull; // 可选 pull，模拟 try_pull_data
+    std::function<data_type(std::uint32_t)> pull; // 可选 pull，模拟派生类 override
     int pull_calls = 0;
-    std::size_t max_pending = 0;
 
-    // 模拟 MessageInChannel::push（持双锁 + 入缓冲 + 匹配挂起请求）
-    void push(data_type data) {
-        std::lock(channel_mutex, requests_mutex);
-        std::lock_guard lock1(channel_mutex, std::adopt_lock);
-        std::lock_guard lock2(requests_mutex, std::adopt_lock);
-        if (max_pending != 0 && buffer.size() >= max_pending) {
-            buffer.pop_front();
+    // 与真实 MessageInChannel 同 API：set_max_pending / size（测试只走公开接口）
+    void set_max_pending(std::size_t max_pending) {
+        std::lock_guard lock(this->channel_mutex);
+        max_pending_ = max_pending;
+    }
+
+    std::size_t size() const {
+        std::lock_guard lock(this->channel_mutex);
+        return pending.size();
+    }
+
+    /// 测试专用：查看缓冲最旧一条的内容（真实通道无此 API）
+    data_type debug_front() const {
+        std::lock_guard lock(this->channel_mutex);
+        return pending.empty() ? data_type{} : pending.front();
+    }
+
+    // ===== 以下与真实 MessageInChannel 的实现逐行一致（仅成员名不需要改，
+    // 本来就是同名）=====
+
+    bool push(data_type data, bool drop_oldest = true) {
+        std::lock(this->channel_mutex, this->requests_mutex);
+        std::lock_guard lock1(this->channel_mutex, std::adopt_lock);
+        std::lock_guard lock2(this->requests_mutex, std::adopt_lock);
+        // 断连后不再接收：返回 false 告诉调用者本次未发送成功（数据会在下次
+        // 连接被清空，白攒；对齐 write_nb 断连返回 0 的语义）
+        if (this->disconnected) {
+            return false;
         }
-        buffer.emplace_back(std::move(data));
-        try_send_pending_locked();
+        // 满且调用者不丢旧：不入队，告诉调用者满了
+        if (!drop_oldest && max_pending_ != 0 && pending.size() >= max_pending_) {
+            return false;
+        }
+        push_locked(std::move(data));
+        this->try_send_pending_locked();
+        return true;
+    }
+
+    bool push_blocking(data_type data, std::uint32_t timeout_ms = 0) {
+        std::unique_lock lock(this->channel_mutex);
+        while (max_pending_ != 0 && pending.size() >= max_pending_) {
+            if (this->disconnected) {
+                return false;
+            }
+            if (timeout_ms == 0) {
+                this->space_cv.wait(lock);
+            }
+            else if (this->space_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) == std::cv_status::timeout) {
+                break;
+            }
+        }
+        if (this->disconnected) {
+            return false;
+        }
+        if (max_pending_ != 0 && pending.size() >= max_pending_) {
+            return false; // 等待超时仍满
+        }
+        // 空位就绪：补 requests 锁入队并推进挂起请求（与 push 同锁序）
+        std::lock_guard lock2(this->requests_mutex);
+        push_locked(std::move(data));
+        this->try_send_pending_locked();
+        return true;
+    }
+
+    void push_locked(data_type data) {
+        // 缓冲超限丢最旧（保持最新消息语义）
+        if (max_pending_ != 0 && pending.size() >= max_pending_) {
+            pending.pop_front();
+        }
+        pending.emplace_back(std::move(data));
     }
 
     bool buffer_empty() const {
-        return buffer.empty();
+        return pending.empty();
+    }
+
+    void buffer_clear() {
+        pending.clear();
     }
 
     void try_send_one(std::uint8_t ep, std::uint32_t seqnum, std::uint32_t length, TransferHandle transfer) {
-        // 取最旧一条按长度截断，记录（transfer 由析构释放）
-        auto &front = buffer.front();
+        // 取最旧一条按长度截断；与真实一致的部分（真实此处 set_transfer_data +
+        // session 提交应答，桩改为记录 sent）
+        auto &front = pending.front();
         auto send_len = std::min(front.size(), static_cast<std::size_t>(length));
         sent.push_back({seqnum, static_cast<std::uint32_t>(send_len),
                         data_type(front.begin(), front.begin() + send_len)});
-        buffer.pop_front();
+        pending.pop_front();
+        this->space_cv.notify_one(); // 腾出空位，唤醒阻塞的 push_blocking
+    }
+
+    void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
+        // 挤出的挂起请求：真实此处 session 提交空应答（0 字节），桩改为记录
+        sent.push_back({seqnum, 0, {}});
     }
 
     data_type try_pull_data(std::uint32_t length) {
@@ -67,13 +139,9 @@ public:
         try_send_one(ep, seqnum, length, std::move(transfer));
     }
 
-    void push_locked(data_type data) {
-        buffer.emplace_back(std::move(data));
-    }
-
-    void buffer_clear() {
-        buffer.clear();
-    }
+private:
+    std::deque<data_type> pending;
+    std::size_t max_pending_ = 0;
 };
 
 // 字节流分片变体通道：RingBuffer 缓冲，按请求长度分片消费（模拟 ByteStreamInChannel）
@@ -88,6 +156,12 @@ public:
     RingBuffer buffer{64 * 1024};
     std::function<data_type(std::uint32_t)> pull; // 可选 pull，模拟 try_pull_data
     int pull_calls = 0;
+
+    // 与真实 ByteStreamInChannel 同 API：size（缓冲中待发字节数）
+    std::size_t size() const {
+        std::lock_guard lock(this->channel_mutex);
+        return buffer.size();
+    }
 
     void write(const std::uint8_t *data, std::size_t size) {
         std::lock(channel_mutex, requests_mutex);
@@ -107,6 +181,12 @@ public:
         data_type data(send_len);
         buffer.read(data.data(), send_len);
         sent.push_back({seqnum, static_cast<std::uint32_t>(send_len)});
+        space_cv.notify_one(); // 腾出空位，唤醒阻塞的写者
+    }
+
+    void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
+        // 挤出的挂起请求：记录空完成（0 字节），transfer 析构释放
+        sent.push_back({seqnum, 0});
     }
 
     data_type try_pull_data(std::uint32_t length) {
@@ -185,7 +265,7 @@ TEST(TestInEndpointChannel, MessageTruncatedToRequestLength) {
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].length, 3u);
     EXPECT_EQ(channel.sent[0].data, (data_type{1, 2, 3}));
-    EXPECT_TRUE(channel.buffer.empty()); // 整条消费，剩余丢弃（消息语义）
+    EXPECT_EQ(channel.size(), 0u); // 整条消费，剩余丢弃（消息语义）
 }
 
 TEST(TestInEndpointChannel, SameEndpointFifoOrder) {
@@ -224,7 +304,7 @@ TEST(TestInEndpointChannel, PendingRequestBlocksLaterBufferedRequest) {
 TEST(TestInEndpointChannel, MaxPendingDropsOldest) {
     RecordingChannel channel;
     channel.on_new_connection();
-    channel.max_pending = 2;
+    channel.set_max_pending(2);
     TransferMaker maker;
 
     // 无请求时推入 3 条：第 1 条被丢（保持最新消息语义）
@@ -265,7 +345,7 @@ TEST(TestInEndpointChannel, PullDataTruncatedToRequestLength) {
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].length, 4u);
     EXPECT_EQ(channel.sent[0].data, (data_type{1, 2, 3, 4}));
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, PullNotCalledWhenSameEndpointHasPending) {
@@ -301,13 +381,13 @@ TEST(TestInEndpointChannel, ByteStreamPullPrefersCurrentRequest) {
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].seqnum, 70u);
     EXPECT_EQ(channel.sent[0].length, 4u);
-    EXPECT_EQ(channel.buffer.size(), 6u);
+    EXPECT_EQ(channel.size(), 6u);
 
     // 后续请求消费剩余部分
     channel.on_in_request(0x81, 71, 8, maker.make());
     ASSERT_EQ(channel.sent.size(), 2u);
     EXPECT_EQ(channel.sent[1].length, 6u);
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, ByteStreamPullAllSentWhenFits) {
@@ -321,7 +401,7 @@ TEST(TestInEndpointChannel, ByteStreamPullAllSentWhenFits) {
 
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].length, 3u);
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, ByteStreamChannelLifecycle) {
@@ -360,7 +440,7 @@ TEST(TestInEndpointChannel, EmptyMessagePushed) {
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].seqnum, 60u);
     EXPECT_EQ(channel.sent[0].length, 0u);
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, MultipleEndpointsIndependentFifo) {
@@ -444,12 +524,12 @@ TEST(TestInEndpointChannel, LengthZeroRequestDoesNotConsumeStreamData) {
     channel.on_in_request(0x81, 1, 0, maker.make());
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].length, 0u);
-    EXPECT_FALSE(channel.buffer.empty()); // 缓冲数据未被消费
+    EXPECT_NE(channel.size(), 0u); // 缓冲数据未被消费
 
     channel.on_in_request(0x81, 2, 64, maker.make());
     ASSERT_EQ(channel.sent.size(), 2u);
     EXPECT_EQ(channel.sent[1].length, 10u);
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }
 
 TEST(TestInEndpointChannel, LengthZeroRequestConsumesOneMessage) {
@@ -462,7 +542,7 @@ TEST(TestInEndpointChannel, LengthZeroRequestConsumesOneMessage) {
     channel.on_in_request(0x81, 1, 0, maker.make());
     ASSERT_EQ(channel.sent.size(), 1u);
     EXPECT_EQ(channel.sent[0].length, 0u);
-    EXPECT_TRUE(channel.buffer.empty()); // 消息被消费
+    EXPECT_EQ(channel.size(), 0u); // 消息被消费
 
     channel.push({0x07});
     channel.on_in_request(0x81, 2, 8, maker.make());
@@ -516,7 +596,7 @@ TEST(TestInEndpointChannel, DoubleDisconnectionIdempotent) {
     channel.on_disconnection(); // 重复断连幂等，不崩溃不清错东西
 
     EXPECT_FALSE(channel.cancel_pending(1));
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
     channel.on_new_connection();
     channel.on_in_request(0x81, 2, 8, maker.make());
     channel.push({0x01});
@@ -569,14 +649,14 @@ TEST(TestInEndpointChannel, DisconnectionClearsEverything) {
     channel.on_disconnection();
     // 队列与缓冲清空
     EXPECT_FALSE(channel.cancel_pending(70));
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
     // 断连后 push 不再匹配（无挂起请求，数据入缓冲但不发送）
     channel.push({0x02});
     EXPECT_EQ(channel.sent.size(), 1u);
 
     // 重新连接：缓冲清空，恢复可用（请求挂起后可正常应答）
     channel.on_new_connection();
-    EXPECT_TRUE(channel.buffer.empty());
+    EXPECT_EQ(channel.size(), 0u);
     channel.on_in_request(0x81, 71, 8, maker.make());
     channel.push({0x03});
     ASSERT_EQ(channel.sent.size(), 2u);
@@ -684,7 +764,7 @@ TEST(TestInEndpointChannel, ConcurrentByteStreamWriteAndRequests) {
         total_sent_after += s.length;
     }
     std::size_t total_written = kRequests * kBytesPerWrite + topped_up * kBytesPerWrite;
-    EXPECT_EQ(total_sent_after + channel.buffer.size(), total_written);
+    EXPECT_EQ(total_sent_after + channel.size(), total_written);
 }
 
 TEST(TestInEndpointChannel, ConcurrentDisconnectAndPushNoCrash) {
@@ -791,4 +871,317 @@ TEST(TestInEndpointChannel, RealByteStreamBlockingWriteTimesOut) {
     // 确实阻塞了约 30ms（而非立即返回）
     EXPECT_GE(waited, std::chrono::milliseconds(20));
     EXPECT_EQ(channel.size(), 16u);  // 已占数据未被写者改动
+}
+
+TEST(TestInEndpointChannel, PendingLimitEvictsOldestWithEmptyReply) {
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+    channel.set_max_pending_requests(2);
+
+    // 3 个请求全部无数据挂起：第 3 个到达时第 1 个被挤出，应答空完成（0 字节）
+    channel.on_in_request(0x81, 1, 8, maker.make());
+    channel.on_in_request(0x81, 2, 8, maker.make());
+    channel.on_in_request(0x81, 3, 8, maker.make());
+
+    ASSERT_EQ(channel.sent.size(), 1u);
+    EXPECT_EQ(channel.sent[0].seqnum, 1u);
+    EXPECT_EQ(channel.sent[0].length, 0u);
+
+    // 数据到达：应答剩余的请求 2、3（FIFO 顺序）
+    channel.push({0xAA, 0xBB});
+    channel.push({0xCC, 0xDD});
+    ASSERT_EQ(channel.sent.size(), 3u);
+    EXPECT_EQ(channel.sent[1].seqnum, 2u);
+    EXPECT_EQ(channel.sent[2].seqnum, 3u);
+    EXPECT_EQ(channel.sent[1].data, (data_type{0xAA, 0xBB}));
+    EXPECT_EQ(channel.sent[2].data, (data_type{0xCC, 0xDD}));
+}
+
+TEST(TestInEndpointChannel, PushRejectsWhenFullIfNotDropping) {
+    RecordingChannel channel;
+    channel.on_new_connection();
+    channel.set_max_pending(1);
+
+    EXPECT_TRUE(channel.push({0x01}));          // 有空位，入队成功
+    // 满了且要求不丢旧：返回 false，缓冲不变
+    EXPECT_FALSE(channel.push({0x02}, false));
+    ASSERT_EQ(channel.size(), 1u);
+    EXPECT_EQ(channel.debug_front(), (data_type{0x01}));
+    // 丢最旧模式：入队成功，旧消息被挤出
+    EXPECT_TRUE(channel.push({0x03}));
+    ASSERT_EQ(channel.size(), 1u);
+    EXPECT_EQ(channel.debug_front(), (data_type{0x03}));
+}
+
+TEST(TestInEndpointChannel, PushBlockingWaitsForSpace) {
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+    channel.set_max_pending(1);
+    channel.push({0x01}); // 占满唯一空位
+
+    bool pushed = false;
+    std::thread writer([&]() { pushed = channel.push_blocking({0x02}); });
+
+    // 等写者进入阻塞（缓冲仍满），主机请求取走消息腾出空位
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    channel.on_in_request(0x81, 9, 8, maker.make()); // 缓冲有数据 → 立即应答取走
+
+    writer.join();
+    EXPECT_TRUE(pushed);
+    ASSERT_EQ(channel.size(), 1u);
+    EXPECT_EQ(channel.debug_front(), (data_type{0x02}));
+}
+
+TEST(TestInEndpointChannel, PushBlockingInterruptedByDisconnection) {
+    // 缓冲满时阻塞推入，断连必须打断等待并返回 false（space_cv 唤醒 + disconnected 检查）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    channel.set_max_pending(1);
+    channel.push({0x01}); // 占满唯一空位
+
+    bool pushed = true;
+    std::thread writer([&]() { pushed = channel.push_blocking({0x02}); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 确保已阻塞
+    channel.on_disconnection();
+    writer.join();
+    EXPECT_FALSE(pushed);
+}
+
+TEST(TestInEndpointChannel, ShardPendingLimitEvictsOldestWithEmptyReply) {
+    ShardChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+    channel.set_max_pending_requests(2);
+
+    channel.on_in_request(0x81, 1, 8, maker.make());
+    channel.on_in_request(0x81, 2, 8, maker.make());
+    channel.on_in_request(0x81, 3, 8, maker.make());
+
+    ASSERT_EQ(channel.sent.size(), 1u);
+    EXPECT_EQ(channel.sent[0].seqnum, 1u);
+    EXPECT_EQ(channel.sent[0].length, 0u);
+
+    const data_type bytes = {1, 2, 3, 4};
+    channel.write(bytes.data(), bytes.size());
+    ASSERT_EQ(channel.sent.size(), 2u);
+    EXPECT_EQ(channel.sent[1].seqnum, 2u);
+    EXPECT_EQ(channel.sent[1].length, 4u);
+}
+
+TEST(TestInEndpointChannel, ConcurrentPushAndRequestsMatchAll) {
+    // 多线程同时推数据 + 多线程同时发请求：每个请求最终都被应答，应答数据
+    // 与对应 push 的消息一致（双锁保证无丢失无错配，TSan 下验证无竞态）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+
+    constexpr int PUSHERS = 4;
+    constexpr int REQUESTERS = 4;
+    constexpr int PER_THREAD = 20;
+
+    // 先挂 16 个请求（每个 64 字节）：设备侧 16 条消息逐条应答
+    std::atomic<int> next_seq{1};
+    std::vector<std::thread> requesters;
+    for (int t = 0; t < REQUESTERS; t++) {
+        requesters.emplace_back([&]() {
+            for (int i = 0; i < PER_THREAD; i++) {
+                channel.on_in_request(0x81, static_cast<std::uint32_t>(next_seq.fetch_add(1)), 64, maker.make());
+            }
+        });
+    }
+    // 同时 16 条消息逐个推入（每条内容带序号标签）；t 必须按值捕获
+    //（[&] 引用捕获会与主线程循环递增竞态，TSan 实测命中；i 是 lambda 内局部）
+    std::vector<std::thread> pushers;
+    for (int t = 0; t < PUSHERS; t++) {
+        pushers.emplace_back([&, t]() {
+            for (int i = 0; i < PER_THREAD; i++) {
+                channel.push(data_type{static_cast<std::uint8_t>(t), static_cast<std::uint8_t>(i)});
+            }
+        });
+    }
+    for (auto &th: requesters) {
+        th.join();
+    }
+    for (auto &th: pushers) {
+        th.join();
+    }
+
+    // 80 条消息全部被应答（每请求一条；消息按请求长度截断，长度 ≤ 2 字节）
+    ASSERT_EQ(channel.sent.size(), REQUESTERS * PER_THREAD);
+    // 每条应答的 seqnum 覆盖 1..80（无丢失无重复）
+    std::vector<int> seqs;
+    for (auto &s: channel.sent) {
+        seqs.push_back(static_cast<int>(s.seqnum));
+    }
+    std::sort(seqs.begin(), seqs.end());
+    for (int i = 0; i < REQUESTERS * PER_THREAD; i++) {
+        EXPECT_EQ(seqs[static_cast<std::size_t>(i)], i + 1);
+    }
+    EXPECT_EQ(channel.size(), 0u); // 全部消费完，无残留
+}
+
+TEST(TestInEndpointChannel, ConcurrentPushBlockingWriters) {
+    // 上限 1：4 个写者并发阻塞推入，宿主逐个取走腾空位；全部入队成功且顺序
+    // 与应答顺序一致（TSan 下验证等待/唤醒无竞态）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+    channel.set_max_pending(1);
+
+    constexpr int WRITERS = 4;
+    std::atomic<bool> ok{true};
+    std::vector<std::thread> writers;
+    for (int t = 0; t < WRITERS; t++) {
+        writers.emplace_back([&, t]() {
+            if (!channel.push_blocking(data_type{static_cast<std::uint8_t>(t)})) {
+                ok.store(false);
+            }
+        });
+    }
+    // 宿主逐个取走（4 条消息需 4 个请求）
+    for (int i = 0; i < WRITERS; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        channel.on_in_request(0x81, static_cast<std::uint32_t>(i + 1), 8, maker.make());
+    }
+    for (auto &th: writers) {
+        th.join();
+    }
+
+    EXPECT_TRUE(ok.load());
+    ASSERT_EQ(channel.sent.size(), WRITERS);
+    EXPECT_EQ(channel.size(), 0u);
+}
+
+TEST(TestInEndpointChannel, ConcurrentPendingLimitKeepsQueueBounded) {
+    // 上限 2：多线程并发发请求，队列始终 ≤2，被挤出的请求全部以空完成（0 字节）
+    // 应答（TSan 下验证挤最旧与入队的并发安全）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+    channel.set_max_pending_requests(2);
+
+    constexpr int THREADS = 4;
+    constexpr int PER_THREAD = 25;
+    std::atomic<int> next_seq{1};
+    std::vector<std::thread> requesters;
+    for (int t = 0; t < THREADS; t++) {
+        requesters.emplace_back([&]() {
+            for (int i = 0; i < PER_THREAD; i++) {
+                channel.on_in_request(0x81, static_cast<std::uint32_t>(next_seq.fetch_add(1)), 8, maker.make());
+            }
+        });
+    }
+    for (auto &th: requesters) {
+        th.join();
+    }
+
+    // 100 个请求：98 个被挤出（答 0 长度），2 个仍在挂起
+    ASSERT_EQ(channel.sent.size(), THREADS * PER_THREAD - 2);
+    for (auto &s: channel.sent) {
+        EXPECT_EQ(s.length, 0u);
+    }
+    // 挂起队列恰为最后两个 seqnum
+    channel.push({0x01, 0x02});
+    channel.push({0x03, 0x04});
+    ASSERT_EQ(channel.sent.size(), THREADS * PER_THREAD);
+    EXPECT_EQ(channel.sent[THREADS * PER_THREAD - 2].length, 2u);
+    EXPECT_EQ(channel.sent[THREADS * PER_THREAD - 1].length, 2u);
+}
+
+TEST(TestInEndpointChannel, ConcurrentPushAndDisconnection) {
+    // push 与断连并发：push 要么在断连前入队成功（随后被断连清空），要么
+    // 断连检查返回 false——不残留、不崩（TSan 验证）
+    RecordingChannel channel;
+    channel.on_new_connection();
+
+    std::atomic<bool> started{false};
+    std::atomic<bool> stop{false};
+    std::thread pusher([&]() {
+        int ok = 0;
+        for (int i = 0; i < 500; i++) {
+            if (channel.push(data_type{static_cast<std::uint8_t>(i)})) {
+                ok++;
+                if (!started.load()) {
+                    started.store(true);
+                }
+            }
+        }
+        stop.store(true);
+    });
+    // 等 pusher 开始入队后断连（与 push 并发竞争）
+    while (!started.load() && !stop.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    channel.on_disconnection();
+    pusher.join();
+
+    // 断连后无残留（断连前入队的被清空，断连后的 push 返回 false 不入队）
+    EXPECT_EQ(channel.size(), 0u);
+}
+
+TEST(TestInEndpointChannel, ConcurrentUnlinkAndRequests) {
+    // cancel_pending（主机 UNLINK）与 on_in_request 并发：被取消的请求从队列
+    // 移除（不再应答），未被取消的继续挂起等数据——不重复应答、不崩（TSan 验证）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+
+    std::atomic<int> next_seq{1};
+    std::atomic<bool> stop{false};
+    std::thread requester([&]() {
+        while (!stop.load()) {
+            channel.on_in_request(0x81, static_cast<std::uint32_t>(next_seq.fetch_add(1)), 8, maker.make());
+        }
+    });
+    int cancelled = 0;
+    for (int i = 0; i < 200; i++) {
+        if (channel.cancel_pending(static_cast<std::uint32_t>(i + 1))) {
+            cancelled++;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    stop.store(true);
+    requester.join();
+
+    // 取消的请求数不超过已发出的请求数；数据到达后剩余请求被应答
+    EXPECT_LE(cancelled, next_seq.load() - 1);
+    channel.push({0x01});
+    EXPECT_FALSE(channel.sent.empty());
+    // 每个应答 seqnum 唯一（无重复应答）
+    std::vector<int> seqs;
+    for (auto &s: channel.sent) {
+        seqs.push_back(static_cast<int>(s.seqnum));
+    }
+    std::sort(seqs.begin(), seqs.end());
+    EXPECT_EQ(std::adjacent_find(seqs.begin(), seqs.end()), seqs.end());
+}
+
+TEST(TestInEndpointChannel, ConcurrentRequestAndDisconnection) {
+    // 请求入队与断连并发：断连清队列时不丢/不崩，请求后到的不残留
+    // （requests_mutex 保护，TSan 下验证无竞态）
+    RecordingChannel channel;
+    channel.on_new_connection();
+    TransferMaker maker;
+
+    std::atomic<bool> stop{false};
+    std::thread requester([&]() {
+        std::uint32_t seq = 1;
+        while (!stop.load()) {
+            channel.on_in_request(0x81, seq++, 8, maker.make());
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    channel.on_disconnection();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    channel.on_disconnection();
+    stop.store(true);
+    requester.join();
+
+    // 断连后队列与缓冲都被清空；再 push 返回 false（断连后不接收），无残留
+    EXPECT_FALSE(channel.push({0x01}));
+    EXPECT_TRUE(channel.sent.empty());
+    EXPECT_EQ(channel.size(), 0u);
 }

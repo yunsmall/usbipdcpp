@@ -90,6 +90,15 @@ public:
     }
 
     /**
+     * @brief 获取指定端点队列中的请求数
+     * @note 调用者需已持有互斥锁
+     */
+    std::size_t size(std::uint8_t ep_address) const {
+        auto it = queues_.find(ep_address);
+        return it == queues_.end() ? 0 : it->second.size();
+    }
+
+    /**
      * @brief 按 seqnum 取消请求（用于 UNLINK）
      * @return 如果找到并移除了请求返回 true
      * @note 调用者需已持有互斥锁
@@ -173,6 +182,12 @@ public:
         std::lock_guard lock1(channel_mutex, std::adopt_lock);
         std::lock_guard lock2(requests_mutex, std::adopt_lock);
 
+        // 断连后不再接收：请求直接释放（transfer 析构自动回收），不入队不应答
+        //（对齐 OutEndpointChannel 的断连处理，防断连竞态下请求残留到下次连接）
+        if (disconnected) {
+            return;
+        }
+
         // 同端点已有挂起请求时必须排在后面（同端点 FIFO 顺序），即使缓冲有数据
         if (endpoint_requests.empty(ep) && !self().buffer_empty()) {
             self().try_send_one(ep, seqnum, length, std::move(transfer));
@@ -189,9 +204,28 @@ public:
                 return;
             }
         }
-        // 挂起请求；若同端点已有挂起且缓冲有数据，顺带推进队列（发前面的请求）
+        // 挂起请求；若同端点已有挂起且缓冲有数据，顺带推进队列（发前面的请求）。
+        // 先按上限挤掉最旧的：该端点挂起已达上限时，把最早的请求出队并应答空
+        // 完成（0 字节）——主机 URB 空完成后重新提交，等价 USB 总线的 NAK 背压，
+        // 挂起队列保持有界（设备来不及回复时不让主机请求无限堆积）
+        if (max_pending_requests_ != 0 && endpoint_requests.size(ep) >= max_pending_requests_) {
+            auto evicted = endpoint_requests.dequeue(ep);
+            if (evicted.has_value()) {
+                self().reply_empty(evicted->seqnum, std::move(evicted->transfer));
+            }
+        }
         endpoint_requests.enqueue(ep, {seqnum, length, std::move(transfer)});
         try_send_pending_locked();
+    }
+
+    /**
+     * @brief 设置挂起请求上限（0 = 无限，默认）。达到上限时新请求挤掉该端点
+     * 最早的请求，并应答空完成（actual_length=0、status 正常）——主机 URB
+     * 空完成即重新提交，等价 USB 总线的 NAK 背压，挂起队列保持有界
+     */
+    void set_max_pending_requests(std::size_t max_pending) {
+        std::lock_guard lock(requests_mutex);
+        max_pending_requests_ = max_pending;
     }
 
     /**
@@ -251,6 +285,8 @@ protected:
     mutable std::mutex requests_mutex;
     // 挂起的 IN 传输请求（按端点排队）
     EndpointRequestQueue endpoint_requests;
+    // 挂起请求上限（0 = 无限）；on_in_request 按端点检查
+    std::size_t max_pending_requests_ = 0;
     // 缓冲腾出空间时唤醒阻塞的写者（字节流模式用）
     std::condition_variable space_cv;
     // 断连标记（初始为断连，on_new_connection 后可用）
@@ -270,18 +306,67 @@ protected:
 class MessageInChannel : public InEndpointChannelBase<MessageInChannel> {
 public:
     /**
-     * @brief 推入一条消息（非阻塞，任意线程可调）
+     * @brief 非阻塞推入一条消息（任意线程可调）
      *
      * 有挂起的 IN 请求时直接应答；没有则入缓冲等主机来读。
-     * 缓冲超上限时丢最旧的一条（保持「最新消息优先」语义）。
      * @param data 一条完整消息
+     * @param drop_oldest true（默认）= 缓冲超上限时丢最旧的一条，保持「最新消息
+     *        优先」语义（历史调用行为不变）；false = 缓冲满时不入队，返回 false
+     *        告诉调用者满了、本次未发送成功，由调用者决定丢弃或重试
+     * @return 是否成功入队（drop_oldest=true 时恒为 true）
      */
-    void push(data_type data) {
+    bool push(data_type data, bool drop_oldest = true) {
         std::lock(this->channel_mutex, this->requests_mutex);
         std::lock_guard lock1(this->channel_mutex, std::adopt_lock);
         std::lock_guard lock2(this->requests_mutex, std::adopt_lock);
+        // 断连后不再接收：返回 false 告诉调用者本次未发送成功（数据会在下次
+        // 连接被清空，白攒；对齐 write_nb 断连返回 0 的语义）
+        if (this->disconnected) {
+            return false;
+        }
+        // 满且调用者不丢旧：不入队，告诉调用者满了
+        if (!drop_oldest && max_pending_ != 0 && pending.size() >= max_pending_) {
+            return false;
+        }
         push_locked(std::move(data));
         this->try_send_pending_locked();
+        return true;
+    }
+
+    /**
+     * @brief 阻塞推入一条消息：缓冲满时等待主机读走腾出空位再入队
+     *
+     * 适用「数据必须完整送达、可等待」的场景（对称 ByteStream 的阻塞 write）。
+     * 等待期间释放 channel_mutex，主机请求仍能入队应答取走消息（try_send_one
+     * 腾出空位后唤醒）。
+     * @param data 一条完整消息
+     * @param timeout_ms 每阶段等待空位的超时（毫秒）；0 = 无限等
+     * @return true = 入队成功；false = 断连或等待超时（仍满）
+     */
+    bool push_blocking(data_type data, std::uint32_t timeout_ms = 0) {
+        std::unique_lock lock(this->channel_mutex);
+        while (max_pending_ != 0 && pending.size() >= max_pending_) {
+            if (this->disconnected) {
+                return false;
+            }
+            if (timeout_ms == 0) {
+                this->space_cv.wait(lock);
+            }
+            else if (this->space_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) == std::cv_status::timeout) {
+                break;
+            }
+        }
+        if (this->disconnected) {
+            return false;
+        }
+        if (max_pending_ != 0 && pending.size() >= max_pending_) {
+            return false; // 等待超时仍满
+        }
+        // 空位就绪：补 requests 锁入队并推进挂起请求（与 push 同锁序）
+        std::lock_guard lock2(this->requests_mutex);
+        push_locked(std::move(data));
+        this->try_send_pending_locked();
+        return true;
     }
 
     /**
@@ -319,8 +404,16 @@ public:
         // alloc_transfer_handle 创建并封装进 TransferHandle，空句柄不会入队）
         assert(transfer.get_operator() != nullptr);
         auto written = transfer.get_operator()->set_transfer_data(transfer.get(), data, length);
+        this->space_cv.notify_one(); // 消息取走腾出空位，唤醒阻塞的 push_blocking
         this->session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                 seqnum, static_cast<std::uint32_t>(written), std::move(transfer)));
+    }
+
+    void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
+        // 挤出的挂起请求：应答空完成（0 字节，status 正常），transfer 析构自动
+        // 释放。主机 URB 空完成后重新提交（等价 USB 总线 NAK 背压）
+        this->session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
     }
 
     data_type try_pull_data(std::uint32_t length) {
@@ -507,6 +600,13 @@ public:
         this->space_cv.notify_one();
         this->session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                 seqnum, static_cast<std::uint32_t>(written), std::move(transfer)));
+    }
+
+    void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
+        // 挤出的挂起请求：应答空完成（0 字节，status 正常），transfer 析构自动
+        // 释放。主机 URB 空完成后重新提交（等价 USB 总线 NAK 背压）
+        this->session->submit_ret_submit(
+                UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
     }
 
     data_type try_pull_data(std::uint32_t length) {

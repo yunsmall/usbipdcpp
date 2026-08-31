@@ -21,9 +21,10 @@ EcmCommunicationInterfaceHandler::EcmCommunicationInterfaceHandler(UsbInterface 
     std::snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X", mac_address[0], mac_address[1], mac_address[2],
                   mac_address[3], mac_address[4], mac_address[5]);
     mac_string_index_ = string_pool.new_string(std::wstring(hex, hex + 12));
-    // 通知通道上限 1 条：只缓存最新一条状态（状态通知低频，丢旧保新即可，
-    // 对齐 CdcAcm 通知通道语义）
-    notification_channel.set_max_pending(1);
+    // 通知通道待发缓存上限 30 条：网络状态通知低频（连接/速率变化才发一条），
+    // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
+    // 兜底，同时保留足够余量不丢低频通知（超限丢最旧，对齐 CdcAcm 通知通道）
+    notification_channel.set_max_pending(30);
 }
 
 UsbInterface EcmCommunicationInterfaceHandler::make_interface(std::uint8_t interrupt_in_ep) {
