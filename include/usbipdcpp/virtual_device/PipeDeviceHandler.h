@@ -127,7 +127,7 @@ public:
     /// 接口 handler 需要持有本对象指针，只能在对象完整构造后创建，故在 setup 阶段补建
     void setup_interface_handlers() override;
 
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
 
 private:

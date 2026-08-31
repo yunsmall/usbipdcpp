@@ -3,7 +3,7 @@
 
 namespace usbipdcpp {
 
-void LibevdevMouseInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void LibevdevMouseInterfaceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
     should_immediately_stop = false;
     last_state = State{};

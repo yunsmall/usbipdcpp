@@ -16,6 +16,7 @@
 #include "usbipdcpp/utils/LatencyTracker.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
+#include "usbipdcpp/virtual_device/TransferResponder.h"
 
 namespace usbipdcpp {
 class Server;
@@ -53,6 +54,13 @@ public:
     void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink);
 
     /**
+     * @brief 传输应答接口（虚拟设备侧 Handler/通道/调度器用）：内部实现
+     * SessionResponder 转发到本类的 submit_ret_submit / submit_ret_unlink。
+     * 虚拟设备侧不直接依赖 Session，经此接口提交应答（测试可替换）
+     */
+    TransferResponder *responder() { return &responder_; }
+
+    /**
      * @brief 该函数异步，不阻塞。把响应包入队 write_buffer 并唤醒 sender 线程，
      *        实际网络写入由 sender 线程完成。内部加锁，任意线程安全。
      * 请确保每个urb都需要提交返回的包
@@ -85,6 +93,46 @@ public:
     LATENCY_TRACKER_MEMBER(latency_tracker);
 
 private:
+    /**
+     * @brief 传输应答适配器：把 TransferResponder 接口全部转发到 Session 的
+     * 对应实现（Session 自身不继承接口，设备侧只经 responder() 拿到的本对象
+     * 提交，不直接依赖 Session）
+     */
+    class SessionResponder : public TransferResponder {
+    public:
+        explicit SessionResponder(Session &session) : session_(session) {}
+        void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) override {
+            session_.submit_ret_submit(std::move(submit));
+        }
+        void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) override {
+            session_.submit_ret_unlink(std::move(unlink));
+        }
+        void enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) override {
+            session_.enqueue_ret_submit(std::move(submit));
+        }
+        void enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) override {
+            session_.enqueue_ret_unlink(std::move(unlink));
+        }
+        void wakeup_sender() override {
+            session_.wakeup_sender();
+        }
+        void stop_transfer() override {
+            session_.immediately_stop();
+        }
+        LatencyTracker *latency_tracker() override {
+#if USBIPDCPP_TRACK_ENABLED
+            return &session_.latency_tracker;
+#else
+            return nullptr;
+#endif
+        }
+    private:
+        Session &session_;
+    };
+
+    // 传输应答适配器实例（成员初始化器里绑定本 Session）
+    SessionResponder responder_{*this};
+
     /**
      * @brief 新建Session时由Server调用
      */

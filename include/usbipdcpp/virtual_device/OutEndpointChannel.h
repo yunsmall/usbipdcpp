@@ -162,10 +162,10 @@ public:
      * handler 的 on_new_connection 里传当前会话调用；无参（测试桩复位）时保持
      * 已绑定的会话不变
      */
-    void on_new_connection(Session *current_session = nullptr) {
+    void on_new_connection(TransferResponder *current_session = nullptr) {
         std::lock_guard lock(mutex_);
         if (current_session) {
-            session = current_session;
+            responder = current_session;
         }
         disconnected = false;
     }
@@ -188,7 +188,7 @@ protected:
         return static_cast<Derived &>(*this);
     }
 
-    Session *session = nullptr;
+    TransferResponder *responder = nullptr;
 
 private:
     struct PendingRequest {
@@ -227,7 +227,7 @@ private:
  * @brief OUT 数据通道默认实现
  *
  * 派生类需实现 reply()（CRTP 接口，应答一个请求）：通常走
- * session->submit_ret_submit 回 RET_SUBMIT（status=0：OUT 数据消费完成；
+ * responder->submit_ret_submit 回 RET_SUBMIT（status=0：OUT 数据消费完成；
  * 非 0：如上限拒绝的 EPIPE）。测试可继承 OutEndpointChannelBase 提供自己的
  * reply() 记录应答，不产生虚函数开销
  */
@@ -241,12 +241,12 @@ public:
      */
     void reply(std::uint32_t seqnum, std::uint32_t length, std::uint32_t status = 0) {
         if (status == 0) {
-            session->submit_ret_submit(
+            responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, length));
         }
         else {
             // 错误状态应答：actual_length 填 0（协议上错误传输不带有效数据）
-            session->submit_ret_submit(
+            responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(seqnum, status, 0));
         }
     }

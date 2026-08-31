@@ -98,7 +98,9 @@ private:
 
 // 宏定义
 
+// 统一开关：使用处只需 #if USBIPDCPP_TRACK_ENABLED，不用重复写长条件
 #if defined(USBIPDCPP_TRACK_PACKAGE) || defined(USBIPDCPP_FORCE_TRACK_PACKAGE)
+#define USBIPDCPP_TRACK_ENABLED 1
 
 // 在类中声明延时追踪器成员
 #define LATENCY_TRACKER_MEMBER(name) usbipdcpp::LatencyTracker name
@@ -116,6 +118,7 @@ private:
 #define LATENCY_TRACK_END_MSG(tracker, seqnum, message) (tracker).end_tracking(seqnum, message)
 
 #else
+#define USBIPDCPP_TRACK_ENABLED 0
 
 #define LATENCY_TRACKER_MEMBER(name)
 #define LATENCY_TRACK_START(tracker, seqnum) ((void)0)

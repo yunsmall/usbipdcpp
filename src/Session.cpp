@@ -168,7 +168,7 @@ void usbipdcpp::Session::parse_op() {
 
                             // 在发送 OpRepImport 之前尝试打开设备
                             usbipdcpp::error_code open_ec;
-                            current_handler->on_new_connection(*this, open_ec);
+                            current_handler->on_new_connection(*this->responder(), open_ec);
                             if (open_ec) {
                                 SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
                                 open_device_failed = true;

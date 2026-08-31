@@ -11,7 +11,7 @@ void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_con
         const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
     SPDLOG_ERROR("Unimplement non standard control transfer request to simple device");
     // TransferHandle 析构时会自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 

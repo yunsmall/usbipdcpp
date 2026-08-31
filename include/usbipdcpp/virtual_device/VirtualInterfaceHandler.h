@@ -54,8 +54,8 @@ public:
      * @param ec 发生的ec
      * @note 子类重写时必须调用父类实现，在函数开头调用，父类会设置session指针
      */
-    void on_new_connection(Session &current_session, error_code &ec) override {
-        session = &current_session;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override {
+        responder = &current_session;
     }
 
     /**
@@ -63,7 +63,7 @@ public:
      * @note 子类重写时必须调用父类实现，在函数末尾调用，父类会清理session指针
      */
     void on_disconnection(error_code &ec) override {
-        session = nullptr;
+        responder = nullptr;
     }
 
     // ========== 数据面回调（默认回 EPIPE，功能设备必须重写） ==========
@@ -224,7 +224,7 @@ public:
     }
 
 protected:
-    Session *session = nullptr;
+    TransferResponder *responder = nullptr;
     VirtualDeviceHandler *device_handler = nullptr;
     std::unique_ptr<TransferOperator> transfer_op_;
 

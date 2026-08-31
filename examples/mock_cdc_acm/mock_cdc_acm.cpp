@@ -32,7 +32,7 @@ MockCdcAcmDataInterfaceHandler::MockCdcAcmDataInterfaceHandler(
     CdcAcmDataInterfaceHandler(handle_interface, string_pool) {
 }
 
-void MockCdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void MockCdcAcmDataInterfaceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     CdcAcmDataInterfaceHandler::on_new_connection(current_session, ec);
     should_immediately_stop = false;
 }

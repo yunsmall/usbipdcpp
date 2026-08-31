@@ -2,7 +2,7 @@
 
 A C++ library for creating usbip servers
 
-> [中文文档](README-zh.md)
+> [中文文档](README.zh.md)
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend

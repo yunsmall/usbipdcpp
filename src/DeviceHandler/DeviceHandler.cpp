@@ -14,7 +14,7 @@ using namespace usbipdcpp;
 
 void AbstDeviceHandler::trigger_session_stop() {
     std::lock_guard lock(session_mutex_);
-    if (session)[[likely]] {
-        session->immediately_stop();
+    if (responder)[[likely]] {
+        responder->stop_transfer();
     }
 }

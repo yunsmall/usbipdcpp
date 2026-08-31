@@ -187,7 +187,7 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
 
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     if (type != RequestType::Class) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -205,12 +205,12 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
             trx->actual_length = act_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -235,11 +235,11 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
                     trx->actual_length = 0;
                     break;
                 default:
-                    session->submit_ret_submit(
+                    responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
             }
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
@@ -255,16 +255,16 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
                     trx->actual_length = 1;
                     break;
                 default:
-                    session->submit_ret_submit(
+                    responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
             }
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -272,14 +272,14 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
     // IT=0x01, OT=0x03 无实际控制逻辑，但需要 ACK 防止 Windows STALL
     if (entity == ENTITY_INPUT_TERMINAL || entity == ENTITY_OUTPUT_TERMINAL) {
         trx->actual_length = 0;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0, std::move(transfer)));
         return;
     }
 
     // ===== Processing Unit（entity=2）=====
     if (entity != ENTITY_PROCESSING_UNIT) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -334,11 +334,11 @@ void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
             trx->actual_length = 0;
             break;
         default:
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             return;
     }
 
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
             std::move(transfer)));
 }
@@ -352,7 +352,7 @@ void UvcVideoControlHandler::handle_interrupt_transfer(std::uint32_t seqnum, con
         status_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -361,7 +361,7 @@ void UvcVideoControlHandler::send_vc_status(data_type status) {
     status_channel.push(std::move(status));
 }
 
-void UvcVideoControlHandler::on_new_connection(Session &current_session, error_code &ec) {
+void UvcVideoControlHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     status_channel.on_new_connection(&current_session);
@@ -378,7 +378,7 @@ void UvcVideoControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, s
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -580,7 +580,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
     auto ctrl_code = setup_packet.value >> 8;
 
     if (type != RequestType::Class) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -595,18 +595,18 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
             trx->actual_length = act_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
     if (!(ctrl_code == VS_PROBE_CONTROL || ctrl_code == VS_COMMIT_CONTROL ||
           ctrl_code == VS_STREAM_ERROR_CODE_CONTROL)) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -622,11 +622,11 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
                 trx->actual_length = 1;
                 break;
             default:
-                session->submit_ret_submit(
+                responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                 static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
         return;
@@ -683,7 +683,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
         trx->data.assign(resp.begin(), resp.begin() + act_len);
         trx->actual_length = act_len;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                 static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
     }
@@ -691,14 +691,14 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         std::uint16_t len = UvcStreamingControl::SIZE;
         trx->data = {static_cast<std::uint8_t>(len & 0xFF), static_cast<std::uint8_t>((len >> 8) & 0xFF)};
         trx->actual_length = 2;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                 static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
     }
     else if (request == GET_INFO) {
         trx->data = {0x03}; // GET | SET
         trx->actual_length = 1;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                 static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
     }
@@ -721,7 +721,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
                 probe_data_.bmLayoutPerStream = 0;
             }
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
     }
     else if (request == SET_CUR && is_commit) {
@@ -751,11 +751,11 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
         // 重新开播：帧时钟重置，set_format 后帧间隔可能已变
         frame_started_at_ = {};
         frame_interval_ = std::chrono::microseconds(source_->frame_interval() / 10);
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
     }
     else {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -765,7 +765,7 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
                                                            TransferHandle transfer, int num_iso_packets,
                                                            std::error_code &ec) {
     if (!streaming_ || !committed_) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -790,7 +790,7 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     // （半截帧会被主机驱动标记 corrupted 整帧丢弃，宁慢勿碎）
     const auto now = std::chrono::steady_clock::now();
     if (frame_interval_.count() > 0 && frame_offset_ == 0 && now < frame_started_at_ + frame_interval_) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0, 0,
                 static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
         return;
@@ -799,7 +799,7 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     if (frame_offset_ == 0) {
         VideoFrame vf{};
         if (!source_->get_frame(vf)) {
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             return;
         }
         frame_buffer_.assign(vf.data, vf.data + vf.size);
@@ -842,12 +842,12 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
     // 立即响应（不走 TransferScheduler 的 125µs×包 等时节流）：虚拟设备
     // 没有真实总线，主机拉多快数据就传多快——大帧在帧间隔内传得完才能
     // 画面流畅。帧时钟已限制帧率上限，不会失控
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
             static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
 }
 
-void UvcVideoStreamingHandler::on_new_connection(Session &current_session, error_code &ec) {
+void UvcVideoStreamingHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     committed_ = false;
     streaming_ = false;

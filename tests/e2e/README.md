@@ -47,6 +47,8 @@ bash tests/e2e/run_all.sh
 - 每个脚本独立工作目录（`/tmp/usbip_e2e/<测试名>`），日志在
   `<工作目录>/logs/`；服务器以 `setsid` 后台运行，脚本结束自动清理
 - 脚本假设能访问本机端口 53240（可用 `PORT` 环境变量覆盖）
+- mock 服务器二进制默认从 `build_wsl2/` 找（可用 `BUILD_DIR` 环境变量覆盖，
+  如 `BUILD_DIR=/path/to/build_wsl2_asan bash tests/e2e/test_msc.sh`）
 
 ## 测试中禁止做的事
 

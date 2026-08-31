@@ -133,7 +133,7 @@ std::pair<int, int> AbsoluteMouseHandler::hid_to_screen(std::int16_t hid_x, std:
     return {screen_x, screen_y};
 }
 
-void AbsoluteMouseHandler::on_new_connection(Session &current_session, error_code &ec) {
+void AbsoluteMouseHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
 
     // 锁内置位再唤醒（与 on_disconnection 同源的标准 CV 模式）：

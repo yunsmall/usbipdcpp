@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "usbipdcpp/Server.h"
-#include "usbipdcpp/Session.h"
+#include "usbipdcpp/virtual_device/TransferResponder.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/virtual_device/TransferScheduler.h"
 
@@ -15,6 +15,18 @@ using namespace usbipdcpp;
 using namespace std::chrono_literals;
 
 namespace {
+
+/// 应答桩：替代真实 Session（提交全部丢弃/记录，响应由 TestTransferScheduler
+/// 的 on_urb_completed 拦截断言，不触网）
+class StubResponder : public TransferResponder {
+public:
+    void submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&) override {}
+    void submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&) override {}
+    void enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&) override {}
+    void enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&) override {}
+    void wakeup_sender() override {}
+    void stop_transfer() override {}
+};
 
 /// 收集完成响应的调度器测试子类：override on_urb_completed 拦截响应并记录
 /// 完成时刻，供测试断言延迟/节奏/内容
@@ -46,7 +58,7 @@ public:
     }
 
 protected:
-    void on_urb_completed(Session &, UsbIpResponse::UsbIpRetSubmit &&submit) override {
+    void on_urb_completed(TransferResponder &, UsbIpResponse::UsbIpRetSubmit &&submit) override {
         {
             std::lock_guard lock(mutex);
             responses.push_back(std::move(submit));
@@ -62,11 +74,10 @@ private:
     std::vector<std::chrono::steady_clock::time_point> times;
 };
 
-/// 测试骨架：Server + Session 仅作为 start 的活引用（响应被子类拦截，不触网）。
-/// 析构顺序（后声明先析构）：scheduler（内部线程先停）→ session → server
+/// 测试骨架：StubResponder 替代真实 Session（响应被子类拦截，不触网）。
+/// 析构顺序（后声明先析构）：scheduler（内部线程先停）→ responder
 struct TestFixture {
-    Server server;
-    Session session{server, 1};
+    StubResponder responder;
     TestTransferScheduler scheduler{UsbSpeed::High};
 
     void start() {
@@ -75,9 +86,9 @@ struct TestFixture {
 };
 
 /// 等时提交的便捷封装（响应为 OK + 10 字节）
-void submit_iso(TestTransferScheduler &scheduler, Session &session, std::uint8_t ep,
+void submit_iso(TestTransferScheduler &scheduler, TransferResponder &responder, std::uint8_t ep,
                 std::chrono::microseconds interval, int num_packets, std::uint32_t seqnum) {
-    scheduler.submit(session, ep, EndpointAttributes::Isochronous, interval, num_packets,
+    scheduler.submit(responder, ep, EndpointAttributes::Isochronous, interval, num_packets,
                      UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 10));
 }
 
@@ -110,7 +121,7 @@ TEST(TransferSchedulerTest, DelayedResponse) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 7);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 7);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     auto elapsed = std::chrono::steady_clock::now() - t0;
     auto responses = fx.scheduler.take_responses();
@@ -126,7 +137,7 @@ TEST(TransferSchedulerTest, MultiplePacketsExtendDelay) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    submit_iso(fx.scheduler, fx.session,0x81, 10ms, 5, 1);
+    submit_iso(fx.scheduler, fx.responder,0x81, 10ms, 5, 1);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     EXPECT_GE(std::chrono::steady_clock::now() - t0, 40ms);
     fx.scheduler.stop();
@@ -138,7 +149,7 @@ TEST(TransferSchedulerTest, DataDurationOverridesInterval) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x81, EndpointAttributes::Isochronous, 10ms, 3,
+    fx.scheduler.submit(fx.responder, 0x81, EndpointAttributes::Isochronous, 10ms, 3,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(9, 10), 60ms);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 3s));
     EXPECT_GE(std::chrono::steady_clock::now() - t0, 50ms);
@@ -150,7 +161,7 @@ TEST(TransferSchedulerTest, DataDurationShorterThanIntervalProduct) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x81, EndpointAttributes::Isochronous, 20ms, 2,
+    fx.scheduler.submit(fx.responder, 0x81, EndpointAttributes::Isochronous, 20ms, 2,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(11, 10), 10ms);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     auto elapsed = std::chrono::steady_clock::now() - t0;
@@ -165,7 +176,7 @@ TEST(TransferSchedulerTest, NegativeDataDurationRespondsImmediately) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x81, EndpointAttributes::Isochronous, 20ms, 3,
+    fx.scheduler.submit(fx.responder, 0x81, EndpointAttributes::Isochronous, 20ms, 3,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(12, 10), -500us);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     EXPECT_LE(std::chrono::steady_clock::now() - t0, 200ms);
@@ -180,7 +191,7 @@ TEST(TransferSchedulerTest, BulkDelayedOneFrame) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x01, EndpointAttributes::Bulk, 0us, 0,
+    fx.scheduler.submit(fx.responder, 0x01, EndpointAttributes::Bulk, 0us, 0,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(13, 10));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     auto elapsed = std::chrono::steady_clock::now() - t0;
@@ -195,7 +206,7 @@ TEST(TransferSchedulerTest, InterruptDelayedOneFrame) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x82, EndpointAttributes::Interrupt, 0us, 0,
+    fx.scheduler.submit(fx.responder, 0x82, EndpointAttributes::Interrupt, 0us, 0,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(14, 10));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     auto elapsed = std::chrono::steady_clock::now() - t0;
@@ -210,9 +221,9 @@ TEST(TransferSchedulerTest, BulkSerialCompletionSameEndpoint) {
     // Windows 定时器粒度下可能同批到期（平均吞吐仍受限，见帧对齐注释）
     TestFixture fx;
     fx.start();
-    fx.scheduler.submit(fx.session, 0x01, EndpointAttributes::Bulk, 0us, 0,
+    fx.scheduler.submit(fx.responder, 0x01, EndpointAttributes::Bulk, 0us, 0,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(16, 10));
-    fx.scheduler.submit(fx.session, 0x01, EndpointAttributes::Bulk, 0us, 0,
+    fx.scheduler.submit(fx.responder, 0x01, EndpointAttributes::Bulk, 0us, 0,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(17, 10));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(2, 2s));
     auto responses = fx.scheduler.take_responses();
@@ -227,7 +238,7 @@ TEST(TransferSchedulerTest, ControlRespondsImmediately) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, 0x00, EndpointAttributes::Control, 0us, 0,
+    fx.scheduler.submit(fx.responder, 0x00, EndpointAttributes::Control, 0us, 0,
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(15, 10));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     EXPECT_LE(std::chrono::steady_clock::now() - t0, 200ms);
@@ -240,7 +251,7 @@ TEST(TransferSchedulerTest, ZeroPacketsRespondImmediately) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 0, 3);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 0, 3);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     EXPECT_LE(std::chrono::steady_clock::now() - t0, 200ms);
     EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 3);
@@ -250,7 +261,7 @@ TEST(TransferSchedulerTest, ZeroPacketsRespondImmediately) {
 TEST(TransferSchedulerTest, NegativePacketsRespondImmediately) {
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, -1, 4);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, -1, 4);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 1s));
     EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 4);
     fx.scheduler.stop();
@@ -264,9 +275,9 @@ TEST(TransferSchedulerTest, SerialCompletionSameEndpoint) {
     // （交付只可能晚于帧边界，不可能提前），间隔下界断言在该场景下不成立
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 60ms, 1, 1);
+    submit_iso(fx.scheduler, fx.responder,0x81, 60ms, 1, 1);
     auto submit2_at = std::chrono::steady_clock::now();
-    submit_iso(fx.scheduler, fx.session,0x81, 60ms, 1, 2);
+    submit_iso(fx.scheduler, fx.responder,0x81, 60ms, 1, 2);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(2, 3s));
     auto times = fx.scheduler.completion_times();
     ASSERT_EQ(times.size(), 2);
@@ -286,7 +297,7 @@ TEST(TransferSchedulerTest, PacingAcrossManyUrbs) {
     std::vector<std::chrono::steady_clock::time_point> submitted_at;
     for (std::uint32_t i = 1; i <= 4; ++i) {
         submitted_at.push_back(std::chrono::steady_clock::now());
-        submit_iso(fx.scheduler, fx.session,0x81, 40ms, 1, i);
+        submit_iso(fx.scheduler, fx.responder,0x81, 40ms, 1, i);
     }
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(4, 4s));
     auto times = fx.scheduler.completion_times();
@@ -307,8 +318,8 @@ TEST(TransferSchedulerTest, DifferentEndpointsRunIndependently) {
     // 端 A 每 40ms、端 B 每 80ms：各自节奏互不拖累
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 40ms, 1, 1);
-    submit_iso(fx.scheduler, fx.session,0x82, 80ms, 1, 2);
+    submit_iso(fx.scheduler, fx.responder,0x81, 40ms, 1, 1);
+    submit_iso(fx.scheduler, fx.responder,0x82, 80ms, 1, 2);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(2, 3s));
     auto responses = fx.scheduler.take_responses();
     ASSERT_EQ(responses.size(), 2);
@@ -324,7 +335,7 @@ TEST(TransferSchedulerTest, CancelPendingUrb) {
     // 取消成功：返回 true，且不再发出 RET_SUBMIT
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 9);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 9);
     EXPECT_TRUE(fx.scheduler.cancel(9));
     // 等待超过原 deadline，确认无响应
     EXPECT_FALSE(fx.scheduler.wait_for_response_count(1, 200ms));
@@ -344,8 +355,8 @@ TEST(TransferSchedulerTest, CanceledUrbKeepsPacingOfFollowers) {
     TestFixture fx;
     fx.start();
     auto t0 = std::chrono::steady_clock::now();
-    submit_iso(fx.scheduler, fx.session,0x81, 60ms, 1, 1); // deadline ≈ t0+60
-    submit_iso(fx.scheduler, fx.session,0x81, 60ms, 1, 2); // deadline ≈ t0+120（串行）
+    submit_iso(fx.scheduler, fx.responder,0x81, 60ms, 1, 1); // deadline ≈ t0+60
+    submit_iso(fx.scheduler, fx.responder,0x81, 60ms, 1, 2); // deadline ≈ t0+120（串行）
     ASSERT_TRUE(fx.scheduler.cancel(1));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 2);
@@ -359,10 +370,10 @@ TEST(TransferSchedulerTest, StopDropsPendingUrbs) {
     // 断连：未完成 URB 丢弃（不响应）；stop 后提交的 URB 也丢弃
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 1);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 1);
     fx.scheduler.stop();
     EXPECT_EQ(fx.scheduler.response_count(), 0);
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 2);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 2);
     EXPECT_EQ(fx.scheduler.response_count(), 0);
 }
 
@@ -370,13 +381,13 @@ TEST(TransferSchedulerTest, RestartAfterStopWorks) {
     // 重连：stop 后 start 再次可用，状态干净
     TestFixture fx;
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 1);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 1);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     fx.scheduler.take_responses(); // 清空第一次连接的响应
     fx.scheduler.stop();
 
     fx.start();
-    submit_iso(fx.scheduler, fx.session,0x81, 20ms, 1, 2);
+    submit_iso(fx.scheduler, fx.responder,0x81, 20ms, 1, 2);
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(1, 2s));
     EXPECT_EQ(fx.scheduler.take_responses()[0].header.seqnum, 2);
     fx.scheduler.stop();
@@ -397,7 +408,7 @@ TEST(TransferSchedulerTest, ManyUrbsAllRespondInOrder) {
     fx.start();
     constexpr int kCount = 30;
     for (int i = 1; i <= kCount; ++i)
-        submit_iso(fx.scheduler, fx.session,0x81, 5ms, 1, static_cast<std::uint32_t>(i));
+        submit_iso(fx.scheduler, fx.responder,0x81, 5ms, 1, static_cast<std::uint32_t>(i));
     ASSERT_TRUE(fx.scheduler.wait_for_response_count(kCount, 5s));
     auto responses = fx.scheduler.take_responses();
     ASSERT_EQ(responses.size(), kCount);
@@ -417,7 +428,7 @@ TEST(TransferSchedulerTest, ConcurrentSubmitFromMultipleThreads) {
         threads.emplace_back([&, t] {
             for (int i = 0; i < kPerThread; ++i) {
                 // 各线程用不同端点，避免测试时长叠加
-                submit_iso(fx.scheduler, fx.session,static_cast<std::uint8_t>(0x81 + t), 30ms, 1,
+                submit_iso(fx.scheduler, fx.responder,static_cast<std::uint8_t>(0x81 + t), 30ms, 1,
                            static_cast<std::uint32_t>(t * kPerThread + i + 1));
             }
         });
@@ -440,8 +451,8 @@ TEST(TransferSchedulerTest, IsoProcessorCalledAfterDataDuration) {
     std::condition_variable cv;
     std::vector<UsbIpResponse::UsbIpRetSubmit> sent;
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        30ms, 21, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        30ms, 21, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -467,8 +478,8 @@ TEST(TransferSchedulerTest, BulkProcessorCalledAtFrameBoundary) {
     std::condition_variable cv;
     bool notified = false;
     auto t0 = std::chrono::steady_clock::now();
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x01, .interval = 0}, EndpointAttributes::Bulk, 0us, 22,
-                        {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum, TransferHandle &&) {
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x01, .interval = 0}, EndpointAttributes::Bulk, 0us, 22,
+                        {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum, TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
                                 notified = true;
@@ -494,8 +505,8 @@ TEST(TransferSchedulerTest, ProcessorUrbsSerializeOnCompletion) {
     std::vector<std::chrono::steady_clock::time_point> notify_at;
     // 初始化为 max()：处理器 2 若在处理器 1 上报前被通知，断言恒失败（能测出来）
     auto first_done_at = std::chrono::steady_clock::time_point::max();
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        40ms, 23, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        40ms, 23, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -508,8 +519,8 @@ TEST(TransferSchedulerTest, ProcessorUrbsSerializeOnCompletion) {
                             first_done_at = std::chrono::steady_clock::now();
                             fx.scheduler.on_urb_done(ep.address, seqnum);
                         });
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        40ms, 24, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        40ms, 24, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -533,8 +544,8 @@ TEST(TransferSchedulerTest, CancelPendingProcessorUrb) {
     TestFixture fx;
     fx.start();
     bool notified = false;
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        30ms, 25, {}, [&](Session &, const UsbEndpoint &, std::uint32_t, TransferHandle &&) {
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        30ms, 25, {}, [&](TransferResponder &, const UsbEndpoint &, std::uint32_t, TransferHandle &&) {
                             notified = true;
                         });
     EXPECT_TRUE(fx.scheduler.cancel(25));
@@ -546,8 +557,8 @@ TEST(TransferSchedulerTest, CancelPendingProcessorUrb) {
     bool done = false;
     std::mutex m;
     std::condition_variable cv;
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        30ms, 26, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        30ms, 26, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -571,8 +582,8 @@ TEST(TransferSchedulerTest, OnUrbDoneWrongSeqnumIgnored) {
     std::mutex m;
     std::condition_variable cv;
     std::vector<std::uint32_t> notified_seqnums;
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        20ms, 31, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        20ms, 31, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -587,8 +598,8 @@ TEST(TransferSchedulerTest, OnUrbDoneWrongSeqnumIgnored) {
                                 fx.scheduler.on_urb_done(ep.address, seqnum);
                             }
                         });
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        20ms, 32, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        20ms, 32, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -620,9 +631,9 @@ TEST(TransferSchedulerTest, OnUrbDoneFromOtherThreadConcurrentSubmit) {
     std::thread submitter([&] {
         std::uint32_t seq = 100;
         while (keep_submitting) {
-            fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4},
+            fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4},
                                 EndpointAttributes::Isochronous, 10ms, seq, {},
-                                [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+                                [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                     TransferHandle &&) {
                                     {
                                         std::lock_guard lock(m);
@@ -677,8 +688,8 @@ TEST(TransferSchedulerTest, ProcessingEndpointDoesNotBlockOthers) {
     std::condition_variable cv;
     std::vector<std::uint32_t> notified; // (seqnum)
     // A：60ms 后通知，通知后立即上报（处理快速）
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
-                        60ms, 51, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x81, .interval = 4}, EndpointAttributes::Isochronous,
+                        60ms, 51, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);
@@ -689,8 +700,8 @@ TEST(TransferSchedulerTest, ProcessingEndpointDoesNotBlockOthers) {
                         });
     auto t0 = std::chrono::steady_clock::now();
     // B：20ms 后通知
-    fx.scheduler.submit(fx.session, UsbEndpoint{.address = 0x82, .interval = 4}, EndpointAttributes::Isochronous,
-                        20ms, 52, {}, [&](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+    fx.scheduler.submit(fx.responder, UsbEndpoint{.address = 0x82, .interval = 4}, EndpointAttributes::Isochronous,
+                        20ms, 52, {}, [&](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                            TransferHandle &&) {
                             {
                                 std::lock_guard lock(m);

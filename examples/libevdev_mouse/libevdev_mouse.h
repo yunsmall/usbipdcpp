@@ -16,7 +16,7 @@ class LibevdevMouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:
     LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
 
     std::uint16_t get_report_descriptor_size() override;

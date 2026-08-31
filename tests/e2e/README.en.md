@@ -55,6 +55,9 @@ bash tests/e2e/run_all.sh
   cleaned up automatically at script end
 - Scripts assume access to port 53240 on localhost (override with the `PORT`
   environment variable)
+- mock server binaries are looked up in `build_wsl2/` by default (override
+  with `BUILD_DIR`, e.g.
+  `BUILD_DIR=/path/to/build_wsl2_asan bash tests/e2e/test_msc.sh`)
 
 ## Forbidden During Tests
 

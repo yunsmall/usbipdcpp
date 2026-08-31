@@ -166,10 +166,10 @@ public:
      * handler 的 on_new_connection 里传当前会话调用；无参（测试桩复位）时保持
      * 已绑定的会话不变
      */
-    void on_new_connection(Session *current_session = nullptr) {
+    void on_new_connection(TransferResponder *current_session = nullptr) {
         std::lock_guard lock(channel_mutex);
         if (current_session) {
-            session = current_session;
+            responder = current_session;
         }
         disconnected = false;
         self().buffer_clear();
@@ -287,7 +287,7 @@ protected:
     }
 
     // 会话指针（handler 绑定，try_send_one 提交应答用）
-    Session *session = nullptr;
+    TransferResponder *responder = nullptr;
 
     // 缓冲锁与请求队列锁：数据侧与请求侧可能在不同线程（业务线程 vs session
     // receiver 线程），双锁让写侧等空间时不必持有队列锁。
@@ -418,14 +418,14 @@ public:
         assert(transfer.get_operator() != nullptr);
         auto written = transfer.get_operator()->set_transfer_data(transfer.get(), data, length);
         this->space_cv.notify_one(); // 消息取走腾出空位，唤醒阻塞的 push_blocking
-        this->session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+        this->responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                 seqnum, static_cast<std::uint32_t>(written), std::move(transfer)));
     }
 
     void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
         // 挤出的挂起请求：应答空完成（0 字节，status 正常），transfer 析构自动
         // 释放。主机 URB 空完成后重新提交（等价 USB 总线 NAK 背压）
-        this->session->submit_ret_submit(
+        this->responder->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
     }
 
@@ -613,14 +613,14 @@ public:
         auto written = transfer.get_operator()->set_transfer_data(transfer.get(), data, length);
         // 缓冲腾出空间，唤醒阻塞等待的写者
         this->space_cv.notify_one();
-        this->session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+        this->responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                 seqnum, static_cast<std::uint32_t>(written), std::move(transfer)));
     }
 
     void reply_empty(std::uint32_t seqnum, TransferHandle /*transfer*/) {
         // 挤出的挂起请求：应答空完成（0 字节，status 正常），transfer 析构自动
         // 释放。主机 URB 空完成后重新提交（等价 USB 总线 NAK 背压）
-        this->session->submit_ret_submit(
+        this->responder->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
     }
 
@@ -640,7 +640,7 @@ public:
         // 数据填充由 op 完成（前置条件见 try_send_one）
         assert(transfer.get_operator() != nullptr);
         auto written = transfer.get_operator()->set_transfer_data(transfer.get(), data, length);
-        this->session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+        this->responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                 seqnum, static_cast<std::uint32_t>(written), std::move(transfer)));
         if (pulled.size() > send_len) {
             buffer.write(pulled.data() + send_len, pulled.size() - send_len);

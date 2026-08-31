@@ -196,7 +196,7 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
 
     void on_disconnection(std::error_code &ec) override;
 

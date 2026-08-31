@@ -51,7 +51,7 @@ public:
     void handle_interrupt_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                    std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
     void on_setup_interface_handlers() override;
@@ -109,7 +109,7 @@ public:
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                      std::uint32_t transfer_buffer_length, TransferHandle transfer, int num_iso_packets,
                                      std::error_code &ec) override;
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
@@ -148,7 +148,7 @@ private:
     /// TransferScheduler 处理器（通知语义）：调度线程在服务时刻（数据时长
     /// 后）调用，填 PCM 数据、自行 session.submit_ret_submit 发送响应，
     /// 并 on_urb_done 上报完成（同端点串行依赖上报）
-    void process_iso_in(Session &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
+    void process_iso_in(TransferResponder &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
                         TransferHandle transfer);
 
     UacAudioControlHandler *ac_handler = nullptr;
@@ -199,7 +199,7 @@ public:
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                      std::uint32_t transfer_buffer_length, TransferHandle transfer, int num_iso_packets,
                                      std::error_code &ec) override;
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     void on_setup_interface_handlers() override;
@@ -231,7 +231,7 @@ private:
     /// 后）调用，消费 PCM（音量应用 + 写 sink + 收流闭环统计）、自行
     /// session.submit_ret_submit 发送响应，并 on_urb_done 上报完成
     ///（同端点串行依赖上报）
-    void process_iso_out(Session &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
+    void process_iso_out(TransferResponder &session, const UsbEndpoint &ep, std::uint32_t seqnum, int num_iso_packets,
                          TransferHandle transfer);
 
     UacAudioControlHandler *ac_handler = nullptr;

@@ -131,7 +131,7 @@ DigitizerHandler::DigitizerHandler(UsbInterface &handle_interface, StringPool &s
     };
 }
 
-void DigitizerHandler::on_new_connection(Session &current_session, error_code &ec) {
+void DigitizerHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     HidVirtualInterfaceHandler::on_new_connection(current_session, ec);
 
     // 锁内置位再唤醒（与 on_disconnection 同源的标准 CV 模式）：

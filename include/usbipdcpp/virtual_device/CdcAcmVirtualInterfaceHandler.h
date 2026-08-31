@@ -208,7 +208,7 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
-    void on_new_connection(Session &current_session, std::error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, std::error_code &ec) override;
 
     void on_disconnection(std::error_code &ec) override;
 
@@ -391,7 +391,7 @@ public:
 
     // ========== 内部实现（子类无需关心） ==========
 
-    void on_new_connection(Session &current_session, std::error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, std::error_code &ec) override;
     void on_disconnection(std::error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 

@@ -26,7 +26,7 @@ public:
     MockCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,
                                     usbipdcpp::StringPool &string_pool);
 
-    void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override;
+    void on_new_connection(usbipdcpp::TransferResponder &current_session, usbipdcpp::error_code &ec) override;
     void on_disconnection(usbipdcpp::error_code &ec) override;
 
     bool on_data_received(usbipdcpp::data_type &&data) override;

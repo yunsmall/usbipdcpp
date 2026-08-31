@@ -27,7 +27,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_interrupt_transfer(std::uint3
         on_output_report_received(asio::buffer(trx->data));
 
         // transfer 析构时自动释放
-        session->submit_ret_submit(
+        responder->submit_ret_submit(
                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
     }
 }
@@ -53,7 +53,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_output_report_received(asio::cons
 
 // ========== 连接生命周期 ==========
 
-void usbipdcpp::HidVirtualInterfaceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void usbipdcpp::HidVirtualInterfaceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     input_channel.on_new_connection(&current_session);
@@ -75,7 +75,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t u
     // 与内核 stub_tx.c（priv->unlinking 时 RET_UNLINK 带 urb->status=-ECONNRESET，
     // 否则 0）及 usbipd-libusb 一致，也是本项目 LibusbDeviceHandler 的 unlink
     // 范本（trxstat2error(CANCELLED)=-ECONNRESET、找不到回 0）
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -126,7 +126,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                 trx->actual_length = trx->data.size();
                 trx->data_offset = 0;
 
-                session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
+                responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
                         seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             }
             else {
@@ -152,7 +152,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
                 }
                 // transfer 析构时自动释放
-                session->submit_ret_submit(
+                responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(seqnum, status, 0));
             }
             break;
@@ -202,7 +202,7 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_hid_request_type_control_
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
     // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 // ========== 报告请求默认实现 ==========

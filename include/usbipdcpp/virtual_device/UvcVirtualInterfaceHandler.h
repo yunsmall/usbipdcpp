@@ -64,7 +64,7 @@ public:
                                    std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
     void on_setup_interface_handlers() override;
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
@@ -107,7 +107,7 @@ public:
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                                      std::uint32_t transfer_buffer_length, TransferHandle transfer, int num_iso_packets,
                                      std::error_code &ec) override;
-    void on_new_connection(Session &current_session, error_code &ec) override;
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;

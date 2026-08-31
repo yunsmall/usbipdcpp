@@ -17,7 +17,7 @@
 
 namespace usbipdcpp {
 
-class Session;
+class TransferResponder;
 
 /**
  * @brief 传输帧调度器（对齐内核 usbip vudc_transfer.c 的帧调度思想）
@@ -78,7 +78,7 @@ public:
      * Android NDK 的 libc++ 没有 move_only_function，参数传递是跨平台唯一
      * 干净写法）
      */
-    using UrbProcessCallback = std::function<void(Session &session, const UsbEndpoint &ep,
+    using UrbProcessCallback = std::function<void(TransferResponder &responder, const UsbEndpoint &ep,
                                                   std::uint32_t seqnum, TransferHandle &&transfer)>;
 
     /**
@@ -125,7 +125,7 @@ public:
      * @note 连接已断（stop 后）时丢弃，不处理不响应。
      * 任意线程安全（处理器回调内可安全重入 submit）
      */
-    void submit(Session &session, const UsbEndpoint &ep, EndpointAttributes type,
+    void submit(TransferResponder &responder, const UsbEndpoint &ep, EndpointAttributes type,
                 std::chrono::microseconds data_duration, std::uint32_t seqnum, TransferHandle transfer,
                 UrbProcessCallback processor);
 
@@ -148,10 +148,10 @@ public:
      * @param data_duration 等时：数据对应的音频时长，默认 = 包数 × 间隔
      * @note 连接已断（stop 后）时丢弃，不响应
      */
-    void submit(Session &session, const UsbEndpoint &ep, EndpointAttributes type, int num_iso_packets,
+    void submit(TransferResponder &responder, const UsbEndpoint &ep, EndpointAttributes type, int num_iso_packets,
                 UsbIpResponse::UsbIpRetSubmit &&submit,
                 std::chrono::microseconds data_duration = std::chrono::microseconds::zero());
-    void submit(Session &session, std::uint8_t ep_address, EndpointAttributes type,
+    void submit(TransferResponder &responder, std::uint8_t ep_address, EndpointAttributes type,
                 std::chrono::microseconds interval, int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit,
                 std::chrono::microseconds data_duration = std::chrono::microseconds::zero());
 
@@ -194,7 +194,7 @@ protected:
      * 实现见 TransferScheduler.cpp）。
      * @note 子类可 override 拦截响应（如测试收集）
      */
-    virtual void on_urb_completed(Session &current_session, UsbIpResponse::UsbIpRetSubmit &&submit);
+    virtual void on_urb_completed(TransferResponder &current_session, UsbIpResponse::UsbIpRetSubmit &&submit);
 
 private:
     struct PendingUrb {
@@ -208,7 +208,7 @@ private:
         std::uint32_t seqnum = 0;             // 取消匹配 + on_urb_done 校验
         std::chrono::microseconds delay{};    // 等时：服务时刻 = 串行点 + 数据时长（bulk/int 忽略）
         TransferHandle transfer;              // 处理器版：服务时 move 给处理器
-        Session *session = nullptr;           // 服务时传给处理器/发送（提交方保证存活至 stop）
+        TransferResponder *responder = nullptr;           // 服务时传给处理器/发送（提交方保证存活至 stop）
     };
     struct EndpointState {
         std::deque<PendingUrb> queue;

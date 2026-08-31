@@ -263,7 +263,7 @@ ByteStreamInChannel &PipeDeviceHandler::get_in_channel(std::uint8_t ep_addr) {
         auto &ch = it->second;
         // 新会话懒创建：容量取当前配置，绑定会话并重置断连状态
         ch.set_capacity(fifo_capacity);
-        ch.on_new_connection(session);
+        ch.on_new_connection(responder);
     }
     return it->second;
 }
@@ -275,7 +275,7 @@ OutEndpointChannel &PipeDeviceHandler::get_out_channel(std::uint8_t ep_addr) {
         it = out_channels.try_emplace(ep_addr).first;
         auto &ch = it->second;
         // 新会话懒创建：绑定会话并重置断连状态
-        ch.on_new_connection(session);
+        ch.on_new_connection(responder);
     }
     return it->second;
 }
@@ -293,7 +293,7 @@ void PipeDeviceHandler::set_custom_descriptor(std::uint8_t type, data_type descr
     custom_descriptors[type] = std::move(descriptor);
 }
 
-void PipeDeviceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void PipeDeviceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     // 父类注册 session 并遍历接口建连
     VirtualDeviceHandler::on_new_connection(current_session, ec);
     if (ec) {
@@ -383,6 +383,6 @@ void PipeDeviceHandler::on_pipe_unlink(std::uint32_t unlink_seqnum, std::uint32_
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 HID/CdcAcm 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }

@@ -45,7 +45,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
                     trx->actual_length = 0;
                 }
             }
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, status, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
         }
         else {
@@ -85,7 +85,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_contr
                 }
             }
             // transfer 析构时自动释放
-            session->submit_ret_submit(
+            responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(seqnum, status, 0));
         }
     }
@@ -109,7 +109,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_interrupt_transfer(std::uint32_
         // 中断 OUT：CDC ACM 通常不使用
         // transfer 析构时自动释放
         SPDLOG_WARN("CDC ACM communication interface received unexpected interrupt OUT");
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -158,7 +158,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_non_cdc_request_type_control_ur
     // 默认返回错误，子类可重写以处理非 CDC 请求
     SPDLOG_WARN("Unhandled request type 0x{:x} in CDC ACM communication interface", setup_packet.calc_request_type());
     // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::uint16_t state_bits) {
@@ -169,7 +169,7 @@ void CdcAcmCommunicationInterfaceHandler::send_serial_state_notification(std::ui
     notification_channel.push(notification.to_bytes());
 }
 
-void CdcAcmCommunicationInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+void CdcAcmCommunicationInterfaceHandler::on_new_connection(TransferResponder &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     notification_channel.on_new_connection(&current_session);
@@ -186,7 +186,7 @@ void CdcAcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unl
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -202,7 +202,7 @@ CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_inte
     });
 }
 
-void CdcAcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+void CdcAcmDataInterfaceHandler::on_new_connection(TransferResponder &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     in_channel.on_new_connection(&current_session);
@@ -226,7 +226,7 @@ void CdcAcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnu
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -247,7 +247,7 @@ void CdcAcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, cons
         auto *trx = GenericTransfer::from_handle(transfer.get());
         auto received_size = static_cast<std::uint32_t>(trx->data.size());
         if (on_data_received(std::move(trx->data))) {
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(
                     seqnum, received_size));
         }
         else {
@@ -262,7 +262,7 @@ void CdcAcmDataInterfaceHandler::handle_non_standard_request_type_control_urb(
     // 数据接口通常不处理类特定控制请求
     SPDLOG_WARN("CDC ACM data interface received unexpected control request");
     // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 data_type CdcAcmDataInterfaceHandler::get_class_specific_descriptor() {

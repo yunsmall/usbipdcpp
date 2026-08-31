@@ -109,7 +109,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
 
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     if (type != RequestType::Class) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -128,12 +128,12 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
             trx->actual_length = act_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -145,13 +145,13 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
     // Input/Output Terminal 无控制属性，ACK 空数据防止主机 STALL（同 UVC 对 IT/OT 的做法）
     if (entity == UAC_ENTITY_INPUT_TERMINAL || entity == UAC_ENTITY_OUTPUT_TERMINAL) {
         trx->actual_length = 0;
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), 0, std::move(transfer)));
         return;
     }
 
     if (entity != UAC_ENTITY_FEATURE_UNIT) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -159,7 +159,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
     switch (control_selector) {
         case FU_MUTE_CONTROL: {
             if (!config.feature_unit_mute) {
-                session->submit_ret_submit(
+                responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 return;
             }
@@ -181,7 +181,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
                     trx->actual_length = 0;
                     break;
                 default:
-                    session->submit_ret_submit(
+                    responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
             }
@@ -189,7 +189,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
         }
         case FU_VOLUME_CONTROL: {
             if (!config.feature_unit_volume) {
-                session->submit_ret_submit(
+                responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 return;
             }
@@ -246,14 +246,14 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
                     break;
                 }
                 default:
-                    session->submit_ret_submit(
+                    responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
             }
             break;
         }
         default:
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             return;
     }
 
@@ -261,7 +261,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
     SPDLOG_TRACE("[UAC-AC] 提交响应 seq={} actual={} d0=0x{:02x} d1=0x{:02x}", seqnum, trx->actual_length,
                 trx->data.empty() ? 0 : trx->data[0], trx->data.size() < 2 ? 0 : trx->data[1]);
 
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
             std::move(transfer)));
 }
@@ -275,7 +275,7 @@ void UacAudioControlHandler::handle_interrupt_transfer(std::uint32_t seqnum, con
         status_channel.on_in_request(ep.address, seqnum, transfer_buffer_length, std::move(transfer));
     }
     else {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -284,7 +284,7 @@ void UacAudioControlHandler::send_ac_status(data_type status) {
     status_channel.push(std::move(status));
 }
 
-void UacAudioControlHandler::on_new_connection(Session &current_session, error_code &ec) {
+void UacAudioControlHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     status_channel.on_new_connection(&current_session);
@@ -301,7 +301,7 @@ void UacAudioControlHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, s
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -388,7 +388,7 @@ void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_ur
 
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     if (type != RequestType::Class) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -408,12 +408,12 @@ void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_ur
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
             trx->actual_length = act_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -423,12 +423,12 @@ void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_ur
     auto request = setup_packet.request;
 
     if (entity != 0 || control_selector != AS_SAMPLING_FREQ_CONTROL) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
     if (!handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -443,7 +443,7 @@ void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_ur
 
     if (control_selector != AS_SAMPLING_FREQ_CONTROL ||
         !handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -495,7 +495,7 @@ bool UacAudioStreamingSourceHandler::handle_sampling_freq_control(std::uint32_t 
             chunk_size = 0;
             chunk_offset = 0;
             build_class_descriptor();
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
             return true;
         }
@@ -503,7 +503,7 @@ bool UacAudioStreamingSourceHandler::handle_sampling_freq_control(std::uint32_t 
             return false;
     }
 
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
             std::move(transfer)));
     return true;
@@ -558,7 +558,7 @@ void UacAudioStreamingSourceHandler::handle_isochronous_transfer(std::uint32_t s
                                                            TransferHandle transfer, int num_iso_packets,
                                                            std::error_code &ec) {
     if (!streaming) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -582,14 +582,14 @@ void UacAudioStreamingSourceHandler::handle_isochronous_transfer(std::uint32_t s
                 static_cast<std::int64_t>(declared) * 1000000 / static_cast<std::int64_t>(bytes_per_second));
     }
     device_handler->get_transfer_scheduler().submit(
-            *session, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
-            [this, num_iso_packets](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+            *responder, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
+            [this, num_iso_packets](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                     TransferHandle &&transfer) {
-                process_iso_in(session, ep, seqnum, num_iso_packets, std::move(transfer));
+                process_iso_in(responder, ep, seqnum, num_iso_packets, std::move(transfer));
             });
 }
 
-void UacAudioStreamingSourceHandler::process_iso_in(Session &session, const UsbEndpoint &ep,
+void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder, const UsbEndpoint &ep,
                                                     std::uint32_t seqnum, int num_iso_packets,
                                                     TransferHandle transfer) {
     auto *trx = GenericTransfer::from_handle(transfer.get());
@@ -633,13 +633,13 @@ void UacAudioStreamingSourceHandler::process_iso_in(Session &session, const UsbE
     SPDLOG_TRACE("[ISO] 处理完成 seq={} num_packets={} total={}B", seqnum, num_iso_packets, total_sent);
     // 处理完自行发送（通知语义，与 handler 其他响应路径一致），再上报
     // 完成：调度器推进串行点、服务下一个 URB（同步处理，先发后报）
-    session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+    responder.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_sent, 0,
             static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
     device_handler->get_transfer_scheduler().on_urb_done(ep.address, seqnum);
 }
 
-void UacAudioStreamingSourceHandler::on_new_connection(Session &current_session, error_code &ec) {
+void UacAudioStreamingSourceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     streaming = false;
     chunk_data = nullptr;
@@ -732,7 +732,7 @@ void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb(
 
     auto type = static_cast<RequestType>(setup_packet.calc_request_type());
     if (type != RequestType::Class) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -751,12 +751,12 @@ void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb(
             auto act_len = std::min(resp.size(), static_cast<std::size_t>(transfer_buffer_length));
             trx->data.assign(resp.begin(), resp.begin() + act_len);
             trx->actual_length = act_len;
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK),
                     static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             return;
         }
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -766,12 +766,12 @@ void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb(
     auto request = setup_packet.request;
 
     if (entity != 0 || control_selector != AS_SAMPLING_FREQ_CONTROL) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
     if (!handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -786,7 +786,7 @@ void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb_
 
     if (control_selector != AS_SAMPLING_FREQ_CONTROL ||
         !handle_sampling_freq_control(seqnum, request, trx, transfer, transfer_buffer_length)) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -845,7 +845,7 @@ bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t se
             }
             SPDLOG_INFO("采样率 SET_CUR: {} → sink 切换成功", rate);
             build_class_descriptor();
-            session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                     seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
             return true;
         }
@@ -853,7 +853,7 @@ bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t se
             return false;
     }
 
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), static_cast<std::uint32_t>(trx->actual_length),
             std::move(transfer)));
     return true;
@@ -865,7 +865,7 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
                                                                TransferHandle transfer, int num_iso_packets,
                                                                std::error_code &ec) {
     if (!streaming) {
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
         return;
     }
 
@@ -892,14 +892,14 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
         data_duration += std::chrono::microseconds(pacing_delta_us.load());
     }
     device_handler->get_transfer_scheduler().submit(
-            *session, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
-            [this, num_iso_packets](Session &session, const UsbEndpoint &ep, std::uint32_t seqnum,
+            *responder, ep, EndpointAttributes::Isochronous, data_duration, seqnum, std::move(transfer),
+            [this, num_iso_packets](TransferResponder &responder, const UsbEndpoint &ep, std::uint32_t seqnum,
                                     TransferHandle &&transfer) {
-                process_iso_out(session, ep, seqnum, num_iso_packets, std::move(transfer));
+                process_iso_out(responder, ep, seqnum, num_iso_packets, std::move(transfer));
             });
 }
 
-void UacAudioStreamingSinkHandler::process_iso_out(Session &session, const UsbEndpoint &ep,
+void UacAudioStreamingSinkHandler::process_iso_out(TransferResponder &responder, const UsbEndpoint &ep,
                                                    std::uint32_t seqnum, int num_iso_packets,
                                                    TransferHandle transfer) {
     auto *trx = GenericTransfer::from_handle(transfer.get());
@@ -981,13 +981,13 @@ void UacAudioStreamingSinkHandler::process_iso_out(Session &session, const UsbEn
     }
     // 处理完自行发送（通知语义，与 handler 其他响应路径一致），再上报
     // 完成：调度器推进串行点、服务下一个 URB（同步处理，先发后报）
-    session.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
+    responder.submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit(
             seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), total_received, 0,
             static_cast<std::uint32_t>(iso_descs.size()), std::move(transfer)));
     device_handler->get_transfer_scheduler().on_urb_done(ep.address, seqnum);
 }
 
-void UacAudioStreamingSinkHandler::on_new_connection(Session &current_session, error_code &ec) {
+void UacAudioStreamingSinkHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     streaming = false;
     sink->reset();

@@ -15,7 +15,7 @@ public:
     explicit MockDeviceHandlerForTest(UsbDevice &device) : AbstDeviceHandler(device) {
     }
 
-    void on_new_connection(Session &current_session, error_code &ec) override {
+    void on_new_connection(TransferResponder &current_session, error_code &ec) override {
     }
     void on_disconnection(error_code &ec) override {
     }

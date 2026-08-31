@@ -79,14 +79,14 @@ void EcmCommunicationInterfaceHandler::handle_non_standard_request_type_control_
             }
         }
         // transfer 析构时自动释放
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
                 seqnum, status, 0));
     }
     else {
         // 非类请求（标准请求已被基类分发，这里兜底）
         SPDLOG_WARN("Unhandled request type 0x{:x} in ECM communication interface", setup_packet.calc_request_type());
         // transfer 析构时自动释放
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -103,7 +103,7 @@ void EcmCommunicationInterfaceHandler::handle_interrupt_transfer(std::uint32_t s
         // 中断 OUT：ECM 不使用（对齐 CdcAcm 的处理）
         // transfer 析构时自动释放
         SPDLOG_WARN("ECM communication interface received unexpected interrupt OUT");
-        session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
     }
 }
 
@@ -154,7 +154,7 @@ void EcmCommunicationInterfaceHandler::send_speed_change(std::uint32_t up_speed,
                                                     speed_data, sizeof(speed_data)));
 }
 
-void EcmCommunicationInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+void EcmCommunicationInterfaceHandler::on_new_connection(TransferResponder &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     notification_channel.on_new_connection(&current_session);
@@ -171,7 +171,7 @@ void EcmCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 CdcAcm 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
@@ -226,11 +226,11 @@ void EcmDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const U
         SPDLOG_TRACE("[ECM] OUT frame size={}", received_size);
         if (backend_) {
             backend_->send_frame(trx->data.data(), trx->data.size());
-            session->submit_ret_submit(
+            responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
         }
         else if (on_frame_received(std::move(trx->data))) {
-            session->submit_ret_submit(
+            responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
         }
         else {
@@ -245,7 +245,7 @@ void EcmDataInterfaceHandler::handle_non_standard_request_type_control_urb(
     // 数据接口没有类特定控制请求
     SPDLOG_WARN("ECM data interface received unexpected control request");
     // transfer 析构时自动释放
-    session->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+    responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
 }
 
 data_type EcmDataInterfaceHandler::get_class_specific_descriptor() {
@@ -286,7 +286,7 @@ void EcmDataInterfaceHandler::set_tx_max_pending(std::size_t max_pending) {
     in_channel.set_max_pending_messages(max_pending);
 }
 
-void EcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {
+void EcmDataInterfaceHandler::on_new_connection(TransferResponder &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
     in_channel.on_new_connection(&current_session);
@@ -313,7 +313,7 @@ void EcmDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, 
     // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
     // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
     // 与内核 stub_tx.c 及本项目 CdcAcm 的 unlink 范本一致
-    session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
             cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 } // namespace usbipdcpp

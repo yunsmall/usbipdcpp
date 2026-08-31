@@ -51,12 +51,12 @@ void TransferScheduler::stop() {
         thread.join();
 }
 
-void TransferScheduler::submit(Session &session, const UsbEndpoint &ep, EndpointAttributes type,
+void TransferScheduler::submit(TransferResponder &responder, const UsbEndpoint &ep, EndpointAttributes type,
                                std::chrono::microseconds data_duration, std::uint32_t seqnum,
                                TransferHandle transfer, UrbProcessCallback processor) {
     // 防御：控制请求不走处理器版（handler 无此调用场景），立即通知处理
     if (type == EndpointAttributes::Control) {
-        processor(session, ep, seqnum, std::move(transfer));
+        processor(responder, ep, seqnum, std::move(transfer));
         return;
     }
 
@@ -68,7 +68,7 @@ void TransferScheduler::submit(Session &session, const UsbEndpoint &ep, Endpoint
     auto &state = endpoints[ep.address];
     bool queue_was_empty = state.queue.empty();
     state.queue.push_back(PendingUrb{{}, std::move(processor), {}, ep, type, seqnum, data_duration,
-                                     std::move(transfer), &session});
+                                     std::move(transfer), &responder});
     // 成为队头即定死服务时刻（自持链）；processing 中只算不排期
     //（放行后 on_urb_done 的 kick 排期）
     if (queue_was_empty) {
@@ -78,23 +78,23 @@ void TransferScheduler::submit(Session &session, const UsbEndpoint &ep, Endpoint
     }
 }
 
-void TransferScheduler::submit(Session &session, const UsbEndpoint &ep, EndpointAttributes type,
+void TransferScheduler::submit(TransferResponder &responder, const UsbEndpoint &ep, EndpointAttributes type,
                                int num_iso_packets, UsbIpResponse::UsbIpRetSubmit &&submit,
                                std::chrono::microseconds data_duration) {
     // 端点版：间隔按 bInterval 与设备速度推导（对齐 USB 规范）。
     // 参数名 submit 遮蔽了成员函数，需 this-> 显式解析
-    this->submit(session, ep.address, type, endpoint_interval(ep, speed), num_iso_packets, std::move(submit),
+    this->submit(responder, ep.address, type, endpoint_interval(ep, speed), num_iso_packets, std::move(submit),
                  data_duration);
 }
 
-void TransferScheduler::submit(Session &session, std::uint8_t ep_address, EndpointAttributes type,
+void TransferScheduler::submit(TransferResponder &responder, std::uint8_t ep_address, EndpointAttributes type,
                                std::chrono::microseconds interval, int num_iso_packets,
                                UsbIpResponse::UsbIpRetSubmit &&submit,
                                std::chrono::microseconds data_duration) {
     // 控制请求与无等时包的 iso URB：不占调度窗口，立即响应
     //（控制端点必须快速，对齐 vudc 的 ep0 无延迟处理）
     if (type == EndpointAttributes::Control || (type == EndpointAttributes::Isochronous && num_iso_packets <= 0)) {
-        on_urb_completed(session, std::move(submit));
+        on_urb_completed(responder, std::move(submit));
         return;
     }
 
@@ -114,7 +114,7 @@ void TransferScheduler::submit(Session &session, std::uint8_t ep_address, Endpoi
                          : std::chrono::microseconds::zero();
     auto seqnum = submit.header.seqnum;
     bool queue_was_empty = state.queue.empty();
-    state.queue.push_back(PendingUrb{{}, {}, std::move(submit), UsbEndpoint{}, type, seqnum, delay, {}, &session});
+    state.queue.push_back(PendingUrb{{}, {}, std::move(submit), UsbEndpoint{}, type, seqnum, delay, {}, &responder});
     // 成为队头即定死服务时刻（自持链）；processing 中只算不排期
     //（放行后 on_urb_done 的 kick 排期）
     if (queue_was_empty) {
@@ -194,7 +194,7 @@ void TransferScheduler::run() {
     io_context.run();
 }
 
-void TransferScheduler::on_urb_completed(Session &current_session, UsbIpResponse::UsbIpRetSubmit &&submit) {
+void TransferScheduler::on_urb_completed(TransferResponder &current_session, UsbIpResponse::UsbIpRetSubmit &&submit) {
     current_session.submit_ret_submit(std::move(submit));
 }
 
@@ -263,7 +263,7 @@ std::chrono::steady_clock::time_point TransferScheduler::align_to_frame(std::chr
 
 void TransferScheduler::on_timer(const asio::error_code &ec) {
     struct DueUrb {
-        Session *session;
+        TransferResponder *responder;
         PendingUrb urb;
         std::uint8_t ep_address;
     };
@@ -284,7 +284,7 @@ void TransferScheduler::on_timer(const asio::error_code &ec) {
                 continue;
             auto &front = state.queue.front();
             if (front.service_time <= now) {
-                due.push_back({front.session, std::move(front), addr});
+                due.push_back({front.responder, std::move(front), addr});
                 state.queue.pop_front();
                 state.processing = true;
                 state.processing_seqnum = due.back().urb.seqnum;
@@ -301,10 +301,10 @@ void TransferScheduler::on_timer(const asio::error_code &ec) {
     // 数据已就绪 URB → 直接发送，发送即完成，立即推进串行点
     for (auto &d : due) {
         if (d.urb.processor) {
-            d.urb.processor(*d.session, d.urb.ep, d.urb.seqnum, std::move(d.urb.transfer));
+            d.urb.processor(*d.responder, d.urb.ep, d.urb.seqnum, std::move(d.urb.transfer));
         }
         else {
-            on_urb_completed(*d.session, std::move(d.urb.submit));
+            on_urb_completed(*d.responder, std::move(d.urb.submit));
             on_urb_done(d.ep_address, d.urb.seqnum);
         }
     }
