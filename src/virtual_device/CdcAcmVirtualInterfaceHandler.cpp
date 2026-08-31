@@ -14,7 +14,7 @@ CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(UsbInte
     // 通知通道待发缓存上限 30 条：串口状态通知低频（状态变化才发一条），
     // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
     // 兜底，同时保留足够余量不丢低频通知（超限丢最旧）
-    notification_channel.set_max_pending(30);
+    notification_channel.set_max_pending_messages(30);
 }
 
 void CdcAcmCommunicationInterfaceHandler::handle_non_standard_request_type_control_urb(

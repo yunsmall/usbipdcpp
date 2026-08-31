@@ -1,0 +1,2 @@
+# sh 脚本必须 LF：CRLF 下 \r 会吞换行导致 if/赋值等语法错误（实测），e2e 测试跑不起来
+tests/e2e/*.sh text eol=lf

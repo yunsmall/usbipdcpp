@@ -24,7 +24,7 @@ EcmCommunicationInterfaceHandler::EcmCommunicationInterfaceHandler(UsbInterface 
     // 通知通道待发缓存上限 30 条：网络状态通知低频（连接/速率变化才发一条），
     // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
     // 兜底，同时保留足够余量不丢低频通知（超限丢最旧，对齐 CdcAcm 通知通道）
-    notification_channel.set_max_pending(30);
+    notification_channel.set_max_pending_messages(30);
 }
 
 UsbInterface EcmCommunicationInterfaceHandler::make_interface(std::uint8_t interrupt_in_ep) {
@@ -283,7 +283,7 @@ std::optional<OutEndpointChannel::Pending> EcmDataInterfaceHandler::try_take_fra
 
 void EcmDataInterfaceHandler::set_tx_max_pending(std::size_t max_pending) {
     // 通道内部锁保护缓冲上限
-    in_channel.set_max_pending(max_pending);
+    in_channel.set_max_pending_messages(max_pending);
 }
 
 void EcmDataInterfaceHandler::on_new_connection(Session &current_session, std::error_code &ec) {

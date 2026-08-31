@@ -31,7 +31,7 @@ push前先提交代码，push和提交请分别执行不要放在一起
 
 有新版本tag的时候别忘记更新CMakeLists.txt里的版本号
 
-所有编译出来的二进制在编译目录根目录，别搞错了
+所有编译出来的二进制（examples 的 mock_*、tests 的 test_* 等）一律在编译目录根目录（build* 下），不在任何子目录，别搞错了
 
 ## git 工作流
 
@@ -76,4 +76,4 @@ WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（�
 attach 后先单独确认新出现的块设备是哪个（如 attach 前后 `lsblk` 对比、
 `dmesg | tail` 看内核枚举的 sdX 名），确认无误后**再单独执行**读写命令。
 严禁 `lsblk ... && dd if=/dev/sdX ...` 这类"查设备 + 写设备"一条命令
-串联——WSL 里还有其他物理硬盘，写错盘符会毁数据
+串联——WSL 里还有其他物理硬盘，写错盘符会毁数据

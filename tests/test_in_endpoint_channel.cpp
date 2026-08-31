@@ -31,8 +31,8 @@ public:
     std::function<data_type(std::uint32_t)> pull; // 可选 pull，模拟派生类 override
     int pull_calls = 0;
 
-    // 与真实 MessageInChannel 同 API：set_max_pending / size（测试只走公开接口）
-    void set_max_pending(std::size_t max_pending) {
+    // 与真实 MessageInChannel 同 API：set_max_pending_messages / size（测试只走公开接口）
+    void set_max_pending_messages(std::size_t max_pending) {
         std::lock_guard lock(this->channel_mutex);
         max_pending_ = max_pending;
     }
@@ -304,7 +304,7 @@ TEST(TestInEndpointChannel, PendingRequestBlocksLaterBufferedRequest) {
 TEST(TestInEndpointChannel, MaxPendingDropsOldest) {
     RecordingChannel channel;
     channel.on_new_connection();
-    channel.set_max_pending(2);
+    channel.set_max_pending_messages(2);
     TransferMaker maker;
 
     // 无请求时推入 3 条：第 1 条被丢（保持最新消息语义）
@@ -901,7 +901,7 @@ TEST(TestInEndpointChannel, PendingLimitEvictsOldestWithEmptyReply) {
 TEST(TestInEndpointChannel, PushRejectsWhenFullIfNotDropping) {
     RecordingChannel channel;
     channel.on_new_connection();
-    channel.set_max_pending(1);
+    channel.set_max_pending_messages(1);
 
     EXPECT_TRUE(channel.push({0x01}));          // 有空位，入队成功
     // 满了且要求不丢旧：返回 false，缓冲不变
@@ -918,7 +918,7 @@ TEST(TestInEndpointChannel, PushBlockingWaitsForSpace) {
     RecordingChannel channel;
     channel.on_new_connection();
     TransferMaker maker;
-    channel.set_max_pending(1);
+    channel.set_max_pending_messages(1);
     channel.push({0x01}); // 占满唯一空位
 
     bool pushed = false;
@@ -938,7 +938,7 @@ TEST(TestInEndpointChannel, PushBlockingInterruptedByDisconnection) {
     // 缓冲满时阻塞推入，断连必须打断等待并返回 false（space_cv 唤醒 + disconnected 检查）
     RecordingChannel channel;
     channel.on_new_connection();
-    channel.set_max_pending(1);
+    channel.set_max_pending_messages(1);
     channel.push({0x01}); // 占满唯一空位
 
     bool pushed = true;
@@ -1029,7 +1029,7 @@ TEST(TestInEndpointChannel, ConcurrentPushBlockingWriters) {
     RecordingChannel channel;
     channel.on_new_connection();
     TransferMaker maker;
-    channel.set_max_pending(1);
+    channel.set_max_pending_messages(1);
 
     constexpr int WRITERS = 4;
     std::atomic<bool> ok{true};

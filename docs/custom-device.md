@@ -348,7 +348,7 @@ public:
     EchoInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
         VirtualInterfaceHandler(handle_interface, string_pool) {
         // 缓冲上限：主机长期不读时丢最旧保最新，防止内存无限增长
-        echo_channel.set_max_pending(1024);
+        echo_channel.set_max_pending_messages(1024);
     }
 
     /**

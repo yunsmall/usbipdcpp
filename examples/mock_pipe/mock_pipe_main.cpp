@@ -88,11 +88,14 @@ int main(int argc, char **argv) {
         }
     });
 
-    // 周期发送线程：每 2 秒发送一条计数消息（演示阻塞 write）
+    // 周期发送线程：每 2 秒发送一条计数消息（演示阻塞 write）。
+    // 打日志供 e2e 脚本断言传输活动（主机无 vendor 驱动，数据面靠 python 验证，
+    // 这里只确认发送线程活着）
     std::thread sender_thread([&]() {
         std::uint32_t count = 0;
         while (running) {
             auto msg = "message " + std::to_string(count++) + "\r\n";
+            SPDLOG_INFO("周期发送 {} 字节：{}", msg.size(), msg);
             pipe->write(PipeXfer{.ep = 0x81, .data = data_type(msg.begin(), msg.end())}, 200);
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }

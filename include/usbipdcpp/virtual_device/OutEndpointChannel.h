@@ -51,11 +51,12 @@ public:
     };
 
     /**
-     * @brief 设置挂起上限（0 = 无限，默认）
-     * @note 挂起请求数达到上限后，主机新 OUT 请求立即回 EPIPE（设备忙）、不占
-     * 队列；业务消费腾出空位后才放行
+     * @brief 设置挂起请求上限（0 = 无限，默认）。挂起请求数达到上限后，主机新
+     * OUT 请求立即回 EPIPE（设备忙）、不占队列；业务消费腾出空位后才放行。
+     * 与 InEndpointChannelBase::set_max_pending_requests 同方向：都限「主机
+     * 发来的请求」堆积（设备没空位可收时），非数据缓冲上限
      */
-    void set_max_pending(std::size_t max_pending) {
+    void set_max_pending_requests(std::size_t max_pending) {
         std::lock_guard lock(mutex_);
         max_pending_ = max_pending;
     }

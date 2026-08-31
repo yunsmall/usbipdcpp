@@ -273,7 +273,7 @@ TEST(TestOutEndpointChannel, DisconnectWakesBlockedTaker) {
 TEST(TestOutEndpointChannel, MaxPendingRejectsWithBusy) {
     RecordingOutChannel channel;
     channel.on_new_connection();
-    channel.set_max_pending(2);
+    channel.set_max_pending_requests(2);
     TransferMaker maker;
 
     channel.on_out_request(0x02, 1, maker.make({1}));

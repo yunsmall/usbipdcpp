@@ -144,6 +144,14 @@ private:
  *  2. 主机 IN 请求到达：在接口的 IN 传输回调里调 on_in_request(ep, seqnum, length, transfer)
  *  3. 业务侧产生数据：调 push()（消息模式）或 write()/write_nb()（字节流模式）
  *
+ * 可选配置（按需调用，别把两个"上限"搞混——方向相反）：
+ *  - set_max_pending_requests：限「主机发来的 IN 请求」挂起队列。设备没数据
+ *    应答时请求会堆积，超限挤掉最旧并回空完成（主机 URB 空完成即重提交，
+ *    等价 USB 总线 NAK 背压）。默认 0 = 无限
+ *  - set_max_pending_messages（消息模式）/ set_capacity（字节流模式）：限「设备待发的
+ *    数据」缓冲。主机长期不读时数据堆积，超限由 push 的 drop_oldest 决定丢最旧
+ *    或返回 false，push_blocking/write 则阻塞等待。默认 0 = 无限
+ *
  * 派生类需实现（锁内调用的 CRTP 接口，见各派生类声明）：
  *  buffer_empty / buffer_clear：缓冲为空/清空
  *  try_send_one：从缓冲取数据应答一个请求
@@ -222,6 +230,9 @@ public:
      * @brief 设置挂起请求上限（0 = 无限，默认）。达到上限时新请求挤掉该端点
      * 最早的请求，并应答空完成（actual_length=0、status 正常）——主机 URB
      * 空完成即重新提交，等价 USB 总线的 NAK 背压，挂起队列保持有界
+     * @note 这是「主机发来的请求」的上限，与数据缓冲上限
+     * （MessageInChannel::set_max_pending / ByteStreamInChannel::set_capacity）
+     * 方向相反：前者限请求堆积（设备没数据应答时），后者限数据堆积（主机不读时）
      */
     void set_max_pending_requests(std::size_t max_pending) {
         std::lock_guard lock(requests_mutex);
@@ -370,10 +381,12 @@ public:
     }
 
     /**
-     * @brief 设置缓冲上限（0 = 无限，默认）
-     * @note 主机一直不读时 push 按此上限丢最旧，防内存无限增长
+     * @brief 设置待发消息缓冲上限（0 = 无限，默认）
+     * @note 主机一直不读时 push 按此上限丢最旧，防内存无限增长。
+     * 这是「设备待发数据」的上限，与基类 set_max_pending_requests
+     * （「主机请求」的上限，NAK 背压）方向相反
      */
-    void set_max_pending(std::size_t max_pending) {
+    void set_max_pending_messages(std::size_t max_pending) {
         std::lock_guard lock(this->channel_mutex);
         max_pending_ = max_pending;
     }
@@ -546,7 +559,9 @@ public:
 
     /**
      * @brief 设置缓冲容量（字节，默认 64KB）
-     * @note 必须在连接前调用；连接后再改无效
+     * @note 必须在连接前调用；连接后再改无效。
+     * 这是「设备待发数据」的上限，与基类 set_max_pending_requests
+     * （「主机请求」的上限，NAK 背压）方向相反
      */
     void set_capacity(std::size_t capacity) {
         std::lock_guard lock(this->channel_mutex);
