@@ -1,9 +1,12 @@
 # Sanitizer 测试（ASan+UBSan / TSan）
-# 触发：push/PR 到 main（含 workflow 自身的改动），也可手动 workflow_dispatch
-# ASan+UBSan 抓越界/UB：Debug + sanitizer 跑全量测试，再跑一轮竞态 stress
-# （竞态路径最容易踩内存）。TSan 与 ASan 运行时互斥，必须独立 job：只跑
-# 并发聚焦测试（避免 spdlog 等未插桩第三方库的噪音，且 TSan 全量太慢）。
-# 只在 Linux 跑（UBSan/TSan 在 Windows 上支持不完整）；静态库避免 shared +
+# 触发：push/PR 到 main（含 workflow 自身的改动——.github/** 不 ignore，
+# 工作流改动需验证语法与逻辑），也可手动 workflow_dispatch
+# 文档等非代码文件的改动不触发（sanitizer 是最贵的 job，改了 README 全量
+# 重跑纯属浪费）。ASan+UBSan 抓越界/UB：Debug + sanitizer 跑全量测试，
+# 再跑一轮竞态 stress（竞态路径最容易踩内存）。TSan 与 ASan 运行时互斥，
+# 必须独立 job：先全量跑两轮（TSan 是动态检测，竞态需两线程真正并发才
+# 触发，两轮提高调度覆盖率），再跑并发聚焦 stress（30 轮重复）。只在
+# Linux 跑（UBSan/TSan 在 Windows 上支持不完整）；静态库避免 shared +
 # sanitizer 的运行时加载问题。TSan 在 6.8+ 内核（mmap_rnd_bits=32）上会
 # "unexpected memory mapping"（GCC libtsan 不支持），CI 用 clang 且用
 # setarch -R 禁用 ASLR 兜底（本地 WSL 实测通过）
@@ -13,8 +16,17 @@ name: Sanitizer (ASan + UBSan + TSan)
 on:
   push:
     branches: [ "main" ]
+    # 文档等非代码文件的改动不触发
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
 jobs:
@@ -59,9 +71,10 @@ jobs:
           ctest --repeat until-fail:30 --timeout 120 --output-on-failure \
             -R "TestNetworkConnection\.(ServerCanRestartAfterStop|StopWithMultipleClients|StopDuringClientConnectRace)"
 
-  # TSan：独立 job（与 ASan 运行时互斥）。只跑并发聚焦测试——连接/停止竞态、
-  # 虚拟设备传输、管道设备、传输调度器都是并发重点。setarch -R 禁用 ASLR：
-  # 内核 mmap 随机化位数过高时 TSan 映射失败（见文件头注释）
+  # TSan：独立 job（与 ASan 运行时互斥）。先全量跑两轮（单轮可能恰好调度
+  # 串行化而漏报），再跑并发聚焦 stress——连接/停止竞态、虚拟设备传输、
+  # 管道设备、传输调度器都是并发重点。setarch -R 禁用 ASLR：内核 mmap
+  # 随机化位数过高时 TSan 映射失败（见文件头注释）
   tsan:
     runs-on: ubuntu-24.04
     steps:
@@ -90,6 +103,14 @@ jobs:
 
       - name: Build
         run: cmake --build build --parallel
+
+      # TSan 全量先跑两轮：动态检测需两线程真正并发才报，单轮可能调度
+      # 串行化漏报，两轮提高覆盖率
+      - name: Test (full, 2 rounds)
+        shell: bash
+        working-directory: build
+        run: |
+          setarch $(uname -m) -R ctest --repeat until-fail:2 --timeout 120 --output-on-failure
 
       # TSan 是动态检测，竞态需两线程真正并发访问才报——单次可能恰好调度
       # 串行化而漏报，重复 30 轮提高调度覆盖率（TSan 慢，只能到此为止）

@@ -1,3 +1,8 @@
+// MSC BOT 状态机每包都打 DEBUG（state 迁移/收发），全量打印太吵，
+// 默认裁到 INFO；排查 MSC 数据面问题时临时改成 SPDLOG_LEVEL_DEBUG
+#ifdef SPDLOG_ACTIVE_LEVEL
+    #undef SPDLOG_ACTIVE_LEVEL
+#endif
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
 
 #include "usbipdcpp/virtual_device/devices/MscBulkOnlyHandler.h"
