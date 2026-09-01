@@ -6,7 +6,7 @@ A C++ library for creating usbip servers
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), UVC (camera), UAC (microphone, speaker) — no libusb dependency
+> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -549,6 +549,17 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    `LibusbServer` as a background service with proper lifecycle management (start/stop via `net start`/`net stop`,
    or `sc.exe`). Supports automatic binding of all connected USB devices on startup.
 
+**21. mock_rndis**
+
+   A virtual Ethernet adapter (CDC RNDIS) — **driverless on Windows** ("Remote NDIS Compatible Device"),
+   which is the key difference from `mock_ecm` (ECM needs a third-party driver on Windows). Same backends
+   and usage as mock_ecm (default user-space echo, or `--tun <ifname>` on Linux/Android). The RNDIS
+   control channel (INIT/QUERY/SET via CDC encapsulated commands), OID table and packet encapsulation
+   follow the Linux kernel gadget implementation (f_rndis.c / rndis.c).
+
+   Usage: `mock_rndis --tun usbip%d` then on the host `ip addr add 192.168.53.2/24 dev usbX`
+   and `ping 192.168.53.1`.
+
 ---
 
 ## Architecture Overview
@@ -654,6 +665,8 @@ Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wra
 | `NetworkBackend` | Abstract network backend for the virtual ethernet adapter (frame RX/TX + statistics) |
 | `EthernetEchoBackend` | User-space echo backend for mock_ecm (answers ARP/ICMP/TCP echo, no root) |
 | `TunBackend` | Linux TAP backend: routes virtual NIC frames into the host kernel network stack (Linux/Android only, needs root) |
+| `RndisCommunicationInterfaceHandler` | CDC RNDIS communication interface (encapsulated command channel, RNDIS state machine + OID table) |
+| `RndisDataInterfaceHandler` | CDC RNDIS data interface (RNDIS_MSG_PACKET encapsulation/decapsulation, frame I/O) |
 
 ### Class Hierarchy
 

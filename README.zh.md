@@ -8,7 +8,7 @@
 
 - ✅ **USBIP 服务器**: 基于 libusb 实现，支持所有 libusb 兼容平台
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
-- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、UVC（摄像头）、UAC（麦克风、扬声器）—— 无需 libusb
+- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、CDC ECM/RNDIS（网卡）、UVC（摄像头）、UAC（麦克风、扬声器）—— 无需 libusb
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
 
@@ -533,6 +533,17 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    `LibusbServer`，支持完整的服务生命周期管理（通过 `net start`/`net stop` 或
    `sc.exe` 启停）。支持启动时自动绑定所有已连接的 USB 设备。
 
+**21. mock_rndis**
+
+   虚拟以太网卡（CDC RNDIS）——**Windows 免驱**（"远程 NDIS 兼容设备"），这是与
+   `mock_ecm` 的关键区别（ECM 在 Windows 上需要第三方驱动）。后端与用法同
+   mock_ecm（默认纯用户态 echo，或 Linux/Android 的 `--tun`）。RNDIS 控制通道
+   （CDC 封装命令走 INIT/QUERY/SET）、OID 表与数据封装均对齐 Linux 内核 gadget
+   实现（f_rndis.c / rndis.c）。
+
+   用法：`mock_rndis --tun usbip%d`，主机侧 `ip addr add 192.168.53.2/24 dev usbX` 后
+   `ping 192.168.53.1`。
+
 ---
 
 ## 架构设计
@@ -638,6 +649,8 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `NetworkBackend` | 虚拟以太网卡的网络后端抽象（帧收发 + 统计） |
 | `EthernetEchoBackend` | mock_ecm 的纯用户态 echo 后端（应答 ARP/ICMP/TCP echo，不需要 root） |
 | `TunBackend` | Linux TAP 后端：把虚拟网卡帧接入本机内核协议栈（仅 Linux/Android，需要 root） |
+| `RndisCommunicationInterfaceHandler` | CDC RNDIS 通信接口（封装命令通道、RNDIS 状态机与 OID 表） |
+| `RndisDataInterfaceHandler` | CDC RNDIS 数据接口（RNDIS_MSG_PACKET 封装/解封装，帧收发） |
 
 ### 类继承关系
 

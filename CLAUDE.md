@@ -76,4 +76,9 @@ WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（�
 attach 后先单独确认新出现的块设备是哪个（如 attach 前后 `lsblk` 对比、
 `dmesg | tail` 看内核枚举的 sdX 名），确认无误后**再单独执行**读写命令。
 严禁 `lsblk ... && dd if=/dev/sdX ...` 这类"查设备 + 写设备"一条命令
-串联——WSL 里还有其他物理硬盘，写错盘符会毁数据
+串联——WSL 里还有其他物理硬盘，写错盘符会毁数据
+
+**evtest 定位设备用 `/dev/input/by-path/`**：WSL 的 devtmpfs 下 `/dev/input/eventX`
+节点号与 `/sys/class/input/inputX` 编号不一定一致（容易拿错节点），by-path 的
+符号链接才对应真实设备（如 `platform-vhci_hcd.0-usb-0:1:1.0-event-kbd -> ../event0`）。
+先 `ls /dev/input/by-path/` 找目标设备名，再 `sudo evtest /dev/input/by-path/<名字>`。

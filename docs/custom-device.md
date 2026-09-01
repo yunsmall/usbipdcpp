@@ -582,3 +582,128 @@ UVC 流协商等），管道模型就不够用——方法二的回调里可以�
 4. Windows 客户端：`usbipd` / wsl 里 attach 后看设备管理器是否枚举出对应驱动
 
 调试提示：`spdlog::set_level(spdlog::level::trace)` 可打开每个 CMD_SUBMIT/RET_SUBMIT 的流转日志（`src/virtual_device/VirtualDeviceHandler.cpp` 顶部定义 `USBIPDCPP_STRACE` 还能看到所有控制请求明细，排查枚举卡住很有用）。
+
+## 多接口协同工作（功能/接口组 + IAD）
+
+很多 USB 类不是一个接口能完成的：RNDIS/ECM 是「通信接口 + 数据接口」两个
+接口协同，UAC 是「AC 控制接口 + AS 流接口」，UVC 是「VC + VS」。本节讲这类
+设备的正确工作流——接口怎么填入 `UsbDevice` 才合法、IAD 怎么声明、装配
+辅助函数怎么用。
+
+### interface_number：接口编号的语义与赋值
+
+`UsbInterface::interface_number` 是 USB 规范的 bInterfaceNumber（接口号），
+控制请求（SET_INTERFACE 等）按它寻址，配置描述符的 bInterfaceNumber 严格
+按它生成。**它与数组下标是两个概念**：
+
+- `make_interface` 等描述符模板工厂**不负责填接口号**（默认 0）
+- 接口从 0 连续编号的设备（绝大多数虚拟设备）：创建设备后调用一次
+  `device->assign_interface_numbers()`，按下标依次赋值 0, 1, 2, ...
+- 特殊编号的设备（跳号、与其他功能交错）：手动给每个接口填
+  `interface_number`
+
+```cpp
+auto device = UsbDevice::make("1-1", 0x1234, 0x56E2,
+                              {CommHandler::make_interface(0x83), DataHandler::make_interface(0x81, 0x02)});
+device->assign_interface_numbers(); // 接口 0、1 的 interface_number 依次填好
+```
+
+### IAD：接口关联描述符
+
+多接口功能要在 Windows 上被识别为**复合设备**必须有 IAD（接口关联描述符，
+对齐内核 gadget 各功能的 `*_iad_descriptor`）。没有它，Windows 不会按功能
+分组枚举子接口，也不做 MS OS 描述符探测——实测 RNDIS 设备没有 IAD 时被
+usbser 误绑成串口（COM 口）而不是网卡。
+
+IAD 是**功能（接口组）的声明性属性**，挂在功能首个接口上：
+
+```cpp
+// 字段：bInterfaceCount, bFunctionClass, bFunctionSubClass, bFunctionProtocol, iFunction
+// bLength/bDescriptorType 自动填；bFirstInterface 生成时按接口号回填，不用传
+intf.interface_association_descriptor = IadDesc::make(
+        2, static_cast<std::uint8_t>(ClassCode::CDC), 0x06 /* USB_CDC_SUBCLASS_ETHERNET */);
+```
+
+- RNDIS：`IadDesc::make(2, ClassCode::CDC, 0x06)`（通信 + 数据两个接口，对齐内核
+  f_rndis.c 的 rndis_iad_descriptor）
+- UVC：`IadDesc::make(2, CC_VIDEO, SC_VIDEO_INTERFACE_COLLECTION, 0, iFunction)`，
+  iFunction 必须等于 VC 接口的 iInterface（UVC 1.5 Table 3-1）
+- 一个设备可以多个 IAD（每个功能各挂各的首个接口），配置描述符生成时按
+  接口顺序内插，**每个 IAD 紧邻所属接口描述符之前**
+
+推荐把 IAD 的声明放在**功能自己的 make_interface 或装配 helper 里**（属于
+功能定义，调用方无需关心）。`RndisCommunicationInterfaceHandler::make_interface`
+就是这么做的——装配 RNDIS 设备时 IAD 自动带上。
+
+### 装配工作流（helper 模式）
+
+多接口功能通常有协同 handler 互持引用（RNDIS 数据 handler 持通信 handler
+指针、UVC 的 VC/VS 互指）。库提供统一装配模式（`UvcDeviceHelper`、
+`UacDeviceHelper` 即此模式）：
+
+1. **按 interface_number 定位接口**，不依赖数组下标（复合设备里功能接口
+   可能与其他功能交错）：`device->find_interfaces_by_number<N>(first_number)`
+   返回 `std::array<UsbInterface*, N>`，按编号偏移填指针、缺失填 nullptr
+2. **用 `with_handler` 绑定 handler**（接口已在设备里、地址稳定后才合法），
+   不直接改 `interfaces[i].handler`
+3. **互持引用 + IAD 声明在 helper 内完成**，调用方一行搞定
+4. **返回 `std::error_code`**，接口缺失等错误通过返回值上报，不抛异常
+
+```cpp
+std::error_code MyFeatureHelper::setup(std::shared_ptr<UsbDevice> device,
+                                       std::uint8_t first_interface_number,
+                                       StringPool &string_pool, ...) {
+    // 1. 按编号定位相邻两个接口
+    auto found = device->find_interfaces_by_number<2>(first_interface_number);
+    if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    auto *intf0 = found[0];
+    auto *intf1 = found[1];
+
+    // 2. with_handler 绑定（非破坏：只动这两个接口的 handler）
+    auto h0 = intf0->with_handler<FeatureControlHandler>(string_pool);
+    auto h1 = intf1->with_handler<FeatureDataHandler>(string_pool, h0.get()); // 3. 互持引用
+
+    // 3. IAD 声明（功能首个接口）
+    intf0->interface_association_descriptor = IadDesc::make(
+            2, static_cast<std::uint8_t>(ClassCode::CDC), 0x06);
+
+    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
+                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    dh->setup_interface_handlers(); // 必须：注册端点路由 + 接口 handler
+    return {};
+}
+
+// 调用方：
+if (auto ec = MyFeatureHelper::setup(device, 0, string_pool, ...); ec) {
+    SPDLOG_ERROR("功能装配失败：{}", ec.message());
+    return 1;
+}
+```
+
+### 完整示例（RNDIS 双接口，examples/mock_rndis 的骨架）
+
+```cpp
+#include "usbipdcpp/virtual_device/MSOSSimpleVirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/RndisVirtualInterfaceHandler.h"
+// ...
+
+std::vector<UsbInterface> interfaces = {
+        RndisCommunicationInterfaceHandler::make_interface(0x83), // 自带 IAD（CDC/0x06/count=2）
+        RndisDataInterfaceHandler::make_interface(0x81, 0x02),
+};
+auto device = UsbDevice::make(busid, 0x1234, 0x56E3, std::move(interfaces),
+                              1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_rndis");
+device->assign_interface_numbers(); // interface_number 按 0, 1 填好
+
+// 装配：数据 handler 持通信 handler 指针（状态机归属方）
+auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(string_pool, mac, UsbSpeed::Full);
+device->interfaces[1].with_handler<RndisDataInterfaceHandler>(string_pool, backend.get(), comm.get());
+
+// MS OS 1.0 Compatible ID "RNDIS"：Windows 按它加载内置 rndismp 网卡驱动
+// （配合 IAD 才能触发探测；没有则被 usbser 误绑成串口）
+auto dev_handler = device->with_handler<MSOSSimpleVirtualDeviceHandler>(string_pool);
+dev_handler->set_ms_os_compatible_id("RNDIS");
+dev_handler->setup_interface_handlers();
+```
