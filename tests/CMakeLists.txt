@@ -69,6 +69,14 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_ecm_handler)
     target_link_libraries(test_ecm_handler PRIVATE usbipdcpp_virtual_device)
 
+    # RNDIS 网卡测试（封装命令握手、OID 表、数据封装/解封装）
+    add_test_file(test_rndis_handler)
+    target_link_libraries(test_rndis_handler PRIVATE usbipdcpp_virtual_device)
+
+    # Microsoft OS 1.0 描述符测试（0xEE 签名串、Compatible ID 特征描述符）
+    add_test_file(test_ms_os_handler)
+    target_link_libraries(test_ms_os_handler PRIVATE usbipdcpp_virtual_device)
+
     # UVC 摄像头 iso IN 取帧/帧时钟测试
     add_test_file(test_uvc_handler)
     target_link_libraries(test_uvc_handler PRIVATE usbipdcpp_virtual_device)
