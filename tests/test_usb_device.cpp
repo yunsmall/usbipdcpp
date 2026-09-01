@@ -233,3 +233,82 @@ TEST(TestUsbDevice, AllSpeeds) {
         EXPECT_EQ(device->speed, static_cast<std::uint32_t>(speed));
     }
 }
+
+// 简单接口（字段最小化，仅用于设备容器测试）
+namespace {
+UsbInterface make_test_interface(std::uint8_t number) {
+    UsbInterface intf{
+            .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
+            .interface_subclass = 0x00,
+            .interface_protocol = 0x00,
+    };
+    intf.interface_number = number;
+    return intf;
+}
+} // namespace
+
+TEST(TestUsbDevice, FindInterfacesByNumberConsecutive) {
+    // 连续编号（0,1）：find<2>(0) 两个接口都找到，指向正确对象
+    auto device = std::make_shared<UsbDevice>();
+    device->interfaces = {make_test_interface(0), make_test_interface(1)};
+
+    auto found = device->find_interfaces_by_number<2>(0);
+    ASSERT_NE(found[0], nullptr);
+    ASSERT_NE(found[1], nullptr);
+    EXPECT_EQ(found[0]->interface_number, 0u);
+    EXPECT_EQ(found[1]->interface_number, 1u);
+    EXPECT_EQ(found[0], &device->interfaces[0]);
+    EXPECT_EQ(found[1], &device->interfaces[1]);
+}
+
+TEST(TestUsbDevice, FindInterfacesByNumberMissingReturnsNullptr) {
+    // 只找到一个：另一个位置的指针为 nullptr
+    auto device = std::make_shared<UsbDevice>();
+    device->interfaces = {make_test_interface(0)};
+
+    auto found = device->find_interfaces_by_number<2>(0);
+    ASSERT_NE(found[0], nullptr);
+    EXPECT_EQ(found[1], nullptr);
+}
+
+TEST(TestUsbDevice, FindInterfacesByNumberNonConsecutive) {
+    // 编号不连续（2,3，跳过 0,1）：从 2 起找得到，从 0 起全是 nullptr
+    auto device = std::make_shared<UsbDevice>();
+    device->interfaces = {make_test_interface(2), make_test_interface(3)};
+
+    auto found = device->find_interfaces_by_number<2>(2);
+    ASSERT_NE(found[0], nullptr);
+    ASSERT_NE(found[1], nullptr);
+    EXPECT_EQ(found[0]->interface_number, 2u);
+    EXPECT_EQ(found[1]->interface_number, 3u);
+
+    auto missing = device->find_interfaces_by_number<2>(0);
+    EXPECT_EQ(missing[0], nullptr);
+    EXPECT_EQ(missing[1], nullptr);
+}
+
+TEST(TestUsbDevice, FindInterfacesByNumberOrderIndependent) {
+    // 数组顺序与 interface_number 无关（复合设备功能接口交错）：
+    // 编号 2 的接口放在数组前面，结果仍按编号偏移排列
+    auto device = std::make_shared<UsbDevice>();
+    device->interfaces = {make_test_interface(2), make_test_interface(0), make_test_interface(1)};
+
+    auto found = device->find_interfaces_by_number<3>(0);
+    ASSERT_NE(found[0], nullptr);
+    ASSERT_NE(found[1], nullptr);
+    ASSERT_NE(found[2], nullptr);
+    EXPECT_EQ(found[0], &device->interfaces[1]);
+    EXPECT_EQ(found[1], &device->interfaces[2]);
+    EXPECT_EQ(found[2], &device->interfaces[0]);
+}
+
+TEST(TestUsbDevice, AssignInterfaceNumbers) {
+    // 按下标依次赋值：多接口设备创建后调一次，bInterfaceNumber 正确
+    auto device = std::make_shared<UsbDevice>();
+    device->interfaces = {UsbInterface{}, UsbInterface{}, UsbInterface{}};
+
+    device->assign_interface_numbers();
+    for (std::size_t i = 0; i < device->interfaces.size(); i++) {
+        EXPECT_EQ(device->interfaces[i].interface_number, static_cast<std::uint8_t>(i));
+    }
+}

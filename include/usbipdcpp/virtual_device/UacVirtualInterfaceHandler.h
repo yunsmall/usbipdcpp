@@ -254,19 +254,40 @@ private:
     std::int64_t urb_stat_last_time_us = 0; // 上一窗口的墙钟时刻（steady_clock µs）
 };
 
-/// UAC 设备辅助类 — 在 device 上注册 AC/AS 接口 handler 并设置描述符
+/// UAC 设备辅助类 — 在 device 上装配 UAC 功能（AC + AS 接口 handler、互相关联）
 class USBIPDCPP_API UacDeviceHelper {
 public:
-    /// 向 device 注入 UAC 接口 handler（麦克风方向，与 setup_speaker 对称）。
-    /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO IN 端点
-    static void setup_microphone(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
-                                 std::unique_ptr<AudioSource> source, const UacDeviceConfig &config = {});
+    /**
+     * @brief 在 device 上装配 UAC 麦克风功能（AC + AS 两个相邻接口）
+     * @param device 目标设备（接口必须已在 device->interfaces 中，地址稳定）
+     * @param ac_interface_number UAC 功能首个接口（AC）的 interface_number；
+     *        AS 按 interface_number = ac_interface_number + 1 在 device->interfaces
+     *        中查找（功能接口编号连续，与数组下标无关）。设备里其他接口的
+     *        handler 不受影响
+     * @param string_pool 字符串池
+     * @param source 音频源
+     * @param config UAC 设备配置（声道数等）
+     * @return 出错时的错误码（如 AC/AS 接口缺失），成功返回默认构造（无错误）
+     */
+    static std::error_code setup_microphone(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
+                                            StringPool &string_pool, std::unique_ptr<AudioSource> source,
+                                            const UacDeviceConfig &config = {});
 
-    /// 向 device 注入 UAC 接口 handler（扬声器方向，ISO OUT 收流）。
-    /// device 必须已有两个接口（AC + AS），且第二个接口需含 ISO OUT 端点；
-    /// AC 的 input_terminal_type 需为 TT_USB_STREAMING（扬声器拓扑）
-    static void setup_speaker(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
-                              std::unique_ptr<AudioSink> sink, const UacDeviceConfig &config = {});
+    /**
+     * @brief 在 device 上装配 UAC 扬声器功能（AC + AS 两个相邻接口，ISO OUT 收流）
+     * @param device 目标设备（接口必须已在 device->interfaces 中，地址稳定）
+     * @param ac_interface_number UAC 功能首个接口（AC）的 interface_number；
+     *        AS 按 interface_number = ac_interface_number + 1 查找。设备里
+     *        其他接口的 handler 不受影响
+     * @param string_pool 字符串池
+     * @param sink 音频接收器
+     * @param config UAC 设备配置（声道数等）；AC 的 input_terminal_type 强制
+     *        TT_USB_STREAMING（扬声器拓扑）
+     * @return 出错时的错误码（如 AC/AS 接口缺失），成功返回默认构造（无错误）
+     */
+    static std::error_code setup_speaker(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
+                                         StringPool &string_pool, std::unique_ptr<AudioSink> sink,
+                                         const UacDeviceConfig &config = {});
 };
 
 } // namespace usbipdcpp

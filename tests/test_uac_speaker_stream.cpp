@@ -91,9 +91,11 @@ SpeakerFixture make_speaker_device(StringPool &string_pool) {
     };
     auto device = UsbDevice::make("/test/mock_speaker", 0x1234, 0x5683, std::move(interfaces), 1, 1, 0,
                                   "/usbipdcpp/mock_speaker", UsbSpeed::High, 0x0100);
+    device->assign_interface_numbers();
     auto sink = std::make_unique<RecordingSink>();
     auto *sink_ptr = sink.get();
-    UacDeviceHelper::setup_speaker(device, string_pool, std::move(sink), {});
+    // 装配失败场景不在本测试范围（接口缺失时才报错），错误码留到 EXPECT 兜底
+    EXPECT_FALSE(UacDeviceHelper::setup_speaker(device, 0, string_pool, std::move(sink), {}));
     auto *dh = dynamic_cast<VirtualDeviceHandler *>(device->handler.get());
     return {device, dh, sink_ptr, device->interfaces[1].endpoints[1][0]};
 }

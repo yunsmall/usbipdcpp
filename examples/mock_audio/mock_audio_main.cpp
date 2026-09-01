@@ -223,8 +223,13 @@ int main(int argc, char **argv) {
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::High),
     });
 
-    // UacDeviceHelper 创建 AC/AS handler 并注册 + 设置描述符
-    UacDeviceHelper::setup_microphone(device, string_pool, std::move(source));
+    // UacDeviceHelper 创建 AC/AS handler 并注册 + 设置描述符。
+    // 接口从 0 连续编号：按下标依次填 interface_number（bInterfaceNumber 依赖它）
+    device->assign_interface_numbers();
+    if (auto ec = UacDeviceHelper::setup_microphone(device, 0, string_pool, std::move(source)); ec) {
+        SPDLOG_ERROR("UAC 功能装配失败：{}", ec.message());
+        return 1;
+    }
 
     Server server;
     server.add_device(std::move(device));

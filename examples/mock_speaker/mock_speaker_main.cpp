@@ -177,10 +177,15 @@ int main(int argc, char **argv) {
 
     auto device = UsbDevice::make(busid, 0x1234, 0x5683, std::move(interfaces), 1, 1, 0,
                                   "/usbipdcpp/mock_speaker", UsbSpeed::High, 0x0100);
+    // 接口从 0 连续编号：按下标依次填 interface_number（bInterfaceNumber 依赖它）
+    device->assign_interface_numbers();
 
     // UacDeviceHelper 创建 AC/AS 汇 handler 并注册 + 设置描述符
     UacDeviceConfig config{.channels = static_cast<std::uint8_t>(channels)};
-    UacDeviceHelper::setup_speaker(device, string_pool, std::move(sink), config);
+    if (auto ec = UacDeviceHelper::setup_speaker(device, 0, string_pool, std::move(sink), config); ec) {
+        SPDLOG_ERROR("UAC 功能装配失败：{}", ec.message());
+        return 1;
+    }
 
     Server server;
     server.add_device(std::move(device));

@@ -768,23 +768,18 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                      0x80, // bmAttributes Bus Powered
                      0xFA} // bMaxPower 500mA
             .append_to(desc);
-    // IAD: Windows 要求多接口 UVC 设备在配置描述符里包含 IAD
-    // UVC 1.5 Table 3-1: iFunction 必须等于 VC interface 的 iInterface
-    if (handle_device.device_class == 0xEF) {
-        auto iFunc = handle_device.interfaces[0].handler
-                             ? handle_device.interfaces[0].handler->get_string_interface_value()
-                             : std::uint8_t{0};
-        IadDesc{0x08, static_cast<std::uint8_t>(DescriptorType::InterfaceAssociation),
-                0x00, // bFirstInterface
-                static_cast<std::uint8_t>(handle_device.interfaces.size()), // bInterfaceCount
-                handle_device.interfaces[0].interface_class, // bFunctionClass
-                0x03, // bFunctionSubClass: SC_VIDEO_INTERFACE_COLLECTION
-                0x00, // bFunctionProtocol (PC_PROTOCOL_UNDEFINED)
-                iFunc} // iFunction: must equal VC iInterface per spec
-                .append_to(desc);
-    }
+    // IAD（接口关联描述符）：多接口功能（RNDIS/UVC 等）在 Windows 上要识别
+    // 为复合设备必须有 IAD（对齐内核 gadget 各功能的 *_iad_descriptor）。
+    // 由功能首个接口的 interface_association_descriptor 声明，内插在所属
+    // 接口描述符之前（USB 2.0 ECN 要求的位置）；bFirstInterface 按所属接口
+    // 号回填（声明时接口号可能未知，如 make_interface 模板阶段）
     for (std::size_t i = 0; i < handle_device.interfaces.size(); i++) {
         auto &intf = handle_device.interfaces[i];
+        if (intf.interface_association_descriptor) {
+            auto iad = *intf.interface_association_descriptor;
+            iad.bFirstInterface = intf.interface_number;
+            iad.append_to(desc);
+        }
         // 接口未注册 handler 时跳过 class-specific 描述符（与 handle_control_urb 的 EPIPE 处理一致）
         auto class_specific_descriptor =
                 intf.handler ? intf.handler->get_class_specific_descriptor() : data_type{};
@@ -801,7 +796,8 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                                           : (alt < intf.endpoints.size() ? intf.endpoints[alt] : intf.endpoints[0]);
             data_type intf_desc;
             InterfaceDesc{0x09, static_cast<std::uint8_t>(DescriptorType::Interface),
-                          static_cast<std::uint8_t>(i), // bInterfaceNumber
+                          intf.interface_number, // bInterfaceNumber：严格按 interface_number
+                          // 语义（多接口设备由装配方手动填写，见 UsbInterface::interface_number）
                           static_cast<std::uint8_t>(alt), // bAlternateSetting
                           static_cast<std::uint8_t>(alt_endpoints.size()), // bNumEndpoints
                           intf.interface_class, // bInterfaceClass

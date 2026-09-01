@@ -1031,13 +1031,21 @@ data_type UacAudioStreamingSinkHandler::request_get_descriptor(std::uint8_t type
 
 // ==================== UacDeviceHelper ====================
 
-void UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
-                                       std::unique_ptr<AudioSource> source, const UacDeviceConfig &config) {
-    auto ac = std::make_shared<UacAudioControlHandler>(device->interfaces[0], string_pool);
-    auto as = std::make_shared<UacAudioStreamingSourceHandler>(device->interfaces[1], string_pool, std::move(source));
+std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> device,
+                                                  std::uint8_t ac_interface_number, StringPool &string_pool,
+                                                  std::unique_ptr<AudioSource> source,
+                                                  const UacDeviceConfig &config) {
+    // 按 interface_number 定位 AC/AS 两个相邻接口（不依赖数组下标：复合设备
+    // 里 UAC 接口可能不在 interfaces 开头，与其他功能交错）
+    auto found = device->find_interfaces_by_number<2>(ac_interface_number);
+    if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    auto *ac_interface = found[0];
+    auto *as_interface = found[1];
 
-    device->interfaces[0].handler = ac;
-    device->interfaces[1].handler = as;
+    auto ac = ac_interface->with_handler<UacAudioControlHandler>(string_pool);
+    auto as = as_interface->with_handler<UacAudioStreamingSourceHandler>(string_pool, std::move(source));
 
     // 声道数：config 未指定（0）时从 source 推断
     auto resolved = config;
@@ -1052,15 +1060,22 @@ void UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> device, String
     // UAC 走等时帧调度（ISO URB 按帧节奏延迟响应），启用设备级调度器
     dh->set_use_transfer_scheduler(true);
     dh->setup_interface_handlers();
+    return {};
 }
 
-void UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
-                                    std::unique_ptr<AudioSink> sink, const UacDeviceConfig &config) {
-    auto ac = std::make_shared<UacAudioControlHandler>(device->interfaces[0], string_pool);
-    auto as = std::make_shared<UacAudioStreamingSinkHandler>(device->interfaces[1], string_pool, std::move(sink));
+std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
+                                               StringPool &string_pool, std::unique_ptr<AudioSink> sink,
+                                               const UacDeviceConfig &config) {
+    // 按 interface_number 定位 AC/AS 两个相邻接口（不依赖数组下标，同 setup_microphone）
+    auto found = device->find_interfaces_by_number<2>(ac_interface_number);
+    if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    auto *ac_interface = found[0];
+    auto *as_interface = found[1];
 
-    device->interfaces[0].handler = ac;
-    device->interfaces[1].handler = as;
+    auto ac = ac_interface->with_handler<UacAudioControlHandler>(string_pool);
+    auto as = as_interface->with_handler<UacAudioStreamingSinkHandler>(string_pool, std::move(sink));
 
     // 声道数：config 未指定（0）时从 sink 推断
     auto resolved = config;
@@ -1081,6 +1096,7 @@ void UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, StringPoo
     // 延迟响应把发送速率限制回 1 倍。Linux vhci 按自己的帧时钟发不受影响
     dh->set_use_transfer_scheduler(true);
     dh->setup_interface_handlers();
+    return {};
 }
 
 } // namespace usbipdcpp

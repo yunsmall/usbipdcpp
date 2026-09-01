@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "usbipdcpp/Endpoint.h"
 #include "usbipdcpp/Export.h"
 #include "usbipdcpp/network.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 
 namespace usbipdcpp {
 class VirtualInterfaceHandler;
@@ -18,6 +20,12 @@ struct USBIPDCPP_API UsbInterface {
     /// 默认 0 与数组下标一致（虚拟设备接口从 0 连续编号）；
     /// libusb 后端绑定真实设备时按配置描述符填充（跳号设备下标≠接口号）
     std::uint8_t interface_number = 0;
+
+    /// 本接口所属功能（接口组）的 IAD，功能的首个接口设置它：配置描述符
+    /// 生成时内插在所属接口描述符之前，bFirstInterface 按本接口的
+    /// interface_number 回填。非序列化字段（devlist 协议只发 4 字节
+    /// 类/子类/协议），不进 to_bytes/from_socket
+    std::optional<IadDesc> interface_association_descriptor;
 
     std::uint8_t current_altsetting = 0;
 

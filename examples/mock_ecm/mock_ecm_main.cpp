@@ -113,6 +113,8 @@ int main(int argc, char **argv) {
     // IAD 复合设备需在设备级声明 CDC 类（对齐 mock_cdc_acm 的用法）
     auto device = UsbDevice::make(busid, 0x1234, 0x56E1, std::move(interfaces),
                                   1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_ecm");
+    // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
+    device->assign_interface_numbers();
     device->interfaces[0].with_handler<EcmCommunicationInterfaceHandler>(string_pool, mac);
     device->interfaces[1].with_handler<EcmDataInterfaceHandler>(string_pool, backend.get());
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();

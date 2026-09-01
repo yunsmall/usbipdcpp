@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <variant>
 #include <memory>
@@ -54,6 +55,40 @@ struct USBIPDCPP_API UsbDevice {
      * 如果调用时 handler 为空，属于未定义行为。
      */
     std::shared_ptr<AbstDeviceHandler> handler;
+
+    /**
+     * @brief 按下标给所有接口的 interface_number 依次赋值（0, 1, 2, ...）
+     *
+     * 适用于接口从 0 连续编号的虚拟设备（默认场景，多接口 mock 设备创建后
+     * 调用一次）。跳号/自定义编号的设备（如 libusb 后端按配置描述符填充）
+     * 不需要调用
+     */
+    void assign_interface_numbers() {
+        for (std::size_t i = 0; i < interfaces.size(); i++) {
+            interfaces[i].interface_number = static_cast<std::uint8_t>(i);
+        }
+    }
+
+    /**
+     * @brief 按 interface_number 连续查找 N 个接口（first, first+1, ..., first+N-1）
+     *
+     * 复合设备里功能接口可能与其他功能交错（数组下标不连续），按 interface_number
+     * 定位才可靠（如 UvcDeviceHelper 找 VC/VS 两个相邻接口）。
+     * @tparam N 要找的接口数
+     * @param first_interface_number 第一个接口的 interface_number
+     * @return 找到的接口填指针、缺失的填 nullptr（N 个，按下标对应编号偏移）
+     */
+    template<std::size_t N>
+    std::array<UsbInterface *, N> find_interfaces_by_number(std::uint8_t first_interface_number) {
+        std::array<UsbInterface *, N> result{};
+        for (auto &intf : interfaces) {
+            auto num = intf.interface_number;
+            if (num >= first_interface_number && num - first_interface_number < N) {
+                result[num - first_interface_number] = &intf;
+            }
+        }
+        return result;
+    }
 
     /**
      * @brief 创建并设置 handler

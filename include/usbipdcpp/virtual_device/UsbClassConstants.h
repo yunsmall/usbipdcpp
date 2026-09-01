@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "usbipdcpp/constant.h"
 #include "usbipdcpp/type.h"
 #include "usbipdcpp/utils/utils.h"
 
@@ -83,6 +84,17 @@ struct IadDesc {
     std::uint8_t bFunctionSubClass;
     std::uint8_t bFunctionProtocol;
     std::uint8_t iFunction;
+
+    /// 便捷构造：bLength/bDescriptorType/bFirstInterface 自动填（bFirstInterface
+    /// 由配置描述符生成逻辑按所属接口的 interface_number 回填，声明时不必关心
+    /// 接口号；详见 UsbInterface::interface_association_descriptor）
+    static IadDesc make(std::uint8_t b_interface_count, std::uint8_t b_function_class,
+                        std::uint8_t b_function_subclass, std::uint8_t b_function_protocol = 0,
+                        std::uint8_t i_function = 0) {
+        return IadDesc{0x08, static_cast<std::uint8_t>(DescriptorType::InterfaceAssociation),
+                       0, // bFirstInterface：生成时回填
+                       b_interface_count, b_function_class, b_function_subclass, b_function_protocol, i_function};
+    }
 
     void append_to(data_type &d) const {
         vector_append_to_le(d, bLength, bDescriptorType, bFirstInterface, bInterfaceCount, bFunctionClass,

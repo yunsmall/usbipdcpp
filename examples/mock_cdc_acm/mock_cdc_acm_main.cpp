@@ -27,6 +27,8 @@ int main(int argc, char **argv) {
     // 创建设备：IAD 复合设备需在设备级声明 CDC 类
     auto mock_cdc_acm = UsbDevice::make(busid, 0x1234, 0x5680, std::move(interfaces),
                                         1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_acm");
+    // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
+    mock_cdc_acm->assign_interface_numbers();
     // 设置接口处理器
     mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
     mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);

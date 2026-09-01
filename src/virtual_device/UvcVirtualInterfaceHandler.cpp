@@ -895,13 +895,19 @@ data_type UvcVideoStreamingHandler::request_get_descriptor(std::uint8_t type, st
 
 // ==================== UvcDeviceHelper ====================
 
-void UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &string_pool,
-                            std::unique_ptr<VideoSource> source) {
-    auto vc = std::make_shared<UvcVideoControlHandler>(device->interfaces[0], string_pool);
-    auto vs = std::make_shared<UvcVideoStreamingHandler>(device->interfaces[1], string_pool, std::move(source));
+std::error_code UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, std::uint8_t vc_interface_number,
+                                       StringPool &string_pool, std::unique_ptr<VideoSource> source) {
+    // 按 interface_number 定位 VC/VS 两个相邻接口（不依赖数组下标：复合设备
+    // 里 UVC 接口可能不在 interfaces 开头，与其他功能交错）
+    auto found = device->find_interfaces_by_number<2>(vc_interface_number);
+    if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    auto *vc_interface = found[0];
+    auto *vs_interface = found[1];
 
-    device->interfaces[0].handler = vc;
-    device->interfaces[1].handler = vs;
+    auto vc = vc_interface->with_handler<UvcVideoControlHandler>(string_pool);
+    auto vs = vs_interface->with_handler<UvcVideoStreamingHandler>(string_pool, std::move(source));
 
     vc->set_vs_handler(vs.get());
     vs->set_vc_handler(vc.get());
@@ -910,12 +916,18 @@ void UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, StringPool &strin
     // usbvideo.sys 依靠相同 iInterface 将 VC 和 VS 识别为同一功能
     vs->sync_string_interface_from(*vc);
 
+    // IAD：UVC 功能由 VC 接口声明（iFunction 必须等于 VC 的 iInterface，
+    // UVC 1.5 Table 3-1；bFirstInterface 由配置描述符生成时按接口号回填）
+    vc_interface->interface_association_descriptor = IadDesc::make(
+            2, CC_VIDEO, SC_VIDEO_INTERFACE_COLLECTION, 0, vc->get_string_interface_value());
+
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
     // UVC 等时 URB 立即响应（虚拟设备不模拟总线等时事务节奏，帧时钟已管住
     // 帧率），不启用设备级传输调度器（默认关；启用会被 125µs×包节流卡死
     // 带宽，大帧画面慢放）。UNLINK 走通道自己的 cancel_pending
     dh->setup_interface_handlers();
+    return {};
 }
 
 } // namespace usbipdcpp

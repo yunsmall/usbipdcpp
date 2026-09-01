@@ -72,7 +72,12 @@ int main(int argc, char **argv) {
     });
 
     auto source = std::make_unique<FfmpegSource>(video_path, passthrough);
-    UvcDeviceHelper::setup(device, string_pool, std::move(source));
+    // 接口从 0 连续编号：按下标依次填 interface_number（bInterfaceNumber/IAD 依赖它）
+    device->assign_interface_numbers();
+    if (auto ec = UvcDeviceHelper::setup(device, 0, string_pool, std::move(source)); ec) {
+        SPDLOG_ERROR("UVC 功能装配失败：{}", ec.message());
+        return 1;
+    }
 
     Server server;
     server.add_device(std::move(device));

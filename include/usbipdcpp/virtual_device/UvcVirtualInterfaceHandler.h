@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <memory>
+#include <system_error>
 #include <vector>
 
 #include "usbipdcpp/Export.h"
@@ -151,12 +153,23 @@ private:
     std::chrono::microseconds frame_interval_{};
 };
 
-/// UVC 设备辅助类 — 在 device 上注册 VC/VS 接口 handler 并设置描述符
+/// UVC 设备辅助类 — 在 device 上装配 UVC 功能（VC + VS 接口 handler、互相关联、IAD）
 class USBIPDCPP_API UvcDeviceHelper {
 public:
-    /// 向 device 注入 UVC 接口 handler。
-    /// device 必须已有两个接口（VC + VS），且第二个接口需含 ISO IN 端点
-    static void setup(std::shared_ptr<UsbDevice> device, StringPool &string_pool, std::unique_ptr<VideoSource> source);
+    /**
+     * @brief 在 device 上装配 UVC 功能（VC + VS 两个相邻接口）
+     * @param device 目标设备（接口必须已在 device->interfaces 中，地址稳定）
+     * @param vc_interface_number UVC 功能首个接口（VC）的 interface_number；
+     *        VS 按 interface_number = vc_interface_number + 1 在
+     *        device->interfaces 中查找（IAD 要求功能接口编号连续，与数组
+     *        下标无关——复合设备里 UVC 接口可能不在 interfaces 开头）。
+     *        设备里其他接口的 handler 不受影响（只绑定 VC/VS 两个接口）
+     * @param string_pool 字符串池
+     * @param source 视频源
+     * @return 出错时的错误码（如 VC/VS 接口缺失），成功返回默认构造（无错误）
+     */
+    static std::error_code setup(std::shared_ptr<UsbDevice> device, std::uint8_t vc_interface_number,
+                                 StringPool &string_pool, std::unique_ptr<VideoSource> source);
 };
 
 } // namespace usbipdcpp

@@ -177,6 +177,19 @@ inline data_type ret_submit_data(const UsbIpResponse::UsbIpRetSubmit &ret) {
     return {};
 }
 
+// 从字节流偏移处读小端整数（测试断言线格式数据字段用）
+inline std::uint32_t read_le32_at(const data_type &d, std::size_t offset) {
+    std::uint32_t v{};
+    std::memcpy(&v, d.data() + offset, sizeof(v));
+    return v;
+}
+
+inline std::uint16_t read_le16_at(const data_type &d, std::size_t offset) {
+    std::uint16_t v{};
+    std::memcpy(&v, d.data() + offset, sizeof(v));
+    return v;
+}
+
 // 构造 CMD_SUBMIT（对齐 CmdSubmit::from_socket 的分配：IN/OUT 都分配
 // transfer，IN 请求不读数据阶段、OUT 请求带数据）。op 由调用方持有，
 // 必须活得比 submit 长（TransferHandle 析构时用它释放）
