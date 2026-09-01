@@ -6,6 +6,7 @@
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/virtual_device/EcmConstants.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 
 namespace usbipdcpp {
 
@@ -37,6 +38,13 @@ UsbInterface EcmCommunicationInterfaceHandler::make_interface(std::uint8_t inter
                                        .max_packet_size = 16, // ECM_STATUS_BYTECOUNT：容纳头+SPEED_CHANGE 数据
                                        .interval = 32}}}, // 对齐内核 ECM_STATUS_INTERVAL_MS=32ms（Full speed）
     };
+    // IAD：ECM 是双接口功能（通信+数据），对齐内核 f_ecm.c 的 ecm_iad_descriptor
+    // （bFunctionClass=COMM、bFunctionSubClass=ETHERNET(0x06)、bFunctionProtocol=NONE、
+    // bInterfaceCount=2）。bDeviceClass=0x02 时 Windows 类驱动整机绑定不看 IAD，
+    // 但描述符与内核一致，多功能配置下 Windows 复合设备识别也需要它。
+    // bFirstInterface 由配置描述符生成时按所属接口的 interface_number 回填
+    i.interface_association_descriptor = IadDesc::make(
+            2, static_cast<std::uint8_t>(ClassCode::CDC), 0x06 /* USB_CDC_SUBCLASS_ETHERNET */);
     return i;
 }
 

@@ -9,6 +9,7 @@
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/virtual_device/InEndpointChannel.h"
 #include "usbipdcpp/virtual_device/OutEndpointChannel.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 namespace usbipdcpp {
@@ -120,6 +121,14 @@ public:
                                            .max_packet_size = 64,
                                            .interval = 16}}},
         };
+        // IAD：ACM 是双接口功能（通信+数据），对齐内核 f_acm.c 的 acm_iad_descriptor
+        // （bFunctionClass=COMM、bFunctionSubClass=ACM(0x02)、bFunctionProtocol=
+        // AT_V25TER(0x01)、bInterfaceCount=2）。bDeviceClass=0x02 时 Windows 类驱动
+        // 整机绑定不看 IAD，但描述符与内核一致，多功能配置下复合设备识别也需要它。
+        // bFirstInterface 由配置描述符生成时按所属接口的 interface_number 回填
+        i.interface_association_descriptor = IadDesc::make(2, static_cast<std::uint8_t>(ClassCode::CDC),
+                                                           0x02 /* USB_CDC_SUBCLASS_ACM */,
+                                                           0x01 /* USB_CDC_ACM_PROTO_AT_V25TER */);
         return i;
     }
 
