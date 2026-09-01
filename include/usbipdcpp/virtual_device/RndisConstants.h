@@ -96,6 +96,10 @@ inline constexpr std::size_t RNDIS_RESPONSE_QUEUE_LIMIT = 64;
 // 主机默认包过滤器（rndis_host.c RNDIS_DEFAULT_FILTER）：
 // DIRECTED|BROADCAST|ALL_MULTICAST|PROMISCUOUS
 inline constexpr std::uint16_t RNDIS_DEFAULT_FILTER = 0x2D;
+
+/// 主机方向 RNDIS_MSG_PACKET 头长度（24 字节，对齐 rndis_host.h 的 RNDIS_HEADER）：
+/// 主机只发前 6 个字段，设备方向头（RndisPacketHeader 44 字节）其余字段不发
+inline constexpr std::size_t RNDIS_HOST_HEADER_LEN = 24;
 // MAC 选项（OID_GEN_MAC_OPTIONS）：RECEIVE_SERIALIZED|FULL_DUPLEX（对齐内核）
 inline constexpr std::uint32_t RNDIS_MAC_OPTIONS_SERIALIZED_FULL_DUPLEX = 0x12;
 
@@ -241,10 +245,14 @@ struct RndisIndicateStatusMsg {
 };
 static_assert(sizeof(RndisIndicateStatusMsg) == 20, "RNDIS_MSG_INDICATE 固定 20 字节");
 
-/// RNDIS_MSG_PACKET（数据通道封装头，44 字节）
-/// 数据起始 = 8 + data_offset（8 = MessageType+MessageLength 两个 DWORD）：
-/// 设备→主机发 36（数据从字节 44 起），主机→设备发 16（数据从字节 24 起）。
-/// OOB/PerPacket 字段内核实现全为 0（不做 TCP 校验和卸载），设备容忍非 0 即可
+/// RNDIS_MSG_PACKET（数据通道封装头，44 字节，设备→主机方向）
+/// 数据起始 = data_offset 字段位置 + data_offset 值（两方向一致）：
+/// 设备→主机发 36 → 数据从字节 44 起；主机→设备发 16 → 数据从字节 24 起
+/// （数据起始算法见 data_start_offset，对齐内核 rndis_add_hdr/rm_hdr）。
+/// OOB/PerPacket 字段内核实现全为 0（不做 TCP 校验和卸载），设备容忍非 0 即可。
+/// 主机方向只发前 24 字节（对齐 rndis_host.h 的 RNDIS_HEADER，其余字段不发）：
+/// 解析主机消息时按指针只读 MessageLength/DataOffset/DataLength（前 16 字节），
+/// 不要 memcpy 整个结构体——小帧消息不足 44 字节会越界读（ASan 实测）
 struct RndisPacketHeader {
     std::uint32_t message_type;
     std::uint32_t message_length; // 44 + data_length（不含尾填充）
@@ -265,6 +273,14 @@ struct RndisPacketHeader {
     }
 };
 static_assert(sizeof(RndisPacketHeader) == 44, "RNDIS_MSG_PACKET 头固定 44 字节");
+
+/// 消息内数据起始偏移 = data_offset 字段位置 + data_offset 值。RNDIS 协议把
+/// DataOffset 的基准定在消息头第 8 字节（MessageType+MessageLength 之后）：
+/// 设备方向 36 → 数据从 44 起，主机方向 16 → 数据从 24 起（对齐内核
+/// rndis_add_hdr 填 RNDIS_HEADER-8、rndis_rm_hdr 剥 DataOffset+8 的惯例）
+[[nodiscard]] inline std::size_t data_start_offset(const RndisPacketHeader &h) {
+    return offsetof(RndisPacketHeader, data_offset) + h.data_offset;
+}
 #pragma pack(pop)
 
 /// RESPONSE_AVAILABLE 通知：中断 IN 端点发 8 字节（两个 LE32：{1, 0}），

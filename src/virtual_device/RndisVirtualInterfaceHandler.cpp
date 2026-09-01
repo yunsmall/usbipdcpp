@@ -61,21 +61,20 @@ data_type wrap_rndis_packet(const std::uint8_t *data, std::size_t size) {
 std::vector<data_type> unwrap_rndis_packets(const data_type &data) {
     std::vector<data_type> frames;
     std::size_t pos = 0;
-    while (pos + sizeof(RndisMessageHeader) <= data.size()) {
-        RndisMessageHeader hdr{};
-        std::memcpy(&hdr, data.data() + pos, sizeof(hdr));
-        // 主机方向包头 24 字节、设备方向 44 字节，消息长度下限不假设头长
-        //（用 DataOffset/DataLength 边界检查兜底）
-        if (hdr.message_length < sizeof(RndisMessageHeader) || pos + hdr.message_length > data.size()) {
-            break; // 消息截断/长度非法：本条及之后丢弃
+    // 主机方向头 24 字节（RNDIS_HOST_HEADER_LEN）：不足则本条及之后都是残渣
+    while (pos + RNDIS_HOST_HEADER_LEN <= data.size()) {
+        // 按指针只读头字段（对齐内核 rndis_rm_hdr 的 skb->data 转换）——
+        // 主机只发前 24 字节，memcpy 整个 44 字节结构体会越界（ASan 实测）
+        const auto *ph = reinterpret_cast<const RndisPacketHeader *>(data.data() + pos);
+        // 消息长度非法或超出传输边界：本条及之后丢弃
+        if (ph->message_length < RNDIS_HOST_HEADER_LEN || pos + ph->message_length > data.size()) {
+            break;
         }
-        if (hdr.message_type != rndis_msg(RndisMessageType::Packet)) {
+        if (ph->message_type != rndis_msg(RndisMessageType::Packet)) {
             break; // 数据面出现非包消息：异常主机，丢弃
         }
-        RndisPacketHeader ph{};
-        std::memcpy(&ph, data.data() + pos, sizeof(ph));
-        std::size_t frame_off = pos + 8 + ph.data_offset; // 数据起始 = 消息第 8 字节 + offset
-        std::size_t frame_len = ph.data_length;
+        std::size_t frame_off = pos + data_start_offset(*ph); // 数据起始（消息内偏移算法见头文件）
+        std::size_t frame_len = ph->data_length;
         if (frame_off + frame_len > data.size()) {
             break;
         }
@@ -83,7 +82,7 @@ std::vector<data_type> unwrap_rndis_packets(const data_type &data) {
             frames.emplace_back(data.begin() + static_cast<std::ptrdiff_t>(frame_off),
                                 data.begin() + static_cast<std::ptrdiff_t>(frame_off + frame_len));
         }
-        pos += hdr.message_length;
+        pos += ph->message_length;
     }
     return frames;
 }
