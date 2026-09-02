@@ -41,18 +41,27 @@ void UacAudioControlHandler::on_setup_interface_handlers() {
     build_class_descriptor();
 }
 
+void UacAudioControlHandler::set_as_handler(UacAudioStreamingSourceHandler *handler) {
+    as_interface_number = static_cast<std::uint8_t>(handler->get_interface().interface_number);
+}
+
+void UacAudioControlHandler::set_as_handler(UacAudioStreamingSinkHandler *handler) {
+    as_interface_number = static_cast<std::uint8_t>(handler->get_interface().interface_number);
+}
+
 void UacAudioControlHandler::build_class_descriptor() {
     if (desc_built)
         return;
     desc_built = true;
 
     // UAC 1.0：Header(9) + Input Terminal(12) + Feature Unit(7+ch+1) + Output Terminal(9)
-    // AS interface 固定跟在 AC 之后（interface 1）
     // 麦克风拓扑：IT(MIC) → FU → OT(USB streaming)；扬声器拓扑：IT(USB streaming) → FU
     // → OT(Speaker)（对齐内核 gadget f_uac1.c：usb_out_it_desc/io_out_ot_desc）。
     // 方向由 input_terminal_type 判断：数据从 USB 流入（IT=TT_USB_STREAMING）即扬声器
     bool is_speaker = (config.input_terminal_type == TT_USB_STREAMING);
-    std::uint8_t as_if_num = 1;
+    // Header 的 baInterfaceNr 是音频流（AS）接口号：装配时由 set_as_handler
+    // 显式写入（复合设备里 AC 不从接口 0 起，硬编码会让驱动找不到 AS 接口）
+    auto as_if_num = as_interface_number;
     auto fu_len = static_cast<std::uint8_t>(AC_FEATURE_UNIT_FIXED_LEN + config.channels + 1);
 
     // Feature Unit bmaControls：按配置组合
@@ -1054,6 +1063,15 @@ std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> dev
     }
     ac->set_config(resolved);
     as->set_ac_handler(ac.get());
+    ac->set_as_handler(as.get());
+    // UAC 功能由 AC 接口声明 IAD（iFunction = AC 的 iInterface，同
+    // UvcDeviceHelper 的声明方式，bFirstInterface 由配置描述符生成时按接口号
+    // 回填）：复合设备（如 UVC+UAC 一体摄像头）里 usbccgp 只按 IAD 归并接口
+    // 组，UAC 组无 IAD 时 AC/AS 被拆成两个独立功能分别启动，usbaudio.sys
+    // 凑不齐 AC+AS 组合而启动失败（Windows 实测 CM_PROB_FAILED_START）。
+    // 音频没有 UVC 那种 "interface collection" 子类概念，bFunctionSubClass 填 0
+    ac_interface->interface_association_descriptor = IadDesc::make(
+            2, CC_AUDIO, 0, 0, ac->get_string_interface_value());
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
@@ -1088,6 +1106,15 @@ std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device
     }
     ac->set_config(resolved);
     as->set_ac_handler(ac.get());
+    ac->set_as_handler(as.get());
+    // UAC 功能由 AC 接口声明 IAD（iFunction = AC 的 iInterface，同
+    // UvcDeviceHelper 的声明方式，bFirstInterface 由配置描述符生成时按接口号
+    // 回填）：复合设备（如 UVC+UAC 一体摄像头）里 usbccgp 只按 IAD 归并接口
+    // 组，UAC 组无 IAD 时 AC/AS 被拆成两个独立功能分别启动，usbaudio.sys
+    // 凑不齐 AC+AS 组合而启动失败（Windows 实测 CM_PROB_FAILED_START）。
+    // 音频没有 UVC 那种 "interface collection" 子类概念，bFunctionSubClass 填 0
+    ac_interface->interface_association_descriptor = IadDesc::make(
+            2, CC_AUDIO, 0, 0, ac->get_string_interface_value());
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
                               : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);

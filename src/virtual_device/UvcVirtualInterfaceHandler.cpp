@@ -119,8 +119,11 @@ void UvcVideoControlHandler::build_class_descriptor() {
         return;
     desc_built_ = true;
 
-    // VS interface is always at index 1 in UVC setup
-    std::uint8_t vs_if_num = 1;
+    // VC Header 的 baInterfaceNr 是 VS 接口号：装配时由 helper 的
+    // set_vs_handler 关联，从 VS handler 的 get_interface() 取（复合设备里
+    // UVC 组不从接口 0 起，硬编码 1 会指错接口）。未装配时退回 1（单设备
+    // 形态 VC=0 → VS=1 的旧行为）
+    std::uint8_t vs_if_num = vs_handler_ ? static_cast<std::uint8_t>(vs_handler_->get_interface().interface_number) : 1;
 
     // VC Header(13) + CameraTerminal(18) + PU(13) + OT(9) = 53
     // UVC 1.5: Processing Unit bControlSize=3 + bmVideoStandards(1)

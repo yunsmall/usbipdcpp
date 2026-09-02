@@ -35,8 +35,8 @@ int main(int argc, char **argv) {
     device->interfaces[1].with_handler<KeyboardHandler>(string_pool);
     device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(device->interfaces[0].handler);
-    auto &keyboard = *std::dynamic_pointer_cast<KeyboardHandler>(device->interfaces[1].handler);
+    auto &mouse = *std::static_pointer_cast<RelativeMouseHandler>(device->interfaces[0].handler);
+    auto &keyboard = *std::static_pointer_cast<KeyboardHandler>(device->interfaces[1].handler);
 
     Server server;
     server.add_device(std::move(device));

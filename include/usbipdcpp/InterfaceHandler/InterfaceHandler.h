@@ -31,6 +31,19 @@ public:
     virtual void on_new_connection(TransferResponder &responder, error_code &ec) =0;
 
     /**
+     * @brief 返回所属接口的只读引用
+     *
+     * 接口描述信息（接口号/端点等）一律经它访问，不要给本类加字段级
+     * getter。跨接口描述符要引用其他接口时（如 UAC AC Header 的
+     * baInterfaceNr），由装配方把对方 handler 关联过来后经
+     * `handler->get_interface()` 取
+     * @return 所属接口的 const 引用
+     */
+    [[nodiscard]] const UsbInterface &get_interface() const {
+        return handle_interface;
+    }
+
+    /**
      * @brief 当发生错误、客户端detach、主动关闭服务器等情况需要完全终止传输时会调用这个函数。被调用后不可以再提交消息
      */
     virtual void on_disconnection(error_code &ec) =0;

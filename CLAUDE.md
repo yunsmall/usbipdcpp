@@ -4,6 +4,32 @@
 禁止用 std::vector、std::array + 手算字节偏移读写（偏移极易算错、字段增删时无法自动发现错误）。
 多字节字段按网络序存内存，访问时用 bswap/htons 类函数显式转换。
 
+## 测试汇总查看
+
+跑 ctest 必须一条命令看到通过/失败数，禁止跑两遍：输出 tail 至少留 15 行
+（汇总行 `100% tests passed out of N` 在输出最后两行，tail 太短会把汇总
+截掉，还得再跑一次）：
+
+```bash
+ctest --test-dir build --output-on-failure -j12 2>&1 | tail -15
+```
+
+## 注释风格
+
+函数/方法/结构体的文档注释一律用 Doxygen 风格（`/** ... */`，@brief 简述 +
+@param 参数说明 + @return 返回值说明），格式对齐 InterfaceHandler.h 的
+AbstInterfaceHandler::on_new_connection：
+
+```cpp
+    /**
+     * @brief 新的客户端连接时会调这个函数
+     * @param responder 传输应答接口（提交应答/停止传输用）
+     * @param ec 发生的ec
+     */
+```
+
+禁止用 `///` 或 `//` 给函数/方法/结构体写文档（行内注释说明"为什么"不受限）。
+
 ## spdlog 日志级别被编译期裁剪时的调试手法
 
 Release/RelWithDebInfo 构建下 SPDLOG_ACTIVE_LEVEL 编译期定为 INFO，TRACE/DEBUG 日志
@@ -52,6 +78,15 @@ push前先提交代码，push和提交请分别执行不要放在一起
 WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（极易误判成
 服务器/协议问题）。list 只读不需要 sudo，但为统一可直接
 `sudo usbip -t 53240 ...`。验证导入状态用 `sudo usbip port`。
+
+**Windows 的 usbip.exe 与 Linux usbip 工具命令完全一样**：-t/--tcp-port 是
+两者共同的顶层全局选项（紧跟 usbip 之后、所有子命令之前），Windows 与 Linux
+的 attach/list/port 语法一一对应。Windows 侧连非 3240 端口服务器的命令就是
+`usbip -t 53240 list -r <ip>` / `usbip -t 53240 attach -r <ip> -b 1-1`，
+不要因为 attach 子命令帮助里 -t 显示为 --terse 就以为不支持端口
+（--terse 是 attach 子命令自己的短选项，顶层 -t 才是端口，看 `usbip --help`
+的顶层 OPTIONS）。Linux 中导入 Windows 侧导出的设备（usbipd-win）写法与此
+完全相同：`usbip -t <端口> attach -r <Windows 主机 ip> -b <busid>`。
 
 ## mock 设备本地验证的坑
 

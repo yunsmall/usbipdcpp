@@ -29,18 +29,14 @@ int main(int argc, char **argv) {
                                         1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_acm");
     // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
     mock_cdc_acm->assign_interface_numbers();
-    // 设置接口处理器
-    mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
-    mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);
+    // 设置接口处理器（with_handler 返回具体类型的 shared_ptr，直接用，无需 cast）
+    auto comm_handler = mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
+    auto data_handler = mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);
     mock_cdc_acm->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    // 关联通信接口和数据接口处理器
-    auto &comm_handler =
-            *std::dynamic_pointer_cast<MockCdcAcmCommunicationInterfaceHandler>(mock_cdc_acm->interfaces[0].handler);
-    auto &data_handler =
-            *std::dynamic_pointer_cast<MockCdcAcmDataInterfaceHandler>(mock_cdc_acm->interfaces[1].handler);
-    comm_handler.set_data_handler(&data_handler);
-    data_handler.set_comm_handler(&comm_handler);
+    // 关联通信接口和数据接口处理器（描述符引用数据接口号 + 数据面状态查询）
+    comm_handler->set_data_handler(data_handler.get());
+    data_handler->set_comm_handler(comm_handler.get());
 
     Server server;
     server.add_device(std::move(mock_cdc_acm));

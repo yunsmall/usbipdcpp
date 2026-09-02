@@ -6,7 +6,7 @@ A C++ library for creating usbip servers
 
 > ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
 > ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker) — no libusb dependency
+> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker), webcam (UVC camera + UAC microphone composite) — no libusb dependency
 > ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
 
 Contributions welcome! 🚀
@@ -559,6 +559,16 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    Usage: `mock_rndis --tun usbip%d` then on the host `ip addr add 192.168.53.2/24 dev usbX`
    and `ping 192.168.53.1`.
+
+**22. mock_webcam**
+
+   A composite device combining a virtual **UVC camera + UAC microphone** in a single USB device — the
+   real-world form of an external webcam, **driverless on Windows** (a "USB camera" and a "microphone"
+   enumerate at the same time, like a physical webcam). The UVC group declares an IAD; the camera
+   (ISO IN video frames) and the microphone (ISO IN audio) stream from the server simultaneously.
+
+   Usage: `mock_webcam --width 640 --height 480 --fps 30 --rates 48000` (mock_uvc options
+   `--width/--height/--fps` combined with mock_audio options `--freq/--rates/--channels/--amp/--harmonics/--audio`).
 
 ---
 

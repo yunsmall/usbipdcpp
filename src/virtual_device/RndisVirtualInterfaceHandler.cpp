@@ -208,9 +208,12 @@ data_type RndisCommunicationInterfaceHandler::get_class_specific_descriptor() {
 
     CdcHeaderFunctionalDesc{0x05, CS_INTERFACE, 0x00, 0x0110 /* bcdCDC: 1.10 */}.append_to(descriptor);
 
+    // bDataInterface 是数据接口号：装配时由 set_data_handler 关联，从数据
+    // handler 的 get_interface() 取（复合设备里通信接口不从接口 0 起，硬编码
+    // 1 会让主机驱动找不到数据接口）。未关联时退回 1（单设备形态 COMM=0 → DATA=1）
     CdcCallManagementDesc{0x05, CS_INTERFACE, 0x01,
                           0x00, // bmCapabilities: 数据接口不处理呼叫管理
-                          0x01} // bDataInterface: 数据接口总是紧邻的下一个接口号
+                          data_handler_ ? static_cast<std::uint8_t>(data_handler_->get_interface().interface_number) : std::uint8_t{1}}
             .append_to(descriptor);
 
     CdcAcmFunctionalDesc{0x04, CS_INTERFACE, 0x02,
@@ -219,8 +222,8 @@ data_type RndisCommunicationInterfaceHandler::get_class_specific_descriptor() {
             .append_to(descriptor);
 
     CdcUnionFunctionalDesc{0x05, CS_INTERFACE, 0x06,
-                           0x00, // bMasterInterface: Interface 0（控制接口）
-                           0x01} // bSlaveInterface0: Interface 1（数据接口）
+                           get_interface().interface_number, // bMasterInterface: 本接口
+                           data_handler_ ? static_cast<std::uint8_t>(data_handler_->get_interface().interface_number) : std::uint8_t{1}}
             .append_to(descriptor);
 
     return descriptor;

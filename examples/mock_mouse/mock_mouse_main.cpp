@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     mock_mouse->interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
     mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    auto &mouse = *std::dynamic_pointer_cast<RelativeMouseHandler>(mock_mouse->interfaces[0].handler);
+    auto &mouse = *std::static_pointer_cast<RelativeMouseHandler>(mock_mouse->interfaces[0].handler);
 
     Server server;
     server.add_device(std::move(mock_mouse));

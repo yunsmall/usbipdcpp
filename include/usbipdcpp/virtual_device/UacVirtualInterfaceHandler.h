@@ -13,6 +13,9 @@
 
 namespace usbipdcpp {
 
+class UacAudioStreamingSourceHandler;
+class UacAudioStreamingSinkHandler;
+
 /// UAC 设备配置 — 控制 AudioControl 接口描述符与 Feature Unit 行为
 struct UacDeviceConfig {
     /// 输入终端类型。默认麦克风（ITT_MICROPHONE）；
@@ -66,6 +69,19 @@ public:
         return gain_q16;
     }
 
+    /**
+     * @brief 与 AS handler 建立关联（UacDeviceHelper 装配时调用，麦克风/扬声器方向二选一）
+     *
+     * AC 描述符 Header 的 baInterfaceNr 引用 AS 接口号，装配时从 AS
+     * handler 的 get_interface() 取——接口间联系由装配显式建立，不在
+     * 描述符构建时猜接口号（对齐 UVC 的 vc/vs 互持指针模式；复合设备里
+     * AC 不从接口 0 起，硬编码 1 会让驱动找不到 AS 接口）
+     * @param handler AS 接口的 handler（UacAudioStreamingSourceHandler 或
+     *                UacAudioStreamingSinkHandler）
+     */
+    void set_as_handler(UacAudioStreamingSourceHandler *handler);
+    void set_as_handler(UacAudioStreamingSinkHandler *handler);
+
 private:
     void build_class_descriptor();
 
@@ -79,6 +95,9 @@ private:
     bool mute = false;
     std::int16_t volume_db = 0; // 单位 1/256 dB，0 表示 0dB
     std::uint32_t gain_q16 = 65536; // 10^(volume_db/256/20) 的 Q16 表示
+    // AC Header 的 baInterfaceNr（AS 接口号），set_as_handler 装配时写入。
+    // 默认 1 保持单设备形态（AC=0 → AS=1）的旧行为
+    std::uint8_t as_interface_number = 1;
 
     // AC 中断端点：状态变化时无挂起 URB 的暂存（UAC1 状态字 2 字节）。
     // push 非阻塞：有挂起请求直接应答，否则入缓冲（对齐内核 f_uac1 audio_notify）

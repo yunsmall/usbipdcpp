@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
         device_handler->setup_interface_handlers();
 
         LibevdevMouseInterfaceHandler &mouse_interface_handler =
-                *std::dynamic_pointer_cast<LibevdevMouseInterfaceHandler>(libevdev_mouse->interfaces[0].handler);
+                *std::static_pointer_cast<LibevdevMouseInterfaceHandler>(libevdev_mouse->interfaces[0].handler);
 
         Server server;
 

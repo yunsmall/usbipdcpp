@@ -51,9 +51,9 @@ int main(int argc, char **argv) {
 
     // 关联通信接口和数据接口处理器
     auto &comm_handler =
-            *std::dynamic_pointer_cast<CdcAcmCommunicationInterfaceHandler>(device->interfaces[0].handler);
+            *std::static_pointer_cast<CdcAcmCommunicationInterfaceHandler>(device->interfaces[0].handler);
     auto &data_handler =
-            *std::dynamic_pointer_cast<ThrottleCdcAcmDataInterfaceHandler>(device->interfaces[1].handler);
+            *std::static_pointer_cast<ThrottleCdcAcmDataInterfaceHandler>(device->interfaces[1].handler);
     comm_handler.set_data_handler(&data_handler);
     data_handler.set_comm_handler(&comm_handler);
 

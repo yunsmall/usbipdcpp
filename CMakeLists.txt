@@ -58,6 +58,7 @@ option(USBIPDCPP_BUILD_EXAMPLE_MOCK_PIPE "Build example mock generic pipe applic
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_PIPE_HID "Build example mock HID keyboard via generic pipe applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_ECM "Build example mock CDC ECM (virtual ethernet adapter) applications" ${IS_TOP_LEVEL})
 option(USBIPDCPP_BUILD_EXAMPLE_MOCK_RNDIS "Build example mock CDC RNDIS (virtual ethernet adapter, driverless on Windows) applications" ${IS_TOP_LEVEL})
+option(USBIPDCPP_BUILD_EXAMPLE_MOCK_WEBCAM "Build example mock UVC+UAC webcam (virtual camera + microphone) applications" ${IS_TOP_LEVEL})
 
 if (IS_TOP_LEVEL AND WIN32)
     set(USBIPDCPP_BUILD_EXAMPLE_LIBUSB_WINDOWS_SERVICE_DEFAULT ON)

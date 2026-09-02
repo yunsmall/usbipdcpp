@@ -8,7 +8,7 @@
 
 - ✅ **USBIP 服务器**: 基于 libusb 实现，支持所有 libusb 兼容平台
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
-- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、CDC ECM/RNDIS（网卡）、UVC（摄像头）、UAC（麦克风、扬声器）—— 无需 libusb
+- ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、CDC ECM/RNDIS（网卡）、UVC（摄像头）、UAC（麦克风、扬声器）、webcam（UVC 摄像头 + UAC 麦克风复合设备）—— 无需 libusb
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
 
@@ -543,6 +543,16 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    用法：`mock_rndis --tun usbip%d`，主机侧 `ip addr add 192.168.53.2/24 dev usbX` 后
    `ping 192.168.53.1`。
+
+**22. mock_webcam**
+
+   虚拟 **UVC 摄像头 + UAC 麦克风** 复合设备——单个 USB 设备同时呈现摄像头与麦克风，
+   即外接摄像头的真实形态，**Windows 免驱**（同一时间枚举出"USB 摄像头"和"麦克风"，
+   与物理摄像头一致）。UVC 功能组声明 IAD；摄像头（ISO IN 视频帧）与麦克风（ISO IN
+   音频）同时从服务器推流。
+
+   用法：`mock_webcam --width 640 --height 480 --fps 30 --rates 48000`（mock_uvc 的
+   `--width/--height/--fps` 与 mock_audio 的 `--freq/--rates/--channels/--amp/--harmonics/--audio` 合并）。
 
 ---
 

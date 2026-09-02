@@ -56,6 +56,19 @@ public:
      */
     static UsbInterface make_interface(std::uint8_t interrupt_in_ep);
 
+    /**
+     * @brief 关联数据接口处理器（装配时调用）
+     *
+     * 通信接口类特定描述符的 bDataInterface（CallManagement/Union）引用
+     * 数据接口号，装配时从数据 handler 的 get_interface() 取——复合设备里
+     * 通信接口不从接口 0 起，硬编码 1 会让主机驱动（rndis_host/Windows
+     * rndismp）找不到数据接口
+     * @param handler 数据接口 handler
+     */
+    void set_data_handler(RndisDataInterfaceHandler *handler) {
+        data_handler_ = handler;
+    }
+
     // ========== 内部实现（子类无需关心） ==========
 
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
@@ -100,6 +113,7 @@ protected:
     std::array<std::uint8_t, 6> mac_address_{};
     std::uint32_t link_speed_100bps_ = 0; // OID_GEN_LINK_SPEED 返回值（100bps 单位）
     std::uint8_t interface_number_; // 本接口号（通知 wIndex 用，构造时从接口对象取）
+    RndisDataInterfaceHandler *data_handler_ = nullptr; // set_data_handler 装配时写入
 
     /// 状态通知通道（中断 IN 端点）：一条通知 = 一个完整消息（8 字节
     /// RESPONSE_AVAILABLE）。有挂起请求直接应答，否则入缓冲（上限 30 条）

@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
     mouse_device->interfaces[0].with_handler<AbsoluteMouseHandler>(string_pool);
     mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
 
-    auto mouse = std::dynamic_pointer_cast<AbsoluteMouseHandler>(mouse_device->interfaces[0].handler);
+    auto mouse = std::static_pointer_cast<AbsoluteMouseHandler>(mouse_device->interfaces[0].handler);
 
     Server server;
     server.add_device(std::move(mouse_device));

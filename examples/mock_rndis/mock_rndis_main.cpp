@@ -125,7 +125,10 @@ int main(int argc, char **argv) {
     device->assign_interface_numbers();
     auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(string_pool, mac,
                                                                                         UsbSpeed::Full);
-    device->interfaces[1].with_handler<RndisDataInterfaceHandler>(string_pool, backend.get(), comm.get());
+    auto data = device->interfaces[1].with_handler<RndisDataInterfaceHandler>(string_pool, backend.get(), comm.get());
+    // 通信接口描述符的 CallManagement/Union 引用数据接口号（bDataInterface），
+    // 装配时关联（数据接口号从数据 handler 的 get_interface() 取）
+    comm->set_data_handler(data.get());
     // MS OS Compatible ID "RNDIS" + SubCompatibleID "5162001" 由
     // RndisMsOsDeviceHandler 预设（Windows rndismp 按 MS_COMP_RNDIS&
     // MS_SUBCOMP_5162001 匹配，见 rndiscmp.inf；空值匹配失败退回 usbser）
