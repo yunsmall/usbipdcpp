@@ -133,7 +133,16 @@ jobs:
 
       # ======== 编译 + 测试 + 安装 ========
 
+      # ubuntu runner 只有 2 核且内存小：并行编译时 miniaudio/fmt 等大头文件
+      # 同时展开，内存峰值超限被内核 OOM 杀（实测 g++: fatal error: Killed +
+      # exit 143，与 cmake-multi-platform.yml 同因），Linux 限 1 并发
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build --config Release --parallel 1
+
+      # macOS/Windows 编译器内存占用低，不限制（用满 runner 核数）
       - name: Build
+        if: runner.os != 'Linux'
         run: cmake --build build --config Release --parallel
 
       - name: Test
