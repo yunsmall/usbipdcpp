@@ -1,6 +1,7 @@
 #include "usbipdcpp/Server.h"
 
 #include <thread>
+#include <chrono>
 #include <iostream>
 #include <csignal>
 
@@ -95,7 +96,23 @@ usbipdcpp::error_code usbipdcpp::Server::start(const asio::ip::tcp::endpoint &ep
     try {
         network_io_thread = std::thread([this] {
             asio::co_spawn(asio_io_context, accept_loop(), asio::detached);
-            asio_io_context.run();
+            // run() 会把调度层的异常（如中断管道重建失败这类资源性错误）传给
+            // 调用线程，协程内的 catch 兜不到这一层，裸跑会让异常逃出线程
+            // 函数直接 std::terminate。asio 保证 run() 抛出后 io_context 仍可
+            // 再次 run()：catch 后记日志并短暂退避重进，资源恢复后服务自愈；
+            // stop() 时 run() 正常返回，break 退出
+            while (true) {
+                try {
+                    asio_io_context.run();
+                    break;
+                } catch (const std::exception &e) {
+                    SPDLOG_ERROR("网络线程 io_context 异常，1s 后重进运行循环：{}", e.what());
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                } catch (...) {
+                    SPDLOG_ERROR("网络线程 io_context 未知异常，1s 后重进运行循环");
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+            }
         });
     } catch (...) {
         // 线程创建失败（如系统资源不足）：恢复未运行状态并关闭 acceptor，
