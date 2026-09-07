@@ -21,6 +21,12 @@ on:
       - '.gitignore'
       - '.github/**'
   workflow_dispatch:
+    inputs:
+      build_parallel:
+        description: '编译并行度：0=不限制（全部核，默认）；1=逐个编译（排查并行编译内存问题时用）'
+        required: false
+        default: '0'
+        type: string
 
 jobs:
   build:
@@ -127,8 +133,32 @@ jobs:
 
       # ======== 编译 + 测试 ========
 
+      # ubuntu 24.04 的 systemd-oomd 会对内存压力高的 cgroup 杀进程——实测并行
+      # 编译内存打满时它把整个 runner 服务杀了（现象：编译中途全体 Terminated +
+      # exit 143 + "runner has received a shutdown signal"），构建前先停掉。
+      # 前后状态都打印，确认 stop 是否真的生效
+      - name: Stop systemd-oomd (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "oomd before: $(systemctl is-active systemd-oomd 2>&1)"
+          if sudo systemctl stop systemd-oomd; then
+            echo "oomd stop: OK"
+          else
+            echo "oomd stop: FAILED"
+          fi
+          echo "oomd after: $(systemctl is-active systemd-oomd 2>&1)"
+
+      # 并行度由 workflow_dispatch 的 build_parallel 控制：0 或空（push/PR 自动
+      # 触发无 input）= 不限制（全部核）；>0 = 指定并行数
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: bash
+        run: |
+          P="${{ inputs.build_parallel }}"
+          if [ -z "$P" ] || [ "$P" = "0" ]; then
+            cmake --build build --config Release --parallel
+          else
+            cmake --build build --config Release --parallel "$P"
+          fi
 
       - name: Test
         working-directory: build
