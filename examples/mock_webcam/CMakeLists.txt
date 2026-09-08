@@ -64,7 +64,7 @@ endif ()
 # 同 mock_audio；只测装配布局，依赖的 SineWaveSource/ColorBarSource 无第三方依赖，
 # 不要求 FFmpeg/miniaudio）
 if (USBIPDCPP_BUILD_TESTS)
-    find_package(GTest CONFIG QUIET)
+    find_package(GTest QUIET)
     if (GTest_FOUND)
         include(GoogleTest)
         enable_testing()

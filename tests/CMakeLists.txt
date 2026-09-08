@@ -1,6 +1,6 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(GTest CONFIG REQUIRED)
+find_package(GTest REQUIRED)
 include(GoogleTest)
 
 function(add_test_file name)

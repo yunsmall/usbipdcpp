@@ -1,4 +1,4 @@
-find_package(pybind11 CONFIG REQUIRED)
+find_package(pybind11 REQUIRED)
 
 file(GLOB BINDING_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp

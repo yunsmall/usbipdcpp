@@ -3,6 +3,12 @@ project(usbipdcpp VERSION 1.0.9)
 
 set(CMAKE_CXX_STANDARD 23)
 
+# find_package 统一 config 优先、Find 模块兜底（CMake 3.15+ 的
+# CMAKE_FIND_PACKAGE_PREFER_CONFIG）：vcpkg/新版依赖导出 *Config.cmake 走
+# config 模式；只有老式布局（无 config、仅 CMake 内置 Find 模块如 FindGTest）
+# 的环境自动落模块模式。因此全项目 find_package 一律不写 CONFIG/MODULE 关键字
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
+
 include(GNUInstallDirs)
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -85,9 +91,9 @@ if (USBIPDCPP_USE_PKGCONF_ASIO)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(asio REQUIRED IMPORTED_TARGET asio)
 else ()
-    find_package(asio CONFIG REQUIRED)
+    find_package(asio REQUIRED)
 endif ()
-find_package(spdlog CONFIG REQUIRED)
+find_package(spdlog REQUIRED)
 
 if (MSVC)
     add_compile_options("/Zc:preprocessor")

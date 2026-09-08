@@ -42,7 +42,7 @@ endif ()
 
 # AudioFileSource 单元测试（实现随示例走：构建 tests 且 miniaudio 可用时添加）
 if (USBIPDCPP_BUILD_TESTS AND MINIAUDIO_INCLUDE_DIRS)
-    find_package(GTest CONFIG QUIET)
+    find_package(GTest QUIET)
     if (GTest_FOUND)
         include(GoogleTest)
         enable_testing()

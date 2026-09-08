@@ -1,7 +1,7 @@
 # 示例 exe 输出到构建根目录，与 DLL 同目录，避免找不到 dll
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(cxxopts CONFIG)
+find_package(cxxopts)
 
 if (cxxopts_FOUND)
     message(STATUS "cxxopts found — building examples")
