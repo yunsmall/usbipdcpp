@@ -113,7 +113,38 @@ public:
     std::shared_ptr<UsbDevice> add_device(std::shared_ptr<UsbDevice> &&device);
 
     /**
-     * @thread_safety 内部加锁，任意线程安全。
+     * @brief 判断 busid 是否已被占用（available 或用中任一存在）。内部不持锁，
+     *        供持锁批量操作中查重用（如绑定前检查冲突），避免反复进出锁
+     *
+     * 典型用法——手动向 Server 添加设备时，查重与添加必须在同一把锁内完成，
+     * 防止并发下两个线程同时查到"空闲"然后都添加（busid 冲突穿透检查）：
+     * @code
+     * {
+     *     std::lock_guard lock(server.get_devices_mutex());
+     *     if (server.has_bound_device_locked(busid)) {
+     *         return; // busid 已被占用
+     *     }
+     *     // 注意：不能调 add_device()（它内部会再次加锁，shared_mutex 非递归
+     *     // 会死锁），持锁时直接操作设备容器
+     *     server.get_available_devices().emplace_back(std::move(device));
+     * }
+     * @endcode
+     *
+     * @param busid 待查询的 busid
+     * @return true 已被占用
+     *
+     * @thread_safety 调用方必须持有 get_devices_mutex() 的读锁或写锁。
+     */
+    bool has_bound_device_locked(const std::string &busid) const;
+
+    /**
+     * @brief 判断 busid 是否已被占用（available 或用中任一存在）
+     * @param busid 待查询的 busid
+     * @return true 已被占用
+     *
+     * @thread_safety 内部加锁，任意线程安全。若调用方已持有
+     *                 get_devices_mutex()，改用 has_bound_device_locked
+     *                 （本函数会再次加锁，持锁时调用会死锁）。
      */
     bool has_bound_device(const std::string &busid);
 

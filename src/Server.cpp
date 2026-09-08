@@ -245,15 +245,19 @@ std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::add_device(std::shared_
 }
 
 
-bool usbipdcpp::Server::has_bound_device(const std::string &busid) {
-    std::shared_lock lock(devices_mutex);
-    //只要存了这个设备就是有设备，不管是在可用设备还是正在使用的设备
+bool usbipdcpp::Server::has_bound_device_locked(const std::string &busid) const {
+    // 只要存了这个设备就是有设备，不管是在可用设备还是正在使用的设备
     for (auto &device: available_devices) {
         if (device->busid == busid) {
             return true;
         }
     }
     return using_devices.contains(busid);
+}
+
+bool usbipdcpp::Server::has_bound_device(const std::string &busid) {
+    std::shared_lock lock(devices_mutex);
+    return has_bound_device_locked(busid);
 }
 
 size_t usbipdcpp::Server::get_session_count() {

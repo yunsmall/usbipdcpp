@@ -196,6 +196,16 @@ public:
     /**
      * @brief Get the underlying Server instance.
      *
+     * 与虚拟设备共用同一监听端口：物理设备经 bind_* 进入 server 的
+     * available_devices，虚拟设备用 `get_server().add_device(虚拟 UsbDevice)`
+     * 加进同一个 Server 即可——Server 对设备后端无感知（UsbDevice 统一承载
+     * LibusbDeviceHandler / VirtualDeviceHandler）。
+     *
+     * @warning 混用时注意 busid 唯一性：客户端按 busid attach，重复 busid
+     *          会命中不确定的设备。虚拟设备默认 busid 常为 "1-1"，与真实
+     *          设备的总线号（如 "1-1"）可能撞车，混用前给虚拟设备另行指定
+     *          不冲突的 busid。
+     *
      * @return Reference to the internal Server object.
      *
      * @thread_safety 始终安全（仅返回引用）。对返回对象的操作需遵循 Server 的线程约束。

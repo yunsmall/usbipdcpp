@@ -410,8 +410,12 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 **9. libusb_server**
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
-   and can be used to choose which device to forward. By adding virtual usb devices to share the same ubsip server
-   with physical usb devices.
+   and can be used to choose which device to forward. Sharing one usbip server with virtual devices:
+   `LibusbServer` composes an internal `Server`; physical devices enter its device table via bind, while
+   virtual devices are added with `get_server().add_device(...)` into the same `Server` — one listening port
+   can then export both kinds (the `Server` is backend-agnostic). When mixing, keep busids unique: clients
+   attach by busid, and a virtual device's default busid (often "1-1") may collide with a real device's
+   bus number — give virtual devices a non-conflicting busid.
 **10. mock_msc**
 
    A virtual USB Mass Storage (flash drive) device backed by a disk image file.
