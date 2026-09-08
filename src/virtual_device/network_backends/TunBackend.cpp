@@ -109,8 +109,9 @@ void TunBackend::send_frame(const std::uint8_t *data, std::size_t size) {
         return; // 已关闭或超长帧直接丢弃（网络数据可丢，TCP 重传兜底）
     }
     // tap 设备单帧消费，write 一般整帧写入；部分写入/失败视为丢帧，不重试
-    // （Linux 的 write 带 warn_unused_result，转 void 显式丢弃返回值免告警）
-    (void)::write(tun_fd_, data, size);
+    // （Linux 的 write 带 warn_unused_result，(void) 强转压不掉 GCC 的告警，
+    // 用 maybe_unused 变量接收后显式不读）
+    [[maybe_unused]] const auto written = ::write(tun_fd_, data, size);
 }
 
 void TunBackend::read_loop() {

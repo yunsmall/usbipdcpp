@@ -271,8 +271,14 @@ void AbsoluteMouseHandler::humanized_move(int from_x, int from_y, int to_x, int 
     double ctrl2_x = (mid_x + to_hid_x) / 2.0 + perp2 * perp_x + along_dist(gen) * dx / (len > 0 ? len : 1);
     double ctrl2_y = (mid_y + to_hid_y) / 2.0 + perp2 * perp_y + along_dist(gen) * dy / (len > 0 ? len : 1);
 
+    // GCC 10+ 对按值返回 std::pair 有 -Wpsabi note（C++17 起 pair 传参 ABI
+    // 变化提示），改用局部聚合结构——调用点的结构化绑定照常工作
+    struct BezierPoint {
+        double x;
+        double y;
+    };
     // 三次贝塞尔曲线: B(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3
-    auto bezier = [&](double t) -> std::pair<double, double> {
+    auto bezier = [&](double t) -> BezierPoint {
         double u = 1.0 - t;
         double x = u * u * u * from_hid_x + 3 * u * u * t * ctrl1_x + 3 * u * t * t * ctrl2_x + t * t * t * to_hid_x;
         double y = u * u * u * from_hid_y + 3 * u * u * t * ctrl1_y + 3 * u * t * t * ctrl2_y + t * t * t * to_hid_y;
