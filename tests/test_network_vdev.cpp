@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <limits>
 #include <string>
 #include <thread>
 
@@ -123,27 +122,6 @@ TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
 // ---------------------------------------------------------------------------
 // 以下为客户端各种奇特连接/断连场景
 // ---------------------------------------------------------------------------
-
-namespace {
-// 发送 import 请求并读取回复，返回回复中的 status；任何错误返回最大值
-std::uint32_t import_device(asio::ip::tcp::socket &client, const std::string &busid) {
-    UsbIpCommand::OpReqImport req{.status = 0, .busid = {}};
-    std::copy(busid.begin(), busid.end(), req.busid.begin());
-    usbipdcpp::error_code send_ec;
-    req.to_socket(client, send_ec);
-    if (send_ec) {
-        return std::numeric_limits<std::uint32_t>::max();
-    }
-    std::uint16_t version = 0;
-    std::uint16_t command = 0;
-    std::uint32_t status = 0;
-    data_read_from_socket(client, version, command, status);
-    if (command != OP_REP_IMPORT) {
-        return std::numeric_limits<std::uint32_t>::max();
-    }
-    return status;
-}
-} // namespace
 
 TEST(TestNetworkVdev, ClientRstWithoutAnyData) {
     // 连接后不发任何数据直接 RST：session 挂在 parse_op 的阻塞读上，读要
@@ -483,3 +461,4 @@ TEST(TestNetworkVdev, ClientReconnectLoop) {
     }
     server.stop();
 }
+

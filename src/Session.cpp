@@ -172,8 +172,8 @@ void usbipdcpp::Session::parse_op() {
                             if (open_ec) {
                                 SPDLOG_ERROR("打开设备失败: {}", open_ec.message());
                                 open_device_failed = true;
-                                // 将设备移回可用列表
-                                server.try_moving_device_to_available(wanted_busid);
+                                // 释放设备（已被物理移除的由 Server 直接丢弃）
+                                server.release_device(wanted_busid);
                                 current_import_device.reset();
                                 current_handler.reset();
                                 current_import_device_id.reset();
@@ -233,20 +233,15 @@ void usbipdcpp::Session::parse_op() {
                         // 不等 receiver 读到错误再清理（窗口内设备滞留
                         // using 列表，拔出/stop 竞争时状态不一致）。清理逻辑
                         // 与 transfer_loop 中 sender 线程创建失败的路径一致：
-                        // 通知 handler 断连释放设备接口，按 is_device_removed()
-                        // 决定从 using 移除或移回可用列表。不能进入
+                        // 通知 handler 断连释放设备接口，设备交由 Server 释放
+                        // （已被物理移除的会被直接丢弃）。不能进入
                         // transfer_loop——receiver 会再次清理（current_handler
                         // 已 reset），二次清理是空指针访问
                         SPDLOG_ERROR("发送 OpRepImport 失败，断开本次连接: {}", ec.message());
                         usbipdcpp::error_code disconnect_ec;
                         current_handler->on_disconnection(disconnect_ec);
-                        if (current_handler->is_device_removed()) {
-                            std::lock_guard lock(server.get_devices_mutex());
-                            server.get_using_devices().erase(*current_import_device_id);
-                        }
-                        else {
-                            server.try_moving_device_to_available(*current_import_device_id);
-                        }
+                        // 释放设备：已被物理移除的由 Server 在锁内直接丢弃（不移回可用列表）
+                        server.release_device(*current_import_device_id);
                         current_import_device_id.reset();
                         current_import_device.reset();
                     }
@@ -361,13 +356,8 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
         SPDLOG_ERROR("sender 线程创建失败，断开本次连接");
         usbipdcpp::error_code disconnect_ec;
         current_handler->on_disconnection(disconnect_ec);
-        if (current_handler->is_device_removed()) {
-            std::lock_guard lock(server.get_devices_mutex());
-            server.get_using_devices().erase(*current_import_device_id);
-        }
-        else {
-            server.try_moving_device_to_available(*current_import_device_id);
-        }
+        // 释放设备：已被物理移除的由 Server 在锁内直接丢弃（不移回可用列表）
+        server.release_device(*current_import_device_id);
         current_import_device_id.reset();
         current_import_device.reset();
         // after 回调仍要调用（传 nullptr 表示创建失败），保证 before/after 成对
@@ -411,13 +401,8 @@ void usbipdcpp::Session::transfer_loop(usbipdcpp::error_code &transferring_ec) {
             should_immediately_stop = true;
         }
         data_available_cv.notify_all();
-        if (current_handler->is_device_removed()) {
-            std::lock_guard lock(server.get_devices_mutex());
-            server.get_using_devices().erase(*current_import_device_id);
-        }
-        else {
-            server.try_moving_device_to_available(*current_import_device_id);
-        }
+        // 释放设备：已被物理移除的由 Server 在锁内直接丢弃（不移回可用列表）
+        server.release_device(*current_import_device_id);
         current_import_device_id.reset();
         current_import_device.reset();
     }
@@ -616,15 +601,8 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
      * 二是这个session马上就要析构了current_import_device的那两个变量不会重新被使用
      * 因此先标记为可用再清除这两个变量的状态
      */
-    if (current_handler->is_device_removed()) {
-        // 设备已物理拔出，直接从 using_devices 移除
-        SPDLOG_INFO("设备已物理拔出，不再移回可用列表");
-        std::lock_guard lock(server.get_devices_mutex());
-        server.get_using_devices().erase(*current_import_device_id);
-    }
-    else {
-        server.try_moving_device_to_available(*current_import_device_id);
-    }
+    // 释放设备：已被物理移除的由 Server 在锁内直接丢弃（不移回可用列表）
+    server.release_device(*current_import_device_id);
     current_import_device_id.reset();
     current_import_device.reset();
     SPDLOG_TRACE("将当前导入设备的busid设为空");

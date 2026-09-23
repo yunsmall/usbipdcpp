@@ -34,22 +34,6 @@ void log_device_state(Server &server) {
 } // namespace
 
 LibusbServer::LibusbServer(const LibusbServerConfig& config) : config(config) {
-    server.register_session_exit_callback([this]() {
-        std::lock_guard lock(server.get_devices_mutex());
-        auto &server_available_devices = server.get_available_devices();
-        for (auto it = server_available_devices.begin(); it != server_available_devices.end();) {
-            bool removed = false;
-            if (auto libusb_handle = std::dynamic_pointer_cast<LibusbDeviceHandler>((*it)->handler)) {
-                if (libusb_handle->device_removed) {
-                    it = server_available_devices.erase(it);
-                    removed = true;
-                }
-            }
-            if (!removed) {
-                ++it;
-            }
-        }
-    });
 }
 
 std::pair<std::string, std::string> LibusbServer::get_device_names(libusb_device *device) {

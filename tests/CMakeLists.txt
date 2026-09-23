@@ -57,6 +57,11 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_network_vdev)
     target_link_libraries(test_network_vdev PRIVATE usbipdcpp_virtual_device)
 
+    # 设备被物理移除（is_device_removed()）后的释放语义专项：丢弃语义、
+    # 断开/stop/多客户端争用等场景
+    add_test_file(test_device_removal)
+    target_link_libraries(test_device_removal PRIVATE usbipdcpp_virtual_device)
+
     # 通用管道虚拟设备（PipeDeviceHandler）的端到端测试
     add_test_file(test_pipe_device_handler)
     target_link_libraries(test_pipe_device_handler PRIVATE usbipdcpp_virtual_device)

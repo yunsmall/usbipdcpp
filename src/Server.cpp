@@ -14,6 +14,7 @@
 #include "usbipdcpp/utils/utils.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
+#include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Session.h"
 
 usbipdcpp::Server::Server(const ServerNetworkConfig &network_config) :
@@ -498,14 +499,22 @@ bool usbipdcpp::Server::is_device_using(const std::string &busid) {
     return using_devices.contains(busid);
 }
 
-void usbipdcpp::Server::try_moving_device_to_available(const std::string &busid) {
+void usbipdcpp::Server::release_device(const std::string &busid) {
     print_devices();
-    SPDLOG_DEBUG("尝试将{}转移到可用设备中", busid);
+    SPDLOG_DEBUG("释放设备{}", busid);
     std::lock_guard lock(devices_mutex);
     // SPDLOG_TRACE("成功获得两个锁");
 
     auto ret = using_devices.find(busid);
     if (ret != using_devices.end()) {
+        // 已物理移除的设备直接丢弃，不放回可用列表：后端在拔出那一刻清理的是
+        // 当场扫到的列表状态，此后不会再有任何事件扫到它，放回去就是永远
+        // 清不掉的僵尸（旧实现要靠会话退出回调兜底打扫）
+        if (ret->second->handler && ret->second->handler->is_device_removed()) {
+            SPDLOG_INFO("设备{}已被物理移除，不再移回可用设备", busid);
+            using_devices.erase(ret);
+            return;
+        }
         SPDLOG_INFO("成功将{}转移到可用设备中", busid);
         auto &dev = ret->second;
         available_devices.emplace_back(std::move(dev));

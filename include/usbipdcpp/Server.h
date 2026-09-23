@@ -189,6 +189,12 @@ public:
     }
 
     /**
+     * @brief 注册会话退出回调：每个会话结束时调用一次，供上层跟踪连接状态
+     * @param callback 回调函数，在会话收尾线程上、持有会话表锁时调用——不能在
+     *                 回调里再调用会取该锁的接口（如 get_session_count）。
+     *                 本回调只作上行汇报，库内部不用它做资源清理（设备列表的
+     *                 维护由 Server 自己负责）
+     *
      * @thread_safety 内部加锁，任意线程安全。
      */
     void register_session_exit_callback(std::function<void()> &&callback);
@@ -235,15 +241,34 @@ protected:
      */
     asio::awaitable<void> accept_loop();
 
+    /**
+     * @brief 判断设备是否正在被使用（在 using_devices 中）
+     * @param busid 设备 busid
+     * @return true 正在使用中（已被某个会话导入）
+     *
+     * @thread_safety 内部加锁，任意线程安全。
+     */
     bool is_device_using(const std::string &busid);
 
-    void try_moving_device_to_available(const std::string &busid);
+    /**
+     * @brief 释放设备：把设备从 using_devices 移回 available_devices
+     *
+     * 已被后端物理移除（is_device_removed()）的设备直接丢弃、不放回可用列表：
+     * 后端只在设备消失那一刻清理它当场扫到的列表状态，此后不会有事件再扫到
+     * 残留，放回去就是清不掉的僵尸。
+     *
+     * @param busid 待释放设备的 busid
+     *
+     * @thread_safety 内部加锁，任意线程安全。
+     */
+    void release_device(const std::string &busid);
 
     /**
-     * @brief Try to move device to using_devices, and return this device,
-     * return nullptr if there is no such device in available_devices or moved failed.
-     * @param busid device busid
-     * @return device or nullptr when error
+     * @brief 占用设备：把设备从 available_devices 移入 using_devices 并返回
+     * @param busid 设备 busid
+     * @return 设备；可用列表中没有该设备时返回 nullptr
+     *
+     * @thread_safety 内部加锁，任意线程安全。
      */
     std::shared_ptr<UsbDevice> try_moving_device_to_using(const std::string &busid);
 

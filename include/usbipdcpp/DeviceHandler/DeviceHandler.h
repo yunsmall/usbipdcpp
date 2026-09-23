@@ -48,6 +48,12 @@ public:
      * @brief 新的客户端连接时会调这个函数，可以阻塞。子类实现时请在函数开头调用这个函数
      * @param responder 请自行储存通信用的应答接口
      * @param ec 发生的ec
+     *
+     * @attention 失败回滚由本函数内部负责：返回错误（ec 置位）之前，本次调用
+     * 已建立的状态必须由实现者自行撤销干净——撤销 responder 注册、停掉已启动
+     * 的线程/调度器、断开已建连的接口（子类在基类调用之后才失败时同样如此）。
+     * 调用方不会代调 on_disconnection 兜底：带着半开状态（仍有运行中的线程）
+     * 的设备被释放析构时会因 joinable 线程直接 terminate。
      */
     virtual void on_new_connection(TransferResponder &responder, error_code &ec) {
         register_responder(responder);
@@ -89,13 +95,25 @@ public:
     /**
      * @brief 检查设备是否已被移除
      * @return true 表示设备已物理拔出
+     *
+     * @note 返回 true 后 Server 会把设备当"已消失"处理：释放（会话断开 / stop）
+     * 时直接从使用中列表丢弃、不再放回可用列表（后端只在拔出那一刻扫一遍列表，
+     * 放回去就是没人再清得掉的僵尸），此后的导入尝试也必然失败。默认恒
+     * false（虚拟设备不涉及物理拔出）；后端（如 libusb）在检测到拔出时覆盖
+     *
+     * @attention 禁止返回 true 之后再改回 false：已移除是单向终态——返回 true
+     * 后设备随时可能被丢弃析构，不可能复活
      */
     virtual bool is_device_removed() const {
         return false; // 默认实现
     }
 
     /**
-     * @brief 设备被物理移除时调用
+     * @brief 通知 handler"设备理论上已被移除"，请做相应处理（何时让
+     *        is_device_removed() 返回 true 由实现自行决定，两者不强制绑定）
+     *
+     * 不由核心框架调用，一般用于其他后端收到系统拔出通知后回调（如 libusb
+     * 后端的 hotplug / 传输错误路径）
      */
     virtual void on_device_removed() {
     }

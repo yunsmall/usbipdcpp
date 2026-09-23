@@ -5,11 +5,14 @@
 
 #include "crash_handler.h"
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
 #include <thread>
 
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/Server.h"
+#include "usbipdcpp/network.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
 #include "usbipdcpp/utils/utils.h"
@@ -85,6 +88,25 @@ inline bool wait_sessions_gone(Server &server, std::chrono::milliseconds timeout
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return server.get_session_count() == 0;
+}
+
+// 发送 import 请求并读取回复，返回回复中的 status；任何错误返回最大值
+inline std::uint32_t import_device(asio::ip::tcp::socket &client, const std::string &busid) {
+    UsbIpCommand::OpReqImport req{.status = 0, .busid = {}};
+    std::copy(busid.begin(), busid.end(), req.busid.begin());
+    usbipdcpp::error_code send_ec;
+    req.to_socket(client, send_ec);
+    if (send_ec) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    std::uint16_t version = 0;
+    std::uint16_t command = 0;
+    std::uint32_t status = 0;
+    data_read_from_socket(client, version, command, status);
+    if (command != OP_REP_IMPORT) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    return status;
 }
 
     template<usbipdcpp::Serializable T>

@@ -633,6 +633,14 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
 | `StringPool` | Manages USB string descriptors (limited to 255 strings) |
 
+### Device Removal Semantics
+
+Once a device is physically removed (`AbstDeviceHandler::is_device_removed()` returns true; a backend notifies the handler via `on_device_removed()` when it receives a system removal event—when to flip the flag is up to the handler):
+
+- **Discarded on release**: when a session disconnects or `stop()` is called, the device is dropped from the "in use" list and **not** returned to the available list—the backend only sweeps the list at the moment the device disappears, so putting it back would leave a zombie that nothing ever cleans up (it would just fail to open on the next import).
+- **Imports always fail**: an already-removed device still lingering in the list fails to open on import and is discarded afterwards.
+- No background sweeping or session-exit fallback cleanup is therefore needed—zombies never arise in the first place.
+
 ### Transfer Data Carrier
 
 Transfer data is managed via [`TransferHandle`](include/protocol.h), an RAII wrapper that automatically frees the transfer handle on destruction. Supports move semantics for ownership transfer. Note that `release()` gives up ownership and requires manual cleanup.
