@@ -785,7 +785,23 @@ This project is licensed under [LGPLv3](LICENSE).
 > This product uses usbipdcpp (https://github.com/yunsmall/usbipdcpp), licensed under LGPLv3.
 > ```
 
+usbipdcpp is a personal project, built and maintained as a labor of love in my spare time.
+For a library like this, attribution is how most people find out it exists — which is why the
+request above matters.
+
 If you modify this library and wish to distribute it closed-source, please contact: yun_small@163.com
+
+---
+
+## Who uses usbipdcpp
+
+- [moonlight-qt](https://github.com/qiin2333/moonlight-qt) — macOS USB forwarding helper
+  (`moonlight-usbd`), bundled in the macOS builds
+- [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus) — Android USB/IP export
+  backend (`usbip-backend`)
+
+Building something with usbipdcpp? A PR adding your project to this list is welcome — just
+make sure you've displayed the attribution described under [License](#license).
 
 ---
 

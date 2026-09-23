@@ -766,7 +766,21 @@ AbstDeviceHandler
 > 本产品使用了 usbipdcpp（https://github.com/yunsmall/usbipdcpp），遵循 LGPLv3 许可证。
 > ```
 
+usbipdcpp 是我业余时间一个人用爱发电维护的项目。对这样的库来说，署名往往是使用者
+知道它存在的主要途径——这也是上面这条要求的意义所在。
+
 修改本库代码后如需以闭源方式分发，请联系：yun_small@163.com
+
+---
+
+## 谁在使用 usbipdcpp
+
+- [moonlight-qt](https://github.com/qiin2333/moonlight-qt) —— macOS 端 USB 转发 helper
+  （`moonlight-usbd`，随 macOS 版一起打包）
+- [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus) —— Android 端 USB/IP
+  导出后端（`usbip-backend`）
+
+你也用 usbipdcpp 做了东西？欢迎提 PR 在这里加一行——记得按[许可证](#许可证)一节显示署名。
 
 ---
 
