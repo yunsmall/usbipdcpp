@@ -2,6 +2,7 @@
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
+#include "usbipdcpp/virtual_device/TransferResponder.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/HidVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
@@ -15,9 +16,16 @@ class PyVirtualInterfaceHandler : public usbipdcpp::VirtualInterfaceHandler {
 public:
     using usbipdcpp::VirtualInterfaceHandler::VirtualInterfaceHandler;
 
-    void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override {
-        PYBIND11_OVERRIDE(void, usbipdcpp::VirtualInterfaceHandler, on_new_connection,
-                          std::ref(current_session), std::ref(ec));
+    void on_new_connection(usbipdcpp::TransferResponder &responder, usbipdcpp::error_code &ec) override {
+        // 手写转发而不是 PYBIND11_OVERRIDE：ec 是纯输出参数，Python 侧的
+        // on_new_connection(self, responder) 只接收 responder（与下面 .def
+        // 暴露的签名一致）；基类登记 responder 由 Python 侧经
+        // super().on_new_connection(responder) 完成
+        pybind11::gil_scoped_acquire gil;
+        pybind11::function override = pybind11::get_override(this, "on_new_connection");
+        if (override) {
+            override(pybind11::cast(&responder, pybind11::return_value_policy::reference));
+        }
     }
 
     void on_disconnection(usbipdcpp::error_code &ec) override {
@@ -98,14 +106,11 @@ public:
         throw pybind11::error_already_set();
     }
 
-    void on_new_connection(usbipdcpp::Session &current_session, usbipdcpp::error_code &ec) override {
-        session = &current_session;
+    void on_new_connection(usbipdcpp::TransferResponder &responder, usbipdcpp::error_code &ec) override {
         pybind11::gil_scoped_acquire gil;
         pybind11::function overload = pybind11::get_override(this, "on_new_connection");
         if (overload) {
-            pybind11::tuple args(1);
-            args[0] = pybind11::cast(&current_session, pybind11::return_value_policy::reference);
-            overload(*args);
+            overload(pybind11::cast(&responder, pybind11::return_value_policy::reference));
         }
     }
 
@@ -121,15 +126,24 @@ public:
 };
 
 void bind_virtual_device(py::module_ &m) {
+    // TransferResponder：传输应答接口。Python 继承 handler 重写
+    // on_new_connection 时会收到它，只暴露对 Python 有意义的方法（停止传输），
+    // 回包系列（submit/enqueue_ret_*）是 C++ 内部通道，不暴露
+    py::class_<usbipdcpp::TransferResponder>(m, "TransferResponder",
+                                             "传输应答接口（控制操作用）")
+        .def("stop_transfer", &usbipdcpp::TransferResponder::stop_transfer,
+             "请求停止传输");
+
     // VirtualInterfaceHandler - 支持继承
     py::class_<usbipdcpp::VirtualInterfaceHandler, PyVirtualInterfaceHandler,
                std::shared_ptr<usbipdcpp::VirtualInterfaceHandler>>(m, "VirtualInterfaceHandler")
         .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
              py::arg("handle_interface"), py::arg("string_pool"))
-        .def("on_new_connection", [](usbipdcpp::VirtualInterfaceHandler &self, usbipdcpp::Session &session) {
+        .def("on_new_connection", [](usbipdcpp::VirtualInterfaceHandler &self,
+                                     usbipdcpp::TransferResponder &responder) {
             std::error_code ec;
-            self.VirtualInterfaceHandler::on_new_connection(session, ec);
-        })
+            self.VirtualInterfaceHandler::on_new_connection(responder, ec);
+        }, py::arg("responder"))
         .def("on_disconnection", [](usbipdcpp::VirtualInterfaceHandler &self) {
             // 实际清理由 trampoline 在 Python 回调后自动执行
         })

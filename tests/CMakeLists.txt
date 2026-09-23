@@ -62,6 +62,11 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_device_removal)
     target_link_libraries(test_device_removal PRIVATE usbipdcpp_virtual_device)
 
+    # ServerObserver 通知机制专项：各事件触发时机与入参、多观察者、幂等注册、
+    # 注销、回调异常隔离、回调中查询 Server（锁外通知）、数量上限
+    add_test_file(test_server_observer)
+    target_link_libraries(test_server_observer PRIVATE usbipdcpp_virtual_device)
+
     # 通用管道虚拟设备（PipeDeviceHandler）的端到端测试
     add_test_file(test_pipe_device_handler)
     target_link_libraries(test_pipe_device_handler PRIVATE usbipdcpp_virtual_device)

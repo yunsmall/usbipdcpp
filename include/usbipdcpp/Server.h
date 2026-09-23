@@ -2,9 +2,9 @@
 
 #include <vector>
 #include <map>
+#include <array>
 #include <shared_mutex>
 #include <memory>
-#include <list>
 #include <thread>
 #include <cstddef>
 #include <cstdint>
@@ -46,11 +46,72 @@ struct ServerNetworkConfig {
 };
 
 /**
+ * @brief 设备被释放的原因（ServerObserver::on_device_released 的入参）
+ */
+enum class DeviceReleaseReason {
+    ClientDisconnected, ///< 客户端断开连接
+    DeviceRemoved,      ///< 设备被物理移除（后端检测到拔出）
+    ServerStopped       ///< 服务器被停止
+};
+
+/**
+ * @brief 服务器状态观察者：继承并按需覆盖关心的事件（不关心的用默认空实现）
+ *
+ * @attention 观察者必须比 Server 活得久，或提前调用 remove_observer() 注销
+ *
+ * 通知语义（所有事件相同）：
+ *  - 在触发事件的线程上同步调用：会话事件在会话收尾线程，设备事件在触发
+ *    释放的线程（客户端断开时是会话线程，后端检测到拔出时是后端线程）
+ *  - 通知在锁外发出：回调里可以安全调用 Server 的查询接口，也可以
+ *    add_observer / remove_observer
+ *  - 通知与状态变更之间有窗口：如 on_session_ended 在会话已从连接表移除
+ *    （get_session_count 归零）之后才发出。判断某事件是否已发生请以收到
+ *    通知为准，不要用 Server 的状态查询去推断（会读到"已变更但通知未到"
+ *    的中间态）
+ *  - 回调抛出的异常由库捕获并记日志，不会波及服务器线程与其他观察者
+ *  - 回调处在收尾关键路径上，应快速返回（重活请转交自己的线程）
+ */
+class USBIPDCPP_API ServerObserver {
+public:
+    virtual ~ServerObserver() = default;
+
+    /**
+     * @brief 新客户端连接已建立（会话已注册）
+     * @param session_id 会话 id
+     * @param peer 对端地址，形如 "ip:port"
+     */
+    virtual void on_session_started(std::uint64_t session_id, const std::string &peer) {
+    }
+
+    /**
+     * @brief 会话结束（客户端断开或服务器停止）
+     * @param session_id 会话 id
+     */
+    virtual void on_session_ended(std::uint64_t session_id) {
+    }
+
+    /**
+     * @brief 设备被导入占用（客户端成功拿到设备）
+     * @param busid 设备 busid
+     */
+    virtual void on_device_attached(const std::string &busid) {
+    }
+
+    /**
+     * @brief 设备被释放：回到可用列表（正常设备）或被丢弃（已物理移除）
+     * @param busid 设备 busid
+     * @param reason 释放原因
+     */
+    virtual void on_device_released(const std::string &busid, DeviceReleaseReason reason) {
+    }
+};
+
+/**
  * @brief USB/IP 服务器
  *
  * @attention 线程安全摘要：
  *   - 构造 / start / stop / ~Server：生命周期方法，必须在同一线程串行调用
- *   - add_device / has_bound_device / get_session_count / print_bound_devices / register_session_exit_callback：
+ *   - add_device / has_bound_device / get_session_count / print_bound_devices / add_observer / remove_observer：
  *     内部加锁，任意线程安全
  *   - get_available_devices / get_using_devices：不锁，调用方必须自行持有 get_devices_mutex()
  *   - get_devices_mutex：始终安全，仅返回 mutex 引用
@@ -189,15 +250,21 @@ public:
     }
 
     /**
-     * @brief 注册会话退出回调：每个会话结束时调用一次，供上层跟踪连接状态
-     * @param callback 回调函数，在会话收尾线程上、持有会话表锁时调用——不能在
-     *                 回调里再调用会取该锁的接口（如 get_session_count）。
-     *                 本回调只作上行汇报，库内部不用它做资源清理（设备列表的
-     *                 维护由 Server 自己负责）
+     * @brief 注册状态观察者（幂等：同一指针重复注册只保留一个）
+     * @param observer 观察者指针；库不接管所有权，生命周期必须覆盖 Server
+     *                 （需要提前注销时调用 remove_observer）
      *
      * @thread_safety 内部加锁，任意线程安全。
      */
-    void register_session_exit_callback(std::function<void()> &&callback);
+    void add_observer(ServerObserver *observer);
+
+    /**
+     * @brief 注销状态观察者（幂等：未注册过的指针调用无害）
+     * @param observer 观察者指针
+     *
+     * @thread_safety 内部加锁，任意线程安全。
+     */
+    void remove_observer(ServerObserver *observer);
 
     /**
      * @brief 设置线程创建前回调，用于嵌入式平台设置线程核心亲和性等
@@ -222,7 +289,7 @@ public:
     }
 
     /**
-     * @brief 移除指定的 session 并触发 on_session_exit
+     * @brief 移除指定的 session 并通知 on_session_ended
      * @param id 要移除的 session 的 id
      *
      * @thread_safety 内部加锁，但仅应在 Session 退出路径中调用。
@@ -334,7 +401,24 @@ protected:
     std::thread network_io_thread;
 
 private:
-    void on_session_exit();
+    /// 观察者数量上限：固定容量数组，通知路径（收尾关键路径）零堆分配，
+    /// 超过上限的注册被忽略并记日志
+    static constexpr std::size_t MAX_OBSERVERS = 8;
+
+    // 观察者列表：裸指针（生命周期由使用者保证，见 ServerObserver 注释）。
+    // 通知流程统一为"锁内拷贝到栈快照 → 锁外依次调用"：回调里可以安全调用
+    // Server 的查询接口，也可以 add/remove_observer 自己而不死锁
+    std::array<ServerObserver *, MAX_OBSERVERS> observers{};
+    std::size_t observer_count = 0;
+    mutable std::mutex observers_mutex;
+
+    /// 把观察者拷贝进 out（锁内）并返回个数；通知路径零堆分配
+    std::size_t observer_snapshot(std::array<ServerObserver *, MAX_OBSERVERS> &out);
+
+    void notify_session_started(std::uint64_t session_id, const std::string &peer);
+    void notify_session_ended(std::uint64_t session_id);
+    void notify_device_attached(const std::string &busid);
+    void notify_device_released(const std::string &busid, DeviceReleaseReason reason);
 
     // Session 析构体末尾调用（Session 是 friend）：递减存活计数并唤醒
     // stop() 的等待（计数语义见 active_sessions 的注释）。递减必须在
@@ -352,8 +436,6 @@ private:
             reap_cv.notify_all();
         }
     }
-
-    std::list<std::function<void()>> session_exit_callbacks;
 
     //可供导入的设备
     std::vector<std::shared_ptr<UsbDevice>> available_devices;

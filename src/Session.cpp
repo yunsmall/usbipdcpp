@@ -182,16 +182,26 @@ void usbipdcpp::Session::parse_op() {
                     }
 
                     if (!target_device_is_using && !open_device_failed) {
-                        std::shared_lock lock(current_import_device_data_mutex);
-                        if (current_import_device) {
-                            spdlog::info("找到目标设备，可以导入");
-                            op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
-                            cmd_transferring = true;
+                        bool imported = false;
+                        {
+                            std::shared_lock lock(current_import_device_data_mutex);
+                            if (current_import_device) {
+                                spdlog::info("找到目标设备，可以导入");
+                                op_rep_import = UsbIpResponse::OpRepImport::create_on_success(current_import_device);
+                                cmd_transferring = true;
+                                imported = true;
+                            }
+                            else {
+                                spdlog::info("不存在目标设备，不可导入");
+                                op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
+                                        static_cast<std::uint32_t>(OperationStatuType::NoDev));
+                            }
                         }
-                        else {
-                            spdlog::info("不存在目标设备，不可导入");
-                            op_rep_import = UsbIpResponse::OpRepImport::create_on_failure_with_status(
-                                    static_cast<std::uint32_t>(OperationStatuType::NoDev));
+                        if (imported) {
+                            // 通知在锁外发出：回调里可以安全调用 Server 的查询接口
+                            // （见 ServerObserver 注释）；当前导入的 busid 必然是
+                            // wanted_busid（try_moving_device_to_using 成功时已记入）
+                            server.notify_device_attached(wanted_busid);
                         }
                     }
                     else if (open_device_failed) {

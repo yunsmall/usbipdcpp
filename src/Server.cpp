@@ -1,5 +1,6 @@
 #include "usbipdcpp/Server.h"
 
+#include <optional>
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -287,9 +288,39 @@ void usbipdcpp::Server::print_bound_devices() {
     std::cout << std::endl;
 }
 
-void usbipdcpp::Server::register_session_exit_callback(std::function<void()> &&callback) {
-    std::lock_guard lock(session_list_mutex);
-    session_exit_callbacks.emplace_back(std::move(callback));
+void usbipdcpp::Server::add_observer(ServerObserver *observer) {
+    if (!observer) {
+        return;
+    }
+    std::lock_guard lock(observers_mutex);
+    for (std::size_t i = 0; i < observer_count; ++i) {
+        if (observers[i] == observer) {
+            return; // 幂等：同一指针只保留一个
+        }
+    }
+    if (observer_count >= MAX_OBSERVERS) {
+        SPDLOG_ERROR("观察者数量已达上限 {}，忽略本次注册", MAX_OBSERVERS);
+        return;
+    }
+    observers[observer_count++] = observer;
+}
+
+void usbipdcpp::Server::remove_observer(ServerObserver *observer) {
+    std::lock_guard lock(observers_mutex);
+    for (std::size_t i = 0; i < observer_count; ++i) {
+        if (observers[i] == observer) {
+            // 末位顶替：观察者顺序无意义
+            observers[i] = observers[--observer_count];
+            observers[observer_count] = nullptr;
+            return;
+        }
+    }
+}
+
+std::size_t usbipdcpp::Server::observer_snapshot(std::array<ServerObserver *, MAX_OBSERVERS> &out) {
+    std::lock_guard lock(observers_mutex);
+    out = observers;
+    return observer_count;
 }
 
 // bool usbipdcpp::Server::remove_device(const std::string &busid) {
@@ -318,28 +349,62 @@ usbipdcpp::Server::~Server() {
 }
 
 
-void usbipdcpp::Server::on_session_exit() {
-    std::lock_guard lock(session_list_mutex);
-    for (auto &callback: session_exit_callbacks) {
-        callback();
+namespace {
+// 依次通知快照中的观察者：单个回调抛异常不影响其他观察者与服务器线程
+// （回调跑在会话/后端线程上，异常逃出去就是 std::terminate）
+template <typename Snapshot, typename Fn>
+void notify_each(const Snapshot &snapshot, std::size_t count, Fn &&fn) {
+    for (std::size_t i = 0; i < count; ++i) {
+        try {
+            fn(snapshot[i]);
+        } catch (const std::exception &e) {
+            SPDLOG_ERROR("观察者回调异常：{}", e.what());
+        } catch (...) {
+            SPDLOG_ERROR("观察者回调未知异常");
+        }
     }
+}
+} // namespace
+
+void usbipdcpp::Server::notify_session_started(std::uint64_t session_id, const std::string &peer) {
+    std::array<ServerObserver *, MAX_OBSERVERS> snapshot{};
+    const auto count = observer_snapshot(snapshot);
+    notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_session_started(session_id, peer); });
+}
+
+void usbipdcpp::Server::notify_session_ended(std::uint64_t session_id) {
+    std::array<ServerObserver *, MAX_OBSERVERS> snapshot{};
+    const auto count = observer_snapshot(snapshot);
+    notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_session_ended(session_id); });
+}
+
+void usbipdcpp::Server::notify_device_attached(const std::string &busid) {
+    std::array<ServerObserver *, MAX_OBSERVERS> snapshot{};
+    const auto count = observer_snapshot(snapshot);
+    notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_device_attached(busid); });
+}
+
+void usbipdcpp::Server::notify_device_released(const std::string &busid, DeviceReleaseReason reason) {
+    std::array<ServerObserver *, MAX_OBSERVERS> snapshot{};
+    const auto count = observer_snapshot(snapshot);
+    notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_device_released(busid, reason); });
 }
 
 void usbipdcpp::Server::remove_session(std::uint64_t id) {
-    // 会话析构前调用（session 线程收尾），移除自身的 weak_ptr 记录
-    std::lock_guard lock(session_list_mutex);
-    // 幂等：同一 id 只处理一次。accept_loop 对 session->run() 抛异常的
-    // 兜底清理与 session 线程正常收尾可能都调用本函数（run 内部
-    // detach 后 after_thread_create_callback 若抛异常，两条路径都会到
-    // 这里），第二次调用时 erase 返回 0，跳过回调，避免
-    // session_exit_callbacks 重复执行
-    if (sessions.erase(id) == 0) {
-        return;
+    {
+        // 会话析构前调用（session 线程收尾），移除自身的 weak_ptr 记录
+        std::lock_guard lock(session_list_mutex);
+        // 幂等：同一 id 只处理一次。accept_loop 对 session->run() 抛异常的
+        // 兜底清理与 session 线程正常收尾可能都调用本函数（run 内部
+        // detach 后 after_thread_create_callback 若抛异常，两条路径都会到
+        // 这里），第二次调用时 erase 返回 0，跳过通知，避免
+        // on_session_ended 重复发出
+        if (sessions.erase(id) == 0) {
+            return;
+        }
     }
-    // 调用回调
-    for (auto &callback: session_exit_callbacks) {
-        callback();
-    }
+    // 通知在锁外发出：回调里可以安全调用 Server 的查询接口（见 ServerObserver 注释）
+    notify_session_ended(id);
 }
 
 
@@ -462,6 +527,12 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
                 continue;
             }
 
+            // 通知在锁外发出（上面 lock_guard 的作用域已结束）：回调里可以安全
+            // 调用 Server 的查询接口。此时会话已在连接表注册，与 remove_session
+            // 的 on_session_ended 严格配对——run() 启动失败的路径同样会移除会话，
+            // 所以 started 必须在 run() 之前发出（不能放在 run() 成功之后）
+            notify_session_started(id, remote_endpoint_name);
+
             //函数会直接返回，但内部获取了自身的shared_ptr因此不会被析构
             //每个session启动一个线程，防止某些必须阻塞的操作影响其他设备。
             try {
@@ -502,26 +573,39 @@ bool usbipdcpp::Server::is_device_using(const std::string &busid) {
 void usbipdcpp::Server::release_device(const std::string &busid) {
     print_devices();
     SPDLOG_DEBUG("释放设备{}", busid);
-    std::lock_guard lock(devices_mutex);
-    // SPDLOG_TRACE("成功获得两个锁");
+    // 通知在锁外发出：回调里可以安全调用 Server 的查询接口（见 ServerObserver 注释）；
+    // 设备不在使用列表时没有发生释放，不发通知（reason 保持空）
+    std::optional<DeviceReleaseReason> reason;
+    {
+        std::lock_guard lock(devices_mutex);
+        // SPDLOG_TRACE("成功获得两个锁");
 
-    auto ret = using_devices.find(busid);
-    if (ret != using_devices.end()) {
-        // 已物理移除的设备直接丢弃，不放回可用列表：后端在拔出那一刻清理的是
-        // 当场扫到的列表状态，此后不会再有任何事件扫到它，放回去就是永远
-        // 清不掉的僵尸（旧实现要靠会话退出回调兜底打扫）
-        if (ret->second->handler && ret->second->handler->is_device_removed()) {
-            SPDLOG_INFO("设备{}已被物理移除，不再移回可用设备", busid);
-            using_devices.erase(ret);
-            return;
+        auto ret = using_devices.find(busid);
+        if (ret != using_devices.end()) {
+            // 已物理移除的设备直接丢弃，不放回可用列表：后端在拔出那一刻清理的是
+            // 当场扫到的列表状态，此后不会再有任何事件扫到它，放回去就是永远
+            // 清不掉的僵尸（旧实现要靠会话退出回调兜底打扫）
+            if (ret->second->handler && ret->second->handler->is_device_removed()) {
+                SPDLOG_INFO("设备{}已被物理移除，不再移回可用设备", busid);
+                using_devices.erase(ret);
+                reason = DeviceReleaseReason::DeviceRemoved;
+            }
+            else {
+                SPDLOG_INFO("成功将{}转移到可用设备中", busid);
+                auto &dev = ret->second;
+                available_devices.emplace_back(std::move(dev));
+                using_devices.erase(busid);
+                // running 已置 false 说明 stop() 正在收尾，此刻的释放归因于
+                // 服务器停止；否则就是客户端断开
+                reason = running ? DeviceReleaseReason::ClientDisconnected : DeviceReleaseReason::ServerStopped;
+            }
         }
-        SPDLOG_INFO("成功将{}转移到可用设备中", busid);
-        auto &dev = ret->second;
-        available_devices.emplace_back(std::move(dev));
-        using_devices.erase(busid);
+        else {
+            SPDLOG_WARN("找不到busid为{}的设备", busid);
+        }
     }
-    else {
-        SPDLOG_WARN("找不到busid为{}的设备", busid);
+    if (reason) {
+        notify_device_released(busid, *reason);
     }
 }
 
