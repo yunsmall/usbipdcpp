@@ -20,7 +20,8 @@ enum class DeviceOperationResult {
     GetDescriptorFailed, ///< Failed to get device descriptor
     GetConfigFailed, ///< Failed to get configuration descriptor
     ClaimInterfaceFailed, ///< Failed to claim interface
-    HubFiltered ///< Hub device skipped by filter
+    HubFiltered, ///< Hub device skipped by filter
+    DeviceFiltered ///< Device skipped by the user-provided device_bind_filter
 };
 
 /**
@@ -29,6 +30,19 @@ enum class DeviceOperationResult {
 struct LibusbServerConfig {
     bool skip_hub = true; ///< 跳过 hub 设备（bDeviceClass == 0x09）
     bool auto_bind_hotplug = false; ///< 热插拔时自动绑定新设备
+
+    /**
+     * @brief 设备绑定过滤器：返回 true 表示不导出该设备（跳过绑定）
+     *
+     * 在取到设备描述符之后、打开设备之前调用（此时只有 libusb 的只读查询，
+     * 跳过不留任何残留状态）；bind_existing_devices 与热插拔自动绑定都经由
+     * bind_host_device 生效。skip_hub 先判、本过滤器后判，两者叠加而非互斥
+     * ——需要按 VID/PID、设备类等自定义排除规则时用它，不必改 skip_hub。
+     *
+     * @param dev libusb 设备（只读，回调内不要 unref）
+     * @param desc 已取到的设备描述符
+     */
+    std::function<bool(libusb_device *dev, const libusb_device_descriptor &desc)> device_bind_filter;
 };
 
 /**
@@ -62,7 +76,9 @@ public:
      * @return DeviceOperationResult::Success on success;
      *         DeviceAlreadyBound if that busid is already in the available list;
      *         DeviceInUse if that busid is currently used by a session;
-     *         GetDescriptorFailed / GetConfigFailed / HubFiltered on device checks.
+     *         GetDescriptorFailed / GetConfigFailed on device checks;
+     *         HubFiltered / DeviceFiltered when skip_hub or device_bind_filter
+     *         says to skip this device.
      *
      * @thread_safety 内部加锁，任意线程安全。
      */

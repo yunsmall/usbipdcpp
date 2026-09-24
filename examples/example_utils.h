@@ -9,15 +9,14 @@
 
 #if defined(_WIN32)
 // 控制台事件处理需要 windows.h；WIN32_LEAN_AND_MEAN 排除 winsock.h（否则与
-// asio 的 winsock2.h 冲突），NOMINMAX 防止 min/max 宏破坏 std::min/std::max
+// asio 的 winsock2.h 冲突），NOMINMAX 防止 min/max 宏破坏 std::min/std::max。
+// 两个宏加保护：asio 的 config.hpp 会先定义 NOMINMAX（值为 1），重复定义会告警
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
 #endif
-
-#if defined(_WIN32)
-// 控制台事件处理需要 windows.h；NOMINMAX 防止 min/max 宏破坏 std::min/std::max
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 

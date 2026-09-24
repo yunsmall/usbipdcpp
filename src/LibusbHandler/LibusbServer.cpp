@@ -193,6 +193,14 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         return DeviceOperationResult::HubFiltered;
     }
 
+    // 用户过滤器：放在描述符之后、打开设备/claim 接口之前——此时只做过只读
+    // 查询，跳过不留任何残留状态；与 skip_hub 叠加，不是替代关系
+    if (config.device_bind_filter && config.device_bind_filter(dev, device_descriptor)) {
+        SPDLOG_DEBUG("设备被 device_bind_filter 跳过: busid={}", get_device_busid(dev));
+        libusb_unref_device(dev);
+        return DeviceOperationResult::DeviceFiltered;
+    }
+
     // 获取配置描述符
     struct libusb_config_descriptor *active_config_desc;
     err = libusb_get_active_config_descriptor(dev, &active_config_desc);
@@ -650,6 +658,8 @@ void LibusbServer::handle_device_arrived(libusb_device *device) {
             SPDLOG_INFO("自动绑定成功: {}", busid);
         } else if (result == DeviceOperationResult::HubFiltered) {
             SPDLOG_DEBUG("新设备 {} 为 hub，跳过", busid);
+        } else if (result == DeviceOperationResult::DeviceFiltered) {
+            SPDLOG_DEBUG("新设备 {} 被 device_bind_filter 跳过", busid);
         } else {
             SPDLOG_WARN("自动绑定失败: {}", busid);
         }
@@ -720,6 +730,7 @@ void LibusbServer::bind_existing_devices() {
         switch (result) {
             case DeviceOperationResult::Success: bound++; break;
             case DeviceOperationResult::HubFiltered: skipped++; break;
+            case DeviceOperationResult::DeviceFiltered: skipped++; break;
             default: break;
         }
     }
@@ -727,7 +738,7 @@ void LibusbServer::bind_existing_devices() {
     // bind 成功的设备另有 libusb_ref_device 的引用由 handler 接管（析构时 unref），互不冲突。
     // 传 0 会导致每个设备泄漏一个引用，libusb_device 永不销毁
     libusb_free_device_list(devs, 1);
-    SPDLOG_INFO("扫描绑定完成: {} 个绑定, {} 个 hub 跳过", bound, skipped);
+    SPDLOG_INFO("扫描绑定完成: {} 个绑定, {} 个被跳过（hub 或 device_bind_filter）", bound, skipped);
 }
 
 usbipdcpp::error_code LibusbServer::start(const asio::ip::tcp::endpoint &ep) {
