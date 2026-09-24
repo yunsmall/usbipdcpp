@@ -405,7 +405,8 @@ interface_handler->change_string_interface(L"我的 HID 接口");
    物理设备经 bind 进入其设备表，虚拟设备用 `get_server().add_device(虚拟设备)` 加入
    同一个 Server，一个监听端口即可同时导出两类设备（Server 对设备后端无感知）。
    混用时注意 busid 唯一性——客户端按 busid attach，虚拟设备默认 busid 常与真实
-   设备的总线号（如 "1-1"）撞车，需给虚拟设备另行指定不冲突的 busid
+   设备的总线号（如 "1-1"）撞车，撞车时 `add_device` 会拒绝添加（返回 `AlreadyBound`），
+   需给虚拟设备另行指定不冲突的 busid
 **10. mock_msc**
 
    虚拟 USB 大容量存储（U盘）设备，用磁盘镜像文件作为存储介质。

@@ -415,7 +415,8 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    virtual devices are added with `get_server().add_device(...)` into the same `Server` — one listening port
    can then export both kinds (the `Server` is backend-agnostic). When mixing, keep busids unique: clients
    attach by busid, and a virtual device's default busid (often "1-1") may collide with a real device's
-   bus number — give virtual devices a non-conflicting busid.
+   bus number — `add_device` rejects such a collision (returns `AlreadyBound`), so give virtual devices
+   a non-conflicting busid.
 **10. mock_msc**
 
    A virtual USB Mass Storage (flash drive) device backed by a disk image file.

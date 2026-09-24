@@ -43,6 +43,10 @@ public:
         record({"ended", session_id, {}, DeviceReleaseReason::ClientDisconnected});
     }
 
+    void on_device_added(const std::string &busid) override {
+        record({"added", 0, busid, DeviceReleaseReason::ClientDisconnected});
+    }
+
     void on_device_attached(const std::string &busid) override {
         record({"attached", 0, busid, DeviceReleaseReason::ClientDisconnected});
     }
@@ -256,6 +260,7 @@ TEST(TestServerObserver, SessionAndDeviceEventsOnClientDisconnect) {
 
     const auto events = observer.snapshot();
     ASSERT_FALSE(events.empty());
+    // 观察者注册晚于 add_device：收不到 on_device_added，首个事件即会话开始
     EXPECT_EQ(events.front().kind, "started");
     EXPECT_NE(events.front().session_id, 0u);
     EXPECT_FALSE(events.front().text.empty()); // peer 形如 "ip:port"
@@ -821,4 +826,88 @@ TEST(TestServerObserver, CallbackCanAddObserver) {
     EXPECT_EQ(latecomer.count("ended"), 1u);
 
     server.stop();
+}
+
+TEST(TestServerObserver, DeviceAddedNotifiedOnAddDevice) {
+    // 设备进入可用列表（用户 add_device）触发 on_device_added，入参为 busid；
+    // 通知是同步的（锁内快照→锁外同步调用），add_device 返回时事件已记录
+    StringPool string_pool;
+    RecordingObserver observer;
+    Server server;
+    ServerStopper stopper(server);
+    server.add_observer(&observer);
+
+    server.add_device(make_keyboard(string_pool, nullptr, "2-1"));
+    server.add_device(make_keyboard(string_pool, nullptr, "2-2"));
+
+    const auto events = observer.snapshot();
+    EXPECT_EQ(count_events(events, "added", "2-1"), 1u);
+    EXPECT_EQ(count_events(events, "added", "2-2"), 1u);
+    // 未 start、无客户端：不应有会话事件或占用事件
+    EXPECT_EQ(observer.count("started"), 0u);
+    EXPECT_EQ(observer.count("attached"), 0u);
+    EXPECT_EQ(observer.count("released"), 0u);
+}
+
+TEST(TestServerObserver, DetachAvailableDeviceNotifiesReleasedWithDeviceRemoved) {
+    // 设备离开可用列表（物理拔出/后端解绑走的就是 detach_available_device）
+    // 发 on_device_released(DeviceRemoved)，与"正在被使用的设备被拔"（由
+    // release_device 发）同一事件语义：观察者只需处理"设备没了"，不必区分
+    // 它当时在哪个列表。真实触发路径在 LibusbServer 的拔出/解绑处理里
+    // （handle_device_left / notify_device_removed / try_remove_dead_device /
+    // unbind_*），需要真机；这里验证 Server 接口本身的契约
+    StringPool string_pool;
+    RecordingObserver observer;
+    Server server;
+    ServerStopper stopper(server);
+    server.add_observer(&observer);
+
+    const auto device = make_keyboard(string_pool);
+    EXPECT_EQ(server.add_device(device), AddDeviceStatus::Added);
+
+    // 摘除返回被摘除的设备（供后端做 close/unref 等清理），并发出通知
+    const auto detached = server.detach_available_device("1-1");
+    ASSERT_NE(detached, nullptr);
+    EXPECT_EQ(detached, device); // 同一个对象
+
+    const auto events = observer.snapshot();
+    ASSERT_EQ(events.size(), 2u); // added + released
+    EXPECT_EQ(events.front().kind, "added");
+    EXPECT_EQ(events.front().text, "1-1");
+    EXPECT_EQ(events.back().kind, "released");
+    EXPECT_EQ(events.back().text, "1-1");
+    EXPECT_EQ(events.back().reason, DeviceReleaseReason::DeviceRemoved);
+    EXPECT_EQ(observer.count("attached"), 0u);
+
+    {
+        std::shared_lock lock(server.get_devices_mutex());
+        EXPECT_TRUE(server.get_available_devices().empty());
+    }
+
+    // 摘除不存在的 busid：返回空、不发通知
+    EXPECT_EQ(server.detach_available_device("9-9"), nullptr);
+    EXPECT_EQ(observer.count("released"), 1u);
+}
+
+TEST(TestServerObserver, AddDeviceRejectsDuplicateBusid) {
+    // busid 唯一是 Server 内部依赖的不变量：重复添加被拒绝，且不发 added 通知
+    asio::io_context io;
+    StringPool string_pool;
+    RecordingObserver observer;
+    Server server;
+    ServerStopper stopper(server);
+    server.add_observer(&observer);
+
+    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::Added);
+    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::AlreadyBound);
+    EXPECT_EQ(observer.count("added"), 1u) << "被拒绝的添加不得发通知";
+
+    // 设备正被会话占用时，同 busid 添加返回 InUse
+    ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
+    asio::ip::tcp::socket client(io);
+    ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
+    ASSERT_EQ(import_device(client, "2-1"), 0u);
+    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::InUse);
+    EXPECT_EQ(observer.count("added"), 1u);
+    client.close();
 }

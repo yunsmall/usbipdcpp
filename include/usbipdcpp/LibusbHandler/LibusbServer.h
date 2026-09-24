@@ -55,10 +55,14 @@ public:
      *
      * This function retrieves device information and adds it to the available devices list.
      * The device is not opened until a client connects (lazy binding).
+     * On success the Server emits on_device_added for the device (see ServerObserver).
      *
      * @param dev The libusb device to bind. Must not be nullptr.
-     *            The function takes ownership of the device reference.
-     * @return DeviceOperationResult::Success on success, or an appropriate error code.
+     *            The function takes ownership of the device reference (released on failure).
+     * @return DeviceOperationResult::Success on success;
+     *         DeviceAlreadyBound if that busid is already in the available list;
+     *         DeviceInUse if that busid is currently used by a session;
+     *         GetDescriptorFailed / GetConfigFailed / HubFiltered on device checks.
      *
      * @thread_safety 内部加锁，任意线程安全。
      */
@@ -70,10 +74,14 @@ public:
      * This is for Android where the device is accessed via a file descriptor obtained
      * from UsbManager.openDevice(). The fd is wrapped via libusb_wrap_sys_device()
      * on each client connection, supporting reconnection after disconnection.
+     * On success the Server emits on_device_added for the device (see ServerObserver).
      *
      * @param fd A valid file descriptor opened on the device node.
      *           The fd must remain valid until the device is unbound or the server is stopped.
-     * @return DeviceOperationResult::Success on success, or an appropriate error code.
+     * @return DeviceOperationResult::Success on success;
+     *         DeviceAlreadyBound if that busid is already in the available list;
+     *         DeviceInUse if that busid is currently used by a session;
+     *         GetDescriptorFailed / GetConfigFailed on device checks.
      *
      * @thread_safety 内部加锁，任意线程安全。
      */
@@ -84,7 +92,8 @@ public:
      *
      * Releases all interfaces, reattaches kernel drivers, closes the device handle,
      * and removes the device from the available devices list. The device reference
-     * will be released.
+     * will be released. Removing from the list makes the Server emit
+     * on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
      * @param device The libusb device to unbind. The function takes ownership of this reference.
      * @return DeviceOperationResult::Success on success,
@@ -99,6 +108,7 @@ public:
      * @brief Unbind a previously bound device by its file descriptor (Android 模式).
      *
      * Finds and removes the device that was bound with the specified fd.
+     * On success the Server emits on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
      * @param fd The file descriptor used when binding the device.
      * @return DeviceOperationResult::Success on success,
@@ -113,7 +123,12 @@ public:
      * @brief Remove a dead device from the device lists.
      *
      * This function should not be called with a busid that is still in use.
-     * It only removes libusb devices, not other device types.
+     * A device found in the available list is removed unconditionally (whatever
+     * handler type it carries — leaving it behind would make the Server keep
+     * believing it is usable); if it is not in that list but currently in use,
+     * the session is stopped instead and the device is dropped later by the
+     * session teardown. Removing from the available list makes the Server emit
+     * on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
      * @param busid The bus ID of the device to remove.
      * @return DeviceOperationResult::Success if found and removed,
@@ -128,6 +143,8 @@ public:
      *
      * This should be called when the system detects a USB device has been detached.
      * If the device is currently in use, it will trigger disconnection and stop the session.
+     * Removing from the available list makes the Server emit
+     * on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
      * @param busid The bus ID of the removed device.
      * @return DeviceOperationResult::Success if found and handled,

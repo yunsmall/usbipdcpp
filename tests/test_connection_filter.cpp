@@ -412,3 +412,29 @@ TEST(TestConnectionFilter, ClearRestoresAllowAll) {
     EXPECT_EQ(server.get_session_count(), 1u);
     EXPECT_EQ(filter_calls.load(), 1) << "清除后过滤器不应再被调用";
 }
+
+TEST(TestConnectionFilter, AcceptsLvalueFilter) {
+    // 过滤器以左值传入（策略常来自配置对象等左值）：按值形参必须收得下，
+    // 且只拷贝不掏空调用方的 std::function（否则调用方无法复用或事后检查）
+    asio::io_context io;
+    StringPool string_pool;
+    Server server;
+    ServerStopper stopper(server);
+    server.add_device(make_keyboard(string_pool));
+
+    std::atomic<int> filter_calls{0};
+    std::function<bool(const asio::ip::tcp::endpoint &)> deny_all = [&](const asio::ip::tcp::endpoint &) {
+        filter_calls.fetch_add(1);
+        return false;
+    };
+
+    server.set_connection_filter(deny_all);
+    ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
+    asio::ip::tcp::socket rejected(io);
+    ASSERT_TRUE(connect_with_retry(rejected, server.endpoint()));
+    ASSERT_TRUE(wait_until([&] { return filter_calls.load() >= 1; }));
+    EXPECT_EQ(server.get_session_count(), 0u);
+    EXPECT_TRUE(static_cast<bool>(deny_all)) << "按值传参不应掏空调用方的 std::function";
+
+    server.stop();
+}

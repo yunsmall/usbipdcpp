@@ -46,11 +46,20 @@ struct ServerNetworkConfig {
 };
 
 /**
+ * @brief Server::add_device 的结果
+ */
+enum class AddDeviceStatus {
+    Added,        ///< 添加成功
+    AlreadyBound, ///< busid 已在可用列表（已绑定、未被占用）
+    InUse         ///< busid 正被某个会话占用
+};
+
+/**
  * @brief 设备被释放的原因（ServerObserver::on_device_released 的入参）
  */
 enum class DeviceReleaseReason {
     ClientDisconnected, ///< 客户端断开连接
-    DeviceRemoved,      ///< 设备被物理移除（后端检测到拔出）
+    DeviceRemoved,      ///< 设备从服务器消失（后端检测到物理拔出，或后端主动解绑）
     ServerStopped       ///< 服务器被停止
 };
 
@@ -60,8 +69,13 @@ enum class DeviceReleaseReason {
  * @attention 观察者必须比 Server 活得久，或提前调用 remove_observer() 注销
  *
  * 通知语义（所有事件相同）：
- *  - 在触发事件的线程上同步调用：会话事件在会话收尾线程，设备事件在触发
- *    释放的线程（客户端断开时是会话线程，后端检测到拔出时是后端线程）
+ *  - 在触发事件的线程上同步调用：会话事件在会话收尾线程；设备事件在触发该
+ *    变化的线程（客户端导入/断开时是会话线程，后端绑定/拔出时是后端线程，
+ *    使用者直接调 add_device / detach_available_device 时是调用者线程）
+ *  - 设备事件的配对：设备进入可用列表发 on_device_added，被客户端导入发
+ *    on_device_attached，离开则必发一次 on_device_released——客户端断开
+ *    （ClientDisconnected）、服务器停止（ServerStopped）、物理拔出与后端
+ *    解绑（DeviceRemoved）都归入 on_device_released，按 reason 区分
  *  - 通知在锁外发出：回调里可以安全调用 Server 的查询接口，也可以
  *    add_observer / remove_observer
  *  - 通知与状态变更之间有窗口：如 on_session_ended 在会话已从连接表移除
@@ -91,6 +105,16 @@ public:
     }
 
     /**
+     * @brief 设备进入可用列表（后端绑定成功：热插拔插入、启动时绑定、用户添加）
+     * @param busid 设备 busid
+     *
+     * @note 设备从"被占用"回到可用（客户端断开等原因）不触发本事件——
+     * 那种变化由 on_device_released 表示
+     */
+    virtual void on_device_added(const std::string &busid) {
+    }
+
+    /**
      * @brief 设备被导入占用（客户端成功拿到设备）
      * @param busid 设备 busid
      */
@@ -98,7 +122,8 @@ public:
     }
 
     /**
-     * @brief 设备被释放：回到可用列表（正常设备）或被丢弃（已物理移除）
+     * @brief 设备被释放：回到可用列表（客户端断开/服务器停止），或被丢弃
+     * （物理拔出/后端解绑）
      * @param busid 设备 busid
      * @param reason 释放原因
      */
@@ -111,8 +136,8 @@ public:
  *
  * @attention 线程安全摘要：
  *   - 构造 / start / stop / ~Server：生命周期方法，必须在同一线程串行调用
- *   - add_device / has_bound_device / get_session_count / print_bound_devices / add_observer / remove_observer：
- *     内部加锁，任意线程安全
+ *   - add_device / detach_available_device / has_bound_device / get_session_count /
+ *     print_bound_devices / add_observer / remove_observer：内部加锁，任意线程安全
  *   - get_available_devices / get_using_devices：不锁，调用方必须自行持有 get_devices_mutex()
  *   - get_devices_mutex：始终安全，仅返回 mutex 引用
  *   - set_before_thread_create_callback / set_after_thread_create_callback / set_connection_filter：
@@ -166,31 +191,31 @@ public:
     void stop();
 
     /**
-     * @brief 添加一个device，线程安全。不管server是否启动都可以调用
-     * @param device 待添加的设备
-     * @return 添加的设备
+     * @brief 添加一个设备（busid 查重），线程安全。不管 server 是否启动都可以调用
+     * @param device 待添加的设备（按值传递：内部 move 进设备列表，调用方
+     *               自行决定传左值拷贝还是 move 转移）
+     * @return Added 添加成功；AlreadyBound 该 busid 已在可用列表；
+     *         InUse 该 busid 正被某个会话占用（两种冲突都不添加）
+     *
+     * 查重与添加在同一把锁内原子完成（防止并发下两个线程同时查到"空闲"
+     * 然后都添加），成功后在锁外发出 on_device_added。busid 唯一是 Server
+     * 内部依赖的不变量（导入按 busid 匹配、拔出按 busid 移除，重复项会让
+     * 行为不确定），因此不存在"无条件添加"的入口。
      *
      * @thread_safety 内部加锁，任意线程安全。
      */
-    std::shared_ptr<UsbDevice> add_device(std::shared_ptr<UsbDevice> &&device);
+    AddDeviceStatus add_device(std::shared_ptr<UsbDevice> device);
 
     /**
      * @brief 判断 busid 是否已被占用（available 或用中任一存在）。内部不持锁，
-     *        供持锁批量操作中查重用（如绑定前检查冲突），避免反复进出锁
+     *        供已持有 get_devices_mutex() 的调用方查重，避免反复进出锁
      *
-     * 典型用法——手动向 Server 添加设备时，查重与添加必须在同一把锁内完成，
-     * 防止并发下两个线程同时查到"空闲"然后都添加（busid 冲突穿透检查）：
-     * @code
-     * {
-     *     std::lock_guard lock(server.get_devices_mutex());
-     *     if (server.has_bound_device_locked(busid)) {
-     *         return; // busid 已被占用
-     *     }
-     *     // 注意：不能调 add_device()（它内部会再次加锁，shared_mutex 非递归
-     *     // 会死锁），持锁时直接操作设备容器
-     *     server.get_available_devices().emplace_back(std::move(device));
-     * }
-     * @endcode
+     * 新代码添加设备请直接用 add_device()：它在同一把锁内完成查重与添加，
+     * 并在锁外负责发通知。本函数只用于调用方本就需要持锁遍历设备列表、
+     * 顺带判断占用的场景（可用读锁）。
+     *
+     * 注意持锁期间不能调用 add_device() / detach_available_device() 等会
+     * 自行加锁的接口（shared_mutex 非递归，会死锁）。
      *
      * @param busid 待查询的 busid
      * @return true 已被占用
@@ -270,10 +295,11 @@ public:
     /**
      * @brief 设置线程创建前回调，用于嵌入式平台设置线程核心亲和性等
      * @param callback 回调函数，接收线程用途标识
+     * （按值传递：内部 move 进成员，调用方传左值/右值皆可）
      *
      * @thread_safety 必须在 start() 之前调用。
      */
-    void set_before_thread_create_callback(std::function<void(ThreadPurpose)> &&callback) {
+    void set_before_thread_create_callback(std::function<void(ThreadPurpose)> callback) {
         before_thread_create_callback = std::move(callback);
     }
 
@@ -282,10 +308,11 @@ public:
      * @param callback 回调函数，接收线程用途标识和线程指针。指针为 nullptr
      * 表示线程创建失败（before 回调已执行但线程未创建成功），非空时可用于
      * 设置线程名称等（指针在线程生命周期内有效）
+     * （按值传递：内部 move 进成员，调用方传左值/右值皆可）
      *
      * @thread_safety 必须在 start() 之前调用。
      */
-    void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread*)> &&callback) {
+    void set_after_thread_create_callback(std::function<void(ThreadPurpose, std::thread*)> callback) {
         after_thread_create_callback = std::move(callback);
     }
 
@@ -295,6 +322,7 @@ public:
      * 不发出 on_session_started 通知，拒绝时记一条含对端地址的 WARN 日志）
      * @param filter 过滤器，接收对端地址（含 IP 与源端口）；返回 true 放行、
      * false 拒绝。传空的 std::function 可清除过滤器（恢复全部放行）
+     * （按值传递：内部 move 进成员，调用方传左值/右值皆可）
      *
      * 典型用途：只允许特定来源的客户端接入（如本机回环场景下按源端口授权、
      * 嵌入式设备限制允许的客户端 IP）。未设置过滤器时全部放行，默认行为不变。
@@ -309,7 +337,7 @@ public:
      * @attention 必须在 start() 之前调用（与线程创建回调同一纪律），
      * 运行期更换不受支持
      */
-    void set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> &&filter);
+    void set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> filter);
 
     /**
      * @brief 移除指定的 session 并通知 on_session_ended
@@ -318,6 +346,19 @@ public:
      * @thread_safety 内部加锁，但仅应在 Session 退出路径中调用。
      */
     void remove_session(std::uint64_t id);
+
+    /**
+     * @brief 从可用列表摘除设备并通知其消失：摘除在锁内完成，随后在锁外
+     * 发出 on_device_released(busid, DeviceRemoved)
+     * @param busid 设备 busid
+     * @return 被摘除的设备；可用列表中没有该 busid 时返回 nullptr
+     *
+     * 供后端处理物理拔出/解绑：拿到返回值后自行做后端清理（如 libusb 的
+     * close/unref），设备已被摘除，清理时不必持锁。设备此刻仍被占用
+     * （在 using 列表）时返回 nullptr 且不发通知——那条路径由会话收尾时的
+     * release_device 发通知。
+     */
+    std::shared_ptr<UsbDevice> detach_available_device(const std::string &busid);
 
     ~Server();
 
@@ -447,6 +488,11 @@ private:
     void notify_session_ended(std::uint64_t session_id);
     void notify_device_attached(const std::string &busid);
     void notify_device_released(const std::string &busid, DeviceReleaseReason reason);
+
+    /// 设备进入可用列表（由 add_device 在锁外发出）
+    void notify_device_added(const std::string &busid);
+    /// 设备离开可用列表（由 detach_available_device 在锁外发出）
+    void notify_device_gone(const std::string &busid);
 
     // Session 析构体末尾调用（Session 是 friend）：递减存活计数并唤醒
     // stop() 的等待（计数语义见 active_sessions 的注释）。递减必须在

@@ -240,10 +240,26 @@ void usbipdcpp::Server::stop() {
     spdlog::info("All sessions were successfully closed");
 }
 
-std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> &&device) {
-    std::lock_guard lock(devices_mutex);
-    available_devices.emplace_back(std::move(device));
-    return available_devices.back();
+usbipdcpp::AddDeviceStatus usbipdcpp::Server::add_device(std::shared_ptr<UsbDevice> device) {
+    const std::string busid = device->busid;
+    {
+        // 查重与添加必须同一把锁内完成：并发下两个线程同时查到"空闲"然后
+        // 都添加会穿透检查，产生同 busid 的重复项（导入按 busid 匹配、
+        // 拔出按 busid 移除，重复项会让行为不确定）
+        std::lock_guard lock(devices_mutex);
+        for (const auto &available: available_devices) {
+            if (available->busid == busid) {
+                return AddDeviceStatus::AlreadyBound;
+            }
+        }
+        if (using_devices.contains(busid)) {
+            return AddDeviceStatus::InUse;
+        }
+        available_devices.emplace_back(std::move(device));
+    }
+    // 通知在锁外发出：回调里可以安全调用 Server 的查询接口（见 ServerObserver 注释）
+    notify_device_added(busid);
+    return AddDeviceStatus::Added;
 }
 
 
@@ -390,6 +406,36 @@ void usbipdcpp::Server::notify_device_released(const std::string &busid, DeviceR
     notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_device_released(busid, reason); });
 }
 
+void usbipdcpp::Server::notify_device_added(const std::string &busid) {
+    std::array<ServerObserver *, MAX_OBSERVERS> snapshot{};
+    const auto count = observer_snapshot(snapshot);
+    notify_each(snapshot, count, [&](ServerObserver *observer) { observer->on_device_added(busid); });
+}
+
+void usbipdcpp::Server::notify_device_gone(const std::string &busid) {
+    // 从可用列表消失 = 设备被物理移除，与"正在被使用的设备被拔"同一语义
+    notify_device_released(busid, DeviceReleaseReason::DeviceRemoved);
+}
+
+std::shared_ptr<usbipdcpp::UsbDevice> usbipdcpp::Server::detach_available_device(const std::string &busid) {
+    std::shared_ptr<UsbDevice> detached;
+    {
+        std::lock_guard lock(devices_mutex);
+        for (auto it = available_devices.begin(); it != available_devices.end(); ++it) {
+            if ((*it)->busid == busid) {
+                detached = std::move(*it);
+                available_devices.erase(it);
+                break;
+            }
+        }
+    }
+    if (detached) {
+        // 通知在锁外发出（回调里可以安全查询 Server）；设备此刻已不在可用列表
+        notify_device_gone(busid);
+    }
+    return detached;
+}
+
 void usbipdcpp::Server::remove_session(std::uint64_t id) {
     {
         // 会话析构前调用（session 线程收尾），移除自身的 weak_ptr 记录
@@ -408,7 +454,7 @@ void usbipdcpp::Server::remove_session(std::uint64_t id) {
 }
 
 
-void usbipdcpp::Server::set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> &&filter) {
+void usbipdcpp::Server::set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> filter) {
     connection_filter = std::move(filter);
 }
 
