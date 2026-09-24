@@ -4,10 +4,13 @@ A C++ library for creating usbip servers
 
 > [中文文档](README.zh.md)
 
-> ✅ USBIP server: Platform-independent implementation via libusb (works wherever libusb is supported)
-> ✅ All four USB transfer types (control, bulk, interrupt, isochronous) tested and working via libusb backend
-> ✅ Virtual devices: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker), webcam (UVC camera + UAC microphone composite) — no libusb dependency
-> ✅ Hot-plug support: Automatic device insertion/removal detection (LibusbServer)
+## Features
+
+- ✅ **USBIP server**: Platform-independent implementation via libusb (works wherever libusb is supported)
+- ✅ **All four USB transfer types** (control, bulk, interrupt, isochronous) tested and working via libusb backend
+- ✅ **Virtual devices**: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker), webcam (UVC camera + UAC microphone composite) — no libusb dependency
+- 🔌 **Hot-plug support**: Automatic device insertion/removal detection (LibusbServer)
+- 🧩 **Extensible design**: well-defined abstract interfaces for developers to extend
 
 Contributions welcome! 🚀
 
@@ -16,6 +19,9 @@ Contributions welcome! 🚀
 ---
 
 ## Quick Start
+
+> ⚠️ **Versioning notice**: this library is still in an early stage, and APIs may change between minor releases (strict semantic versioning compatibility is not guaranteed yet).
+> Pin a specific version in your project — e.g. the latest release when you start using it — and check the commit history before upgrading.
 
 Minimal virtual keyboard device (full example in `examples/mock_keyboard`):
 
@@ -407,6 +413,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
    - Screen coordinates are linearly mapped to HID coordinates [0, 32767]
    - Coordinates outside bounds are clamped to boundary values
    - Note: Windows host doesn't accept HID (0, 0), avoid screen coordinates at (x1, y1) boundary
+
 **9. libusb_server**
 
    A usbip server which can forward all local usb devices, has a extremely simple commandline, type `h` for helps
