@@ -209,7 +209,11 @@ jobs:
           #!/bin/bash
           set -e
           pkg update -y
-          pkg install -y bash git clang cmake ninja pkg-config libasio libspdlog googletest libusb
+          # 点名安装 libc++：Termux 里 libc++ 的头文件由 ndk-sysroot 提供、运行时库
+          # 由 libc++ 包提供，仓库升了 ndk-sysroot 却没带 libc++ 时两者会错位（曾出现
+          # ndk-sysroot 30 配 libc++ 29，链接期报 std::__ndk1::__hash_memory 未定义）；
+          # 点名安装可让它与 ndk-sysroot 保持同一版本
+          pkg install -y bash git clang cmake ninja pkg-config libasio libspdlog googletest libusb libc++
           git clone --depth 1 https://github.com/jarro2783/cxxopts.git ~/cxxopts
           cd ~/cxxopts
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
