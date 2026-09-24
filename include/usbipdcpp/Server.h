@@ -115,7 +115,8 @@ public:
  *     内部加锁，任意线程安全
  *   - get_available_devices / get_using_devices：不锁，调用方必须自行持有 get_devices_mutex()
  *   - get_devices_mutex：始终安全，仅返回 mutex 引用
- *   - set_before_thread_create_callback / set_after_thread_create_callback：必须在 start() 之前调用
+ *   - set_before_thread_create_callback / set_after_thread_create_callback / set_connection_filter：
+ *     必须在 start() 之前调用
  */
 class USBIPDCPP_API Server final {
 public:
@@ -289,6 +290,28 @@ public:
     }
 
     /**
+     * @brief 设置连接过滤器（来源准入控制）：客户端连接被 accept 后、会话注册
+     * 前调用，返回 false 则拒绝该连接（关闭 socket，不发送任何数据，不产生会话、
+     * 不发出 on_session_started 通知，拒绝时记一条含对端地址的 WARN 日志）
+     * @param filter 过滤器，接收对端地址（含 IP 与源端口）；返回 true 放行、
+     * false 拒绝。传空的 std::function 可清除过滤器（恢复全部放行）
+     *
+     * 典型用途：只允许特定来源的客户端接入（如本机回环场景下按源端口授权、
+     * 嵌入式设备限制允许的客户端 IP）。未设置过滤器时全部放行，默认行为不变。
+     *
+     * @attention 回调在网络线程上**串行**调用（accept_loop 是唯一调用点，
+     * 同一时刻至多一个回调在执行，无需自行加锁），且处在 accept 路径上——
+     * 应快速返回，重活请转交自己的线程。被拒连接在回调返回前已 accept 完毕，
+     * 拒绝即关闭。
+     * @attention 回调抛出的异常按"拒绝"处理并记 ERROR：设置了过滤器即代表
+     * 需要准入控制，异常时放行会让检查静默失效（与 ServerObserver 的
+     * "异常只记日志、不影响主流程"语义不同，两者刻意区分）
+     * @attention 必须在 start() 之前调用（与线程创建回调同一纪律），
+     * 运行期更换不受支持
+     */
+    void set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> &&filter);
+
+    /**
      * @brief 移除指定的 session 并通知 on_session_ended
      * @param id 要移除的 session 的 id
      *
@@ -347,6 +370,11 @@ protected:
     std::function<void(ThreadPurpose)> before_thread_create_callback;
     // 线程创建后回调；参数为线程指针，nullptr 表示线程创建失败
     std::function<void(ThreadPurpose, std::thread*)> after_thread_create_callback;
+
+    // 连接过滤器：accept 后、会话注册前调用，返回 false 拒绝连接。
+    // 要求 start() 之前设置（见 set_connection_filter 注释），accept_loop
+    // 读取时不再加锁
+    std::function<bool(const asio::ip::tcp::endpoint &)> connection_filter;
 
     // 会话连接表：Server 仅持 weak_ptr 观察，Session 生命周期由自身管理
     // （session 线程作为主线程，return 时最后一个引用释放即自析构）。

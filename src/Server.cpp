@@ -408,6 +408,10 @@ void usbipdcpp::Server::remove_session(std::uint64_t id) {
 }
 
 
+void usbipdcpp::Server::set_connection_filter(std::function<bool(const asio::ip::tcp::endpoint &)> &&filter) {
+    connection_filter = std::move(filter);
+}
+
 asio::awaitable<void> usbipdcpp::Server::accept_loop() {
     try {
         while (true) {
@@ -510,6 +514,28 @@ asio::awaitable<void> usbipdcpp::Server::accept_loop() {
             }
             auto remote_endpoint_name = std::format("{}:{}", remote_endpoint.address().to_string(),
                                                     remote_endpoint.port());
+
+            // 连接过滤器（来源准入控制）：会话注册前的最后一道关，被拒的连接
+            // 直接 continue——session 出作用域即析构（关闭 socket，active_sessions
+            // 的递增/递减保持平衡），不进连接表、不发 on_session_started。
+            // 过滤器抛异常按"拒绝"处理（fail-closed）：设置了过滤器即代表需要
+            // 准入控制，异常时放行等于静默绕过检查。
+            // 过滤器在网络线程上串行调用：accept_loop 是唯一调用点，每轮至多一次
+            if (connection_filter) {
+                bool allowed = false;
+                try {
+                    allowed = connection_filter(remote_endpoint);
+                } catch (const std::exception &e) {
+                    SPDLOG_ERROR("连接过滤器抛出异常，按拒绝处理：{}", e.what());
+                } catch (...) {
+                    SPDLOG_ERROR("连接过滤器抛出未知异常，按拒绝处理");
+                }
+                if (!allowed) {
+                    SPDLOG_WARN("连接被拒绝：{}", remote_endpoint_name);
+                    continue;
+                }
+            }
+
             spdlog::info("A new connection from {}", remote_endpoint_name);
 
             try {

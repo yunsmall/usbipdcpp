@@ -67,6 +67,11 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_server_observer)
     target_link_libraries(test_server_observer PRIVATE usbipdcpp_virtual_device)
 
+    # 连接过滤器（来源准入控制）专项：放行/拒绝语义、被拒连接不建立会话也不发
+    # 通知、按来源（源端口）过滤、抛异常按拒绝处理、跨 start/stop 保留、清除
+    add_test_file(test_connection_filter)
+    target_link_libraries(test_connection_filter PRIVATE usbipdcpp_virtual_device)
+
     # 通用管道虚拟设备（PipeDeviceHandler）的端到端测试
     add_test_file(test_pipe_device_handler)
     target_link_libraries(test_pipe_device_handler PRIVATE usbipdcpp_virtual_device)
