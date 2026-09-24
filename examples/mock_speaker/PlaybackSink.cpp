@@ -155,7 +155,6 @@ void PlaybackSink::open_device() {
             SPDLOG_INFO("PlaybackSink: 使用默认播放设备 \"{}\"", info.name);
         }
     }
-    // TODO: 临时日志（排查播放快进）：实际设备采样率与请求值是否一致
     auto *dev = static_cast<ma_device *>(device);
     SPDLOG_INFO("PlaybackSink: 开始播放（请求 {}ch {}Hz，设备实际 sampleRate={} channels={}）",
                 format.channels, format.sample_rate, dev->sampleRate, dev->playback.channels);
