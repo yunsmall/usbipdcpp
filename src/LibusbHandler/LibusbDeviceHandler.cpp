@@ -249,7 +249,10 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
             }
         }
         else {
-            // tweak 成功或失败，都不提交 transfer
+            // tweak_ret == 0：tweak 内部已经用同步 API 把请求发过设备了，这是它办完的
+            // 结果，不能再提交一次（内核在 tweak 成功时同样跳过 usb_submit_urb，注释
+            // 原话是 Skip submitting this URB to not duplicate the request）。
+            // libusb 失败返回负数、不需要 tweak 返回 -1，都走上面的提交分支
             responder->submit_ret_submit(
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
         }
@@ -431,6 +434,12 @@ int usbipdcpp::LibusbDeviceHandler::tweak_clear_halt_cmd(const SetupPacket &setu
     // caller 中 tweak_ret < 0 视为"未处理，提交 transfer 让设备自行处理"，
     // tweak_ret == 0 视为"已处理，无需提交 transfer"。
     // 因此 tweak 失败时会 fall through 到正常 transfer 提交，作为降级策略。
+    //
+    // 失败时必须如实返回错误码，不得把任何错误码降级成 0：
+    // 内核 usb_clear_halt（core/message.c）对任何错误都直接返回，其注释写明
+    // "don't un-halt or force to DATA0 except on success"——只有成功时才重置
+    // data toggle。失败时设备侧 toggle 并未归零，报成功等于让客户端以为端点
+    // 已复位、按 DATA0 继续收发，实际两端 toggle 错位，后续传输会莫名失败。
     return err;
 }
 

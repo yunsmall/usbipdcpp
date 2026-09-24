@@ -65,10 +65,13 @@ public:
 
     /**
      * @brief 处理特殊控制请求
-     * @param setup_packet
-     * @return -1: 不需要 tweak，应该提交 transfer
-     *          0: tweak 成功，不需要提交 transfer
-     *         >0: tweak 失败（libusb 错误码），不需要提交 transfer
+     * @param setup_packet 控制传输的 setup 包
+     * @return 0: tweak 已成功处理，不需要提交 transfer
+     *        <0: 未处理，需要提交 transfer 让设备自行处理，含两种来源：
+     *            -1，不需要 tweak（绝大多数情况）；
+     *            libusb 错误码（全部为负），tweak 执行失败。
+     *            两者共用同一出口与内核 tweak_special_requests 的 !err 归一化一致：
+     *            内核把"失败"和"不需要 tweak"都算作"未 tweak"而照常提交给设备
      */
     int tweak_special_requests(const SetupPacket &setup_packet);
 
