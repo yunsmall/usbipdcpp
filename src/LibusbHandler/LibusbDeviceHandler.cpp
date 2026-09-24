@@ -421,7 +421,7 @@ void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_s
 
 int usbipdcpp::LibusbDeviceHandler::tweak_clear_halt_cmd(const SetupPacket &setup_packet) {
     auto target_endp = setup_packet.index;
-    SPDLOG_INFO("tweak_clear_halt_cmd");
+    SPDLOG_DEBUG("tweak_clear_halt_cmd");
 
     auto err = libusb_clear_halt(native_handle, target_endp);
     if (err) [[unlikely]] {
@@ -448,7 +448,7 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &s
     uint16_t alternate = setup_packet.value;
     uint16_t interface = setup_packet.index;
 
-    SPDLOG_INFO("set_interface: inf {} alt {}", interface, alternate);
+    SPDLOG_DEBUG("set_interface: inf {} alt {}", interface, alternate);
     int err = libusb_set_interface_alt_setting(native_handle, interface, alternate);
     if (err) [[unlikely]] {
         SPDLOG_ERROR("{}: usb_set_interface error: inf {} alt {} err {}",
@@ -483,8 +483,10 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &s
 }
 
 
-int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd(const SetupPacket &setup_packet) {
-    SPDLOG_INFO("tweak_set_configuration_cmd");
+// setup_packet 未参与处理：这里有意跳过 SET_CONFIGURATION（见函数内注释），
+// 参数保留是为了与其他 tweak 函数签名一致
+int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd([[maybe_unused]] const SetupPacket &setup_packet) {
+    SPDLOG_DEBUG("tweak_set_configuration_cmd");
 
     // uint16_t config = libusb_le16_to_cpu(setup_packet.value);
 
@@ -507,7 +509,9 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd(const SetupPacke
     return -1;
 }
 
-int usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd(const SetupPacket &setup_packet) {
+// setup_packet 未参与处理：reset 只记日志、不实际执行（见函数内注释），
+// 参数保留是为了与其他 tweak 函数签名一致
+int usbipdcpp::LibusbDeviceHandler::tweak_reset_device_cmd([[maybe_unused]] const SetupPacket &setup_packet) {
     SPDLOG_INFO("{}: usb_queue_reset_device", get_device_busid(libusb_get_device(native_handle)));
 
     // 参考 usbipd-libusb：不执行 libusb_reset_device
