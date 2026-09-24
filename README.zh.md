@@ -103,6 +103,7 @@ int main() {
 | `USBIPDCPP_BUILD_SHARED_LIBS` | ON | 编译为动态库（符合 LGPL 合规要求，推荐）；设为 OFF 编译静态库 |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (顶级项目) | 编译所有示例程序 |
 | `USBIPDCPP_BUILD_TESTS` | ON (顶级项目) | 编译测试套件 |
+| `USBIPDCPP_USE_PKGCONF_ASIO` | OFF | 改用 pkgconf 查找 asio，而非 CMake 的 `find_package`。asio 只提供 `asio.pc`、没有 CMake config 时必须开启（apt 装的 `libasio-dev`、Termux 的 `libasio` 都是这样）；vcpkg 的 asio 自带 CMake config，无需此项 |
 
 更多选项详见 `CMakeLists.txt`
 
@@ -129,6 +130,7 @@ sudo apt install libusb-1.0-0-dev
 sudo apt install libminiaudio-dev
 
 # 编译
+# apt 的 libasio-dev 只提供 asio.pc、没有 CMake config，所以要开 USBIPDCPP_USE_PKGCONF_ASIO
 cmake -B build -DUSBIPDCPP_USE_PKGCONF_ASIO=ON
 cmake --build build
 cmake --install build
@@ -177,7 +179,8 @@ Termux 使用 clang 编译，不受上文 gcc13 版本限制。
 安装依赖：
 
 ```bash
-pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb
+pkg update
+pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb libc++
 ```
 
 Termux 仓库中没有 `cxxopts`。如需编译示例，请手动安装（以下以安装到 `$PREFIX/opt/cxxopts` 为例）：
@@ -203,6 +206,7 @@ cmake --install build --prefix $PREFIX
 注意事项：
 
 - 必须开启 `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON`：Termux 的 libasio 是 autotools 构建，只提供 `asio.pc`，没有 CMake config。
+- 依赖里点名安装 `libc++`：libc++ 的头文件由 `ndk-sysroot` 提供、运行时库（`libc++_shared.so`）由 `libc++` 包提供，仓库升了前者却没带上后者时两者会错位，链接期报 `std::__ndk1::__hash_memory` 未定义。点名安装可让两者保持同一版本。
 - 不装 cxxopts 也可以，examples 会被整块跳过（configure 时会有 WARNING）；也可通过 `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF` 只编译库。
 - `libevdev_mouse` 和 `mock_uvc_ffmpeg` 依赖的 libevdev / FFmpeg 在 Termux 没有 dev 包，configure 时自动跳过，无需额外选项。
 - Termux 仓库没有 miniaudio，mock_audio 的 `--audio` 选项（`AudioFileSource`）与 mock_speaker 的本机播放自动跳过；可手动安装头文件启用。stb 头文件在 Termux 放在 `include/stb/` 子目录（vcpkg 在 include 根目录），源码用 `__has_include` 自适应两种布局。

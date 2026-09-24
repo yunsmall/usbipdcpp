@@ -105,6 +105,7 @@ There are multiple CMake options to control which parts are compiled:
 | `USBIPDCPP_BUILD_SHARED_LIBS` | ON | Build as shared library (recommended for LGPL compliance); OFF builds static libraries |
 | `USBIPDCPP_BUILD_EXAMPLES` | ON (top-level) | Build all example applications |
 | `USBIPDCPP_BUILD_TESTS` | ON (top-level) | Build test suite |
+| `USBIPDCPP_USE_PKGCONF_ASIO` | OFF | Find asio with pkgconf instead of CMake's `find_package`. Required when asio ships only `asio.pc` with no CMake config (apt's `libasio-dev` and Termux's `libasio` both do); vcpkg's asio includes a CMake config, so it isn't needed there |
 
 See `CMakeLists.txt` for more options and details.
 
@@ -131,6 +132,7 @@ sudo apt install libusb-1.0-0-dev
 sudo apt install libminiaudio-dev
 
 # Build
+# apt's libasio-dev ships only asio.pc (no CMake config), hence USBIPDCPP_USE_PKGCONF_ASIO
 cmake -B build -DUSBIPDCPP_USE_PKGCONF_ASIO=ON
 cmake --build build
 cmake --install build
@@ -181,7 +183,8 @@ Termux uses clang, so the gcc13 minimum version requirement above does not apply
 Install the dependencies:
 
 ```bash
-pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb
+pkg update
+pkg install clang cmake ninja pkg-config libasio libspdlog googletest libusb libc++
 ```
 
 `cxxopts` is not available in the Termux repositories. To build the examples, install it manually (here it is installed to `$PREFIX/opt/cxxopts`):
@@ -207,6 +210,7 @@ cmake --install build --prefix $PREFIX
 Notes:
 
 - `-DUSBIPDCPP_USE_PKGCONF_ASIO=ON` is required: Termux's libasio is built with autotools and only ships `asio.pc`, no CMake config.
+- `libc++` is listed explicitly: its headers come from `ndk-sysroot` while the runtime library (`libc++_shared.so`) comes from the `libc++` package. When the repositories bump `ndk-sysroot` without a matching `libc++`, the two fall out of sync and linking fails with an undefined `std::__ndk1::__hash_memory`. Installing it by name keeps both on the same version.
 - Installing cxxopts is optional — without it all examples are skipped (with a configure-time warning). You can also build just the libraries with `-DUSBIPDCPP_BUILD_EXAMPLES=OFF -DUSBIPDCPP_BUILD_TESTS=OFF`.
 - `libevdev_mouse` and `mock_uvc_ffmpeg` depend on libevdev / FFmpeg, which have no dev packages in Termux. They are skipped automatically during configure — no extra options needed.
 - miniaudio is not available in the Termux repositories. The `--audio` option (`AudioFileSource`) of `mock_audio` and the local playback of `mock_speaker` are skipped automatically; install the header manually to enable it. The stb headers live in `include/stb/` on Termux (include root with vcpkg); the source adapts to both layouts via `__has_include`.
