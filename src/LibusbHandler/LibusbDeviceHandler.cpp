@@ -242,7 +242,7 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                 }
                 responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-                if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
+                if (err == LIBUSB_ERROR_NO_DEVICE) [[unlikely]] {
                     device_removed = true;
                     ec = make_error_code(ErrorType::NO_DEVICE);
                 }
@@ -350,7 +350,7 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                 delete callback_args;
             }
             responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-            if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
+            if (err == LIBUSB_ERROR_NO_DEVICE) [[unlikely]] {
                 device_removed = true;
                 ec = make_error_code(ErrorType::NO_DEVICE);
             }
