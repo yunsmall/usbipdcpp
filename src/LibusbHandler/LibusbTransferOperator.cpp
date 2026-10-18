@@ -93,7 +93,13 @@ std::size_t LibusbTransferOperator::get_actual_length(void *handle) {
 
 bool LibusbTransferOperator::transfer_is_in(void *handle) {
     auto *trx = static_cast<libusb_transfer *>(handle);
-    // 方向以 libusb 提交时的端点为准（与 send_transfer_data 内部判断同源）
+
+    if (trx->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
+        // libusb 控制传输的端点地址为 0，方向由 setup 包的 bmRequestType 决定。
+        const auto *setup = libusb_control_transfer_get_setup(trx);
+        return (setup->bmRequestType & LIBUSB_ENDPOINT_IN) != 0;
+    }
+
     return (trx->endpoint & LIBUSB_ENDPOINT_IN) != 0;
 }
 
