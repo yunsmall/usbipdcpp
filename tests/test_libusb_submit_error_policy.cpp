@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 
-#include <libusb-1.0/libusb.h>
-
+// libusb 符号由 LibusbDeviceHandler.h 带入（其内部先包含 asio 再包含
+// libusb，避免 Windows 上 winsock.h 与 winsock2.h 的顺序冲突）
 #include "usbipdcpp/LibusbHandler/LibusbDeviceHandler.h"
 
 using namespace usbipdcpp;
