@@ -8,6 +8,7 @@
 #include <libusb-1.0/libusb.h>
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
+#include "usbipdcpp/LibusbHandler/LibusbDeviceHandlerConfig.h"
 #include "usbipdcpp/LibusbHandler/tools.h"
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/constant.h"
@@ -15,6 +16,7 @@
 #include "usbipdcpp/utils/ObjectPool.h"
 
 namespace usbipdcpp {
+
 class USBIPDCPP_API LibusbDeviceHandler : public AbstDeviceHandler {
     friend class LibusbServer;
 
@@ -26,8 +28,10 @@ public:
      *
      * @param handle_device The UsbDevice this handler is attached to.
      * @param native_device The libusb device (not yet opened). The handler takes ownership of this reference.
+     * @param config 行为配置（按值拷贝）
      */
-    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device);
+    explicit LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
+                                 const LibusbDeviceHandlerConfig &config = {});
 
     /**
      * @brief Android 模式构造函数
@@ -38,8 +42,10 @@ public:
      * @param handle_device The UsbDevice this handler is attached to.
      * @param fd A valid file descriptor opened on the device node.
      *           The fd must remain valid until the handler is destroyed.
+     * @param config 行为配置（按值拷贝）
      */
-    explicit LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd);
+    explicit LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd,
+                                 const LibusbDeviceHandlerConfig &config = {});
 
     ~LibusbDeviceHandler() override;
     void on_new_connection(TransferResponder &responder, error_code &ec) override;
@@ -76,6 +82,14 @@ public:
     int tweak_special_requests(const SetupPacket &setup_packet);
 
     static uint8_t get_libusb_transfer_flags(uint32_t in);
+
+    /**
+     * @brief 判断一次 libusb_submit_transfer 失败是否应断开会话
+     * @param err libusb_submit_transfer 的返回值（负数）
+     * @param policy 配置的断连策略
+     * @return true 表示需要断开
+     */
+    static bool should_disconnect_on_submit_error(int err, LibusbSubmitErrorPolicy policy);
 
     static void masking_bogus_flags(bool is_out, struct libusb_transfer *trx);
 
@@ -149,6 +163,9 @@ public:
     std::shared_mutex transfers_mutex_;
     std::unordered_map<std::uint32_t, libusb_callback_args *> transfers_;
     std::atomic<std::size_t> pending_count_{0};
+
+    // 创建时拷贝的 handler 行为配置（运行期不变）
+    LibusbDeviceHandlerConfig device_handler_config;
 
     // 设备句柄
     // - 普通模式：在 on_new_connection 时赋值

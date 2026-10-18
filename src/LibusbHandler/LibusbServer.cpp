@@ -266,7 +266,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
     });
 
     // 普通模式：传入设备引用（handler 持有引用所有权）
-    current_device->with_handler<LibusbDeviceHandler>(dev);
+    current_device->with_handler<LibusbDeviceHandler>(dev, config.device_handler_config);
     const auto add_status = server.add_device(std::move(current_device));
     libusb_free_config_descriptor(active_config_desc);
     if (add_status != AddDeviceStatus::Added) {
@@ -384,7 +384,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     });
 
     // Android 模式：传入 fd（每次连接时重新 wrap）
-    current_device->with_handler<LibusbDeviceHandler>(fd);
+    current_device->with_handler<LibusbDeviceHandler>(fd, config.device_handler_config);
     const auto add_status = server.add_device(std::move(current_device));
     if (add_status != AddDeviceStatus::Added) {
         // busid 冲突未添加（Android 模式没有设备引用需要释放，fd 由调用方持有）

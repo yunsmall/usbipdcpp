@@ -27,15 +27,27 @@ std::string get_trx_device_busid(libusb_transfer *trx) {
 } // namespace
 
 // 普通模式构造函数
-usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device) :
-    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()), native_device_(native_device) {
+usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
+                                                    const LibusbDeviceHandlerConfig &config) :
+    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()),
+    device_handler_config(config), native_device_(native_device) {
     // 设备尚未打开，将在 on_new_connection 时打开
 }
 
 // Android 模式构造函数
-usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd) :
-    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()), wrapped_fd_(fd) {
+usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, intptr_t fd,
+                                                    const LibusbDeviceHandlerConfig &config) :
+    AbstDeviceHandler(handle_device, std::make_unique<LibusbTransferOperator>()),
+    device_handler_config(config), wrapped_fd_(fd) {
     // fd 将在 on_new_connection 时通过 libusb_wrap_sys_device 包装
+}
+
+bool usbipdcpp::LibusbDeviceHandler::should_disconnect_on_submit_error(int err, LibusbSubmitErrorPolicy policy) {
+    // NO_DEVICE 在任何策略下都意味着设备已消失
+    if (err == LIBUSB_ERROR_NO_DEVICE)
+        return true;
+    // 严格策略对齐内核 stub：提交失败无法保证后续一致性，悲观丢弃连接
+    return policy == LibusbSubmitErrorPolicy::DisconnectOnAnyError;
 }
 
 usbipdcpp::LibusbDeviceHandler::~LibusbDeviceHandler() {
@@ -242,7 +254,7 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                 }
                 responder->submit_ret_submit(
                         UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-                if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
+                if (should_disconnect_on_submit_error(err, device_handler_config.submit_error_policy)) [[unlikely]] {
                     device_removed = true;
                     ec = make_error_code(ErrorType::NO_DEVICE);
                 }
@@ -350,7 +362,7 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                 delete callback_args;
             }
             responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
-            if (err == LIBUSB_ERROR_NO_DEVICE || err == LIBUSB_ERROR_IO) [[unlikely]] {
+            if (should_disconnect_on_submit_error(err, device_handler_config.submit_error_policy)) [[unlikely]] {
                 device_removed = true;
                 ec = make_error_code(ErrorType::NO_DEVICE);
             }

@@ -4,6 +4,7 @@
 #include <functional>
 #include <libusb-1.0/libusb.h>
 
+#include "usbipdcpp/LibusbHandler/LibusbDeviceHandlerConfig.h"
 #include "usbipdcpp/Server.h"
 
 namespace usbipdcpp {
@@ -30,6 +31,11 @@ enum class DeviceOperationResult {
 struct LibusbServerConfig {
     bool skip_hub = true; ///< 跳过 hub 设备（bDeviceClass == 0x09）
     bool auto_bind_hotplug = false; ///< 热插拔时自动绑定新设备
+
+    /// 创建 LibusbDeviceHandler 时传入的行为配置。默认严格策略：任何
+    /// libusb_submit_transfer 失败都断开会话（与内核 stub 的悲观处理一致）；
+    /// Android 等设备在 ISO 提交偶发 IO 时可改为 DisconnectOnDeviceGone
+    LibusbDeviceHandlerConfig device_handler_config;
 
     /**
      * @brief 设备绑定过滤器：返回 true 表示不导出该设备（跳过绑定）

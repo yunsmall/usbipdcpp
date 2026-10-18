@@ -126,4 +126,7 @@ endif ()
 if (TARGET usbipdcpp_libusb)
     add_test_file(test_libusb_transfer_direction)
     target_link_libraries(test_libusb_transfer_direction PRIVATE usbipdcpp_libusb)
+
+    add_test_file(test_libusb_submit_error_policy)
+    target_link_libraries(test_libusb_submit_error_policy PRIVATE usbipdcpp_libusb)
 endif ()
