@@ -120,3 +120,10 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_wav_file_sink)
     target_link_libraries(test_wav_file_sink PRIVATE usbipdcpp_virtual_device)
 endif ()
+
+# libusb 后端的控制传输方向专项：libusb_fill_control_transfer 把控制传输的
+# endpoint 固定为 0，方向必须从 setup 包判断，不能用端点地址
+if (TARGET usbipdcpp_libusb)
+    add_test_file(test_libusb_transfer_direction)
+    target_link_libraries(test_libusb_transfer_direction PRIVATE usbipdcpp_libusb)
+endif ()

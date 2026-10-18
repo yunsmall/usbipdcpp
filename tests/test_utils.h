@@ -44,6 +44,49 @@ inline void expect_cmd_unlink_equal(const UsbIpCommand::UsbIpCmdUnlink &actual,
 
 // ---- 网络测试公共工具 ----
 
+/// 本地 TCP 回环 socket 对：send_sock 由 to_socket 写入，recv_sock 读端验证
+struct SocketPair {
+    asio::io_context io;
+    asio::ip::tcp::acceptor acceptor;
+    asio::ip::tcp::socket send_sock;
+    asio::ip::tcp::socket recv_sock;
+
+    SocketPair()
+        : acceptor(io, asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)),
+          send_sock(io),
+          recv_sock(io) {
+        auto ep = acceptor.local_endpoint();
+        acceptor.listen(1);
+        std::thread accept_thread([this] { acceptor.accept(recv_sock); });
+        send_sock.connect(ep);
+        accept_thread.join();
+    }
+};
+
+inline std::vector<std::uint8_t> read_n(asio::ip::tcp::socket &sock, std::size_t n) {
+    std::vector<std::uint8_t> buf(n);
+    asio::read(sock, asio::buffer(buf));
+    return buf;
+}
+
+inline std::uint32_t be32(const std::vector<std::uint8_t> &bytes, std::size_t offset) {
+    return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
+           (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
+           (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
+           static_cast<std::uint32_t>(bytes[offset + 3]);
+}
+
+/// 验证 48 字节 usbip_header（大端布局：base 20 字节 + ret_submit 20 字节 + padding 8）
+inline void expect_header(const std::vector<std::uint8_t> &hdr, std::uint32_t seqnum, std::uint32_t actual_length,
+                          std::uint32_t num_packets) {
+    ASSERT_EQ(hdr.size(), 48u);
+    EXPECT_EQ(be32(hdr, 0), USBIP_RET_SUBMIT);
+    EXPECT_EQ(be32(hdr, 4), seqnum);
+    EXPECT_EQ(be32(hdr, 20), 0u); // status
+    EXPECT_EQ(be32(hdr, 24), actual_length);
+    EXPECT_EQ(be32(hdr, 32), num_packets);
+}
+
 // 探测一个空闲端口。固定端口才能验证多次 start 的监听不冲突
 inline std::uint16_t probe_free_port(asio::io_context &io) {
     asio::ip::tcp::acceptor probe(io);

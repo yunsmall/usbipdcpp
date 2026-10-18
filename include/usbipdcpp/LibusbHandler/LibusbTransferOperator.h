@@ -8,11 +8,13 @@ struct libusb_transfer;
 namespace usbipdcpp {
 
 namespace detail {
-    struct LibusbTransferLM {
+    // 导出：ObjectPool<...> 由使用方（包括测试）实例化，模板会直接调用
+    // 这两个管理器的静态函数；共享库构建隐藏符号时，不导出会链接失败
+    struct USBIPDCPP_API LibusbTransferLM {
         static libusb_transfer *create();
         static void destroy(libusb_transfer *p);
     };
-    struct LibusbTransferReset {
+    struct USBIPDCPP_API LibusbTransferReset {
         static void reset(libusb_transfer &t);
     };
 } // namespace detail

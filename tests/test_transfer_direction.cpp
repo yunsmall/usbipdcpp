@@ -13,42 +13,15 @@
 
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/protocol.h"
+#include "test_utils.h"
 
 using namespace usbipdcpp;
+using usbipdcpp::test::SocketPair;
+using usbipdcpp::test::read_n;
+using usbipdcpp::test::be32;
+using usbipdcpp::test::expect_header;
 
 namespace {
-
-/// 本地 TCP 回环 socket 对：send_sock 由 to_socket 写入，recv_sock 读端验证
-struct SocketPair {
-    asio::io_context io;
-    asio::ip::tcp::acceptor acceptor;
-    asio::ip::tcp::socket send_sock;
-    asio::ip::tcp::socket recv_sock;
-
-    SocketPair()
-        : acceptor(io, asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)),
-          send_sock(io),
-          recv_sock(io) {
-        auto ep = acceptor.local_endpoint();
-        acceptor.listen(1);
-        std::thread accept_thread([this] { acceptor.accept(recv_sock); });
-        send_sock.connect(ep);
-        accept_thread.join();
-    }
-};
-
-std::vector<std::uint8_t> read_n(asio::ip::tcp::socket &sock, std::size_t n) {
-    std::vector<std::uint8_t> buf(n);
-    asio::read(sock, asio::buffer(buf));
-    return buf;
-}
-
-std::uint32_t be32(const std::vector<std::uint8_t> &bytes, std::size_t offset) {
-    return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
-           (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
-           (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
-           static_cast<std::uint32_t>(bytes[offset + 3]);
-}
 
 /// 模拟真实应答路径构造 RET：经 alloc_transfer_handle（记录方向）→ 填数据 →
 /// create_ret_submit。payload 为数据阶段内容，iso_actual 为各包实际字节数
@@ -73,17 +46,6 @@ UsbIpResponse::UsbIpRetSubmit make_ret(GenericTransferOperator &op, bool is_in, 
                                                             std::move(handle));
 }
 
-/// 验证 48 字节 usbip_header（大端布局见协议文档：base 20 字节 + ret_submit 20 字节 + padding 8）
-void expect_header(const std::vector<std::uint8_t> &hdr, std::uint32_t seqnum, std::uint32_t actual_length,
-                   std::uint32_t num_packets) {
-    ASSERT_EQ(hdr.size(), 48u);
-    EXPECT_EQ(be32(hdr, 0), USBIP_RET_SUBMIT);
-    EXPECT_EQ(be32(hdr, 4), seqnum);
-    EXPECT_EQ(be32(hdr, 20), 0u); // status
-    EXPECT_EQ(be32(hdr, 24), actual_length);
-    EXPECT_EQ(be32(hdr, 32), num_packets);
-}
-
 } // namespace
 
 // ============== alloc 方向记录 ==============
@@ -99,6 +61,29 @@ TEST(TestTransferDirection, AllocRecordsDirection) {
 
     header.direction = UsbIpDirection::Out;
     auto *out_handle = op.alloc_transfer_handle(64, 0, header, {});
+    EXPECT_FALSE(op.transfer_is_in(out_handle));
+    op.free_transfer_handle(out_handle);
+}
+
+TEST(TestTransferDirection, ControlTransferUsesHeaderDirectionNotSetup) {
+    // 虚拟设备的控制传输（ep=0）方向同样只取协议头的 direction 字段，
+    // setup 包不参与判断。与 libusb 后端相反：那边 endpoint 恒为 0，
+    // 必须读 bmRequestType。这里故意让 setup 与 direction 矛盾，锁定契约。
+    GenericTransferOperator op;
+    UsbIpHeaderBasic header{};
+    header.ep = 0;
+    SetupPacket setup{};
+    setup.request_type = 0x00; // OUT 方向的 bmRequestType
+    setup.length = 4;
+
+    header.direction = UsbIpDirection::In;
+    auto *in_handle = op.alloc_transfer_handle(4, 0, header, setup);
+    EXPECT_TRUE(op.transfer_is_in(in_handle));
+    op.free_transfer_handle(in_handle);
+
+    header.direction = UsbIpDirection::Out;
+    setup.request_type = 0x80; // IN 方向的 bmRequestType
+    auto *out_handle = op.alloc_transfer_handle(4, 0, header, setup);
     EXPECT_FALSE(op.transfer_is_in(out_handle));
     op.free_transfer_handle(out_handle);
 }
