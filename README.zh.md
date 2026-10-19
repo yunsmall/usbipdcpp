@@ -18,6 +18,14 @@
 
 ---
 
+## 演示视频
+
+[![Bilibili 演示视频](https://img.shields.io/badge/Bilibili-观看演示视频-00A1D6?logo=bilibili&logoColor=white&style=for-the-badge)](https://www.bilibili.com/video/BV1EuosBkEdW)
+
+> 🎬 视频录制于 2026 年 4 月，部分 API 与功能细节此后已有更新，请以本 README 为准。
+
+---
+
 ## 快速开始
 
 > ⚠️ **版本提示**：本库仍在初期阶段，不同小版本之间 API 可能发生变化（暂不保证严格的语义化版本兼容）。

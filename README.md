@@ -18,6 +18,14 @@ Contributions welcome! 🚀
 
 ---
 
+## Demo Video
+
+[![Bilibili Demo Video](https://img.shields.io/badge/Bilibili-Watch%20the%20Demo-00A1D6?logo=bilibili&logoColor=white&style=for-the-badge)](https://www.bilibili.com/video/BV1EuosBkEdW)
+
+> 🎬 The video is in Chinese; Bilibili may provide auto-generated subtitles/translation, so feel free to check it out. It was recorded in April 2026, and some APIs and details may have changed since then — this README is the authoritative source.
+
+---
+
 ## Quick Start
 
 > ⚠️ **Versioning notice**: this library is still in an early stage, and APIs may change between minor releases (strict semantic versioning compatibility is not guaranteed yet).
