@@ -32,7 +32,7 @@ jobs:
           - { name: win-x64,        os: windows-latest }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ======== 依赖 ========
 
@@ -190,7 +190,7 @@ jobs:
       # ======== 上传 artifact（所有平台建完后统一发到 Release） ========
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: ${{ env.archive }}
@@ -206,12 +206,12 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**/*.tar.gz
           generate_release_notes: true

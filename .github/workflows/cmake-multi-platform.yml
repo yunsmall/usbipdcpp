@@ -40,6 +40,9 @@ jobs:
           - { name: linux-gcc  libusb static,       os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: ON,  shared: OFF }
           - { name: linux-gcc  shared only,         os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: OFF, shared: ON }
           - { name: linux-gcc  static only,         os: ubuntu-24.04, cpp: g++,    vdev: OFF, libusb: OFF, shared: OFF }
+          # Ubuntu 26.04 只做工具链兼容性验证（GCC 15.2），不放开发版包：
+          # 该镜像 glibc 2.43，产物会要求用户系统同步升级
+          - { name: linux-gcc26  vdev+libusb+shared, os: ubuntu-26.04, cpp: g++,    vdev: ON,  libusb: ON,  shared: ON }
           # ======== macOS (clang) : VIRTUAL_DEVICE × LIBUSB × SHARED 全排列 (8) ========
           - { name: macos-clang  vdev+libusb+shared, os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: ON }
           - { name: macos-clang  vdev+libusb static,  os: macos-latest, cpp: clang++, vdev: ON,  libusb: ON,  shared: OFF }
@@ -56,7 +59,7 @@ jobs:
           - { name: win-msvc  static only,          os: windows-latest, cpp: cl,    vdev: OFF, libusb: OFF, shared: OFF }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ======== 依赖 ========
 
@@ -127,7 +130,7 @@ jobs:
 
       # ======== 编译 + 测试 ========
 
-      # ubuntu-24.04 runner 只有 2 核且内存小：2 并发编译时 miniaudio/fmt 等
+      # ubuntu runner（24.04/26.04）只有 2 核且内存小：2 并发编译时 miniaudio/fmt 等
       # 大头文件同时展开，内存峰值超限被内核 OOM 杀 cc1plus（实测 g++: fatal
       # error: Killed，内存紧张连带 runner 服务被杀 exit 143），Linux 限 1 并发
       - name: Build (Linux)
@@ -201,7 +204,7 @@ jobs:
   termux-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build and test in Termux container
         run: |
