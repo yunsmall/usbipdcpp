@@ -110,6 +110,18 @@ protected:
 
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
                                      std::uint32_t *p_status);
+
+    /**
+     * @brief 按接口号（bInterfaceNumber，即控制请求的 wIndex）查找接口
+     *
+     * 复合设备的接口在 interfaces 里的排列顺序与 interface_number 不保证一致
+     * （见 UsbInterface::interface_number），wIndex 是接口号，不能拿来当数组下标，
+     * 否则接口级请求会路由到另一个接口的 handler。
+     * @param interface_number 接口号
+     * @return 对应接口；没有该编号的接口时返回 nullptr
+     */
+    UsbInterface *find_interface_by_number(std::uint16_t interface_number);
+
     std::uint8_t request_get_interface(std::uint16_t intf, std::uint32_t *p_status);
     void request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf, std::uint32_t *p_status);
 

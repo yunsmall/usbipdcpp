@@ -344,14 +344,15 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
             }
             case RequestRecipient::Interface: {
                 SPDLOG_TRACE("发给接口");
-                auto intf_idx = setup_packet.index;
-                if (intf_idx >= handle_device.interfaces.size()) {
-                    SPDLOG_WARN("接口号{}越界（总共{}个接口），返回EPIPE", intf_idx, handle_device.interfaces.size());
+                auto *interface = find_interface_by_number(setup_packet.index);
+                if (!interface) {
+                    SPDLOG_WARN("接口号{}不存在（总共{}个接口），返回EPIPE", setup_packet.index,
+                                handle_device.interfaces.size());
                     responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
                 }
-                auto handler = handle_device.interfaces[intf_idx].handler;
+                auto handler = interface->handler;
                 if (handler) {
                     StandardRequest std_request = static_cast<StandardRequest>(setup_packet.calc_standard_request());
                     if (setup_packet.is_out()) {
@@ -369,15 +370,14 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             case StandardRequest::SetInterface: {
                                 // USB 2.0 §9.4.10：wValue 低字节是 alternate setting
                                 auto alt = static_cast<std::uint16_t>(setup_packet.value & 0x00FF);
-                                SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", intf_idx, alt);
+                                SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", setup_packet.index, alt);
                                 handler->request_set_interface(alt, &status);
                                 if (status == 0) {
                                     // USB 2.0 §9.4.5：SetInterface() 之后该接口端点的
                                     // Halt 必须清零，即使 alt 与当前相同
                                     handler->reset_endpoint_halt_state();
-                                    if (alt < handle_device.interfaces[intf_idx].endpoints.size()) {
-                                        handle_device.interfaces[intf_idx].current_altsetting =
-                                                static_cast<std::uint8_t>(alt);
+                                    if (alt < interface->endpoints.size()) {
+                                        interface->current_altsetting = static_cast<std::uint8_t>(alt);
                                     }
                                 }
                                 break;
@@ -577,14 +577,15 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
             }
             case RequestRecipient::Interface: {
                 SPDLOG_TRACE("发给{}号接口的非标准控制传输包", setup_packet.index);
-                auto intf_idx = setup_packet.index & 0xFF;
-                if (intf_idx >= handle_device.interfaces.size()) {
-                    SPDLOG_WARN("接口号{}越界（总共{}个接口），返回EPIPE", intf_idx, handle_device.interfaces.size());
+                auto *interface = find_interface_by_number(static_cast<std::uint8_t>(setup_packet.index & 0xFF));
+                if (!interface) {
+                    SPDLOG_WARN("接口号{}不存在（总共{}个接口），返回EPIPE", setup_packet.index,
+                                handle_device.interfaces.size());
                     responder->submit_ret_submit(
                             UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                     return;
                 }
-                auto handler = handle_device.interfaces[intf_idx].handler;
+                auto handler = interface->handler;
                 if (handler) {
                     handler->handle_non_standard_request_type_control_urb(
                             seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(transfer), ec);
@@ -799,32 +800,36 @@ data_type VirtualDeviceHandler::request_get_descriptor(std::uint8_t type, std::u
     }
 }
 
-std::uint8_t VirtualDeviceHandler::request_get_interface(std::uint16_t intf, std::uint32_t *p_status) {
-    auto handler = handle_device.interfaces[intf].handler;
-    if (handler) {
-        return handler->request_get_interface(p_status);
+UsbInterface *VirtualDeviceHandler::find_interface_by_number(std::uint16_t interface_number) {
+    for (auto &intf: handle_device.interfaces) {
+        if (intf.interface_number == interface_number) {
+            return &intf;
+        }
     }
-    else {
-        SPDLOG_ERROR("接口未注册handler，无法处理");
+    return nullptr;
+}
+
+std::uint8_t VirtualDeviceHandler::request_get_interface(std::uint16_t intf, std::uint32_t *p_status) {
+    auto *interface = find_interface_by_number(intf);
+    if (!interface || !interface->handler) {
+        SPDLOG_ERROR("接口{}不存在或未注册handler，无法处理", intf);
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return -1;
     }
+    return interface->handler->request_get_interface(p_status);
 }
 
 void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint16_t intf,
                                                  std::uint32_t *p_status) {
-    auto &interface = handle_device.interfaces[intf];
-    auto handler = interface.handler;
-    if (handler) {
-        handler->request_set_interface(alternate_setting, p_status);
-        if (*p_status == 0 && alternate_setting < interface.endpoints.size()) {
-            interface.current_altsetting = static_cast<std::uint8_t>(alternate_setting);
-        }
-    }
-    else {
-        SPDLOG_ERROR("接口未注册handler，无法处理");
+    auto *interface = find_interface_by_number(intf);
+    if (!interface || !interface->handler) {
+        SPDLOG_ERROR("接口{}不存在或未注册handler，无法处理", intf);
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return;
+    }
+    interface->handler->request_set_interface(alternate_setting, p_status);
+    if (*p_status == 0 && alternate_setting < interface->endpoints.size()) {
+        interface->current_altsetting = static_cast<std::uint8_t>(alternate_setting);
     }
 }
 

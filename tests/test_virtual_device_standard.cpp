@@ -715,6 +715,121 @@ TEST(VirtualDeviceStandard, EmptyEndpointInterfaceAcceptsAltZero) {
     EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }
 
+// ==================== 接口级请求按 interface_number 路由 ====================
+
+namespace {
+
+/// 记录接口级请求落在哪个 handler 上，用于验证路由目标
+class RoutingProbeHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override {
+        last_alt = alternate_setting;
+        VirtualInterfaceHandler::request_set_interface(alternate_setting, p_status);
+    }
+
+    std::uint8_t request_get_interface(std::uint32_t *p_status) override {
+        *p_status = 0;
+        return interface_marker;
+    }
+
+    void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,
+                                                      std::uint32_t transfer_flags,
+                                                      std::uint32_t transfer_buffer_length,
+                                                      const SetupPacket &setup, TransferHandle transfer,
+                                                      std::error_code &ec) override {
+        (void) seqnum;
+        (void) ep;
+        (void) transfer_flags;
+        (void) transfer_buffer_length;
+        (void) transfer;
+        (void) ec;
+        last_class_request = setup.value;
+    }
+
+    int last_alt = -1;
+    std::uint16_t last_class_request = 0;
+    std::uint8_t interface_marker = 0;
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, InterfaceRequestsRouteByInterfaceNumber) {
+    // 接口级控制请求的 wIndex 是 bInterfaceNumber，不是 interfaces 数组下标。
+    // 复合设备的接口排列顺序可以与编号不一致（见 UsbInterface::interface_number），
+    // 按数组下标路由会把 SET_INTERFACE/GET_INTERFACE/类请求发给错误的 handler
+    StringPool pool;
+    UsbInterface number_five{};
+    number_five.endpoints = {
+            {{.address = 0x81,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+            {{.address = 0x83,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+    };
+    UsbInterface number_two{};
+    number_two.endpoints = {
+            {{.address = 0x82,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+            {{.address = 0x84,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+    };
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {number_five, number_two}, 1, 1, 0, {}, UsbSpeed::Full);
+    device->interfaces[0].interface_number = 5;
+    device->interfaces[1].interface_number = 2;
+    auto *five = device->interfaces[0].with_handler<RoutingProbeHandler>(pool).get();
+    five->interface_marker = 0xA5;
+    auto *two = device->interfaces[1].with_handler<RoutingProbeHandler>(pool).get();
+    two->interface_marker = 0x22;
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device_handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // SET_INTERFACE 发往接口号 2（数组下标 1）
+    SetupPacket set_intf{.request_type = 0x01, .request = 11, .value = 1, .index = 2, .length = 0};
+    send_control(*device_handler, op, 1, UsbIpDirection::Out, 0, set_intf);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+    EXPECT_EQ(two->last_alt, 1);
+    EXPECT_EQ(five->last_alt, -1);
+    EXPECT_EQ(device->interfaces[1].current_altsetting, 1);
+    EXPECT_EQ(device->interfaces[0].current_altsetting, 0);
+
+    // GET_INTERFACE 发往接口号 2：应答必须来自接口号 2 的 handler
+    SetupPacket get_intf{.request_type = 0x81, .request = 10, .value = 0, .index = 2, .length = 1};
+    send_control(*device_handler, op, 2, UsbIpDirection::In, 1, get_intf);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    EXPECT_EQ(stub.submits[1].status, 0u);
+    EXPECT_EQ(ret_submit_data(stub.submits[1]), data_type{0x22});
+
+    // 类请求发往接口号 5（数组下标 0）
+    SetupPacket class_out{.request_type = 0x21, .request = 0x09, .value = 0x1234, .index = 5, .length = 0};
+    send_control(*device_handler, op, 3, UsbIpDirection::Out, 0, class_out);
+    EXPECT_EQ(five->last_class_request, 0x1234u);
+    EXPECT_EQ(two->last_class_request, 0u);
+
+    // 不存在的接口号：USB 2.0 §9.4.10 规定 Request Error（STALL）
+    SetupPacket missing{.request_type = 0x01, .request = 11, .value = 0, .index = 3, .length = 0};
+    send_control(*device_handler, op, 4, UsbIpDirection::Out, 0, missing);
+    ASSERT_EQ(stub.submits.size(), 3u);
+    EXPECT_EQ(stub.submits[2].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    device_handler->on_disconnection(ec);
+}
+
 // ==================== GET_DESCRIPTOR / SYNCH_FRAME ====================
 
 TEST(VirtualDeviceStandard, UnknownDescriptorTypeStalls) {
