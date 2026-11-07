@@ -11,8 +11,6 @@
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/utils/utils.h"
-#include "usbipdcpp/virtual_device/UacConstants.h"
-#include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -197,10 +195,25 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
     // 获取 GenericTransfer 指针
     auto *trx = GenericTransfer::from_handle(transfer.get());
 
+    // USB 2.0 §9.3.5：IN 请求返回的数据绝不能超过 wLength（可以少）
+    auto clamp_to_wlength = [&setup_packet](data_type &data) {
+        if (setup_packet.length < data.size()) {
+            data.resize(setup_packet.length);
+        }
+    };
+
     // 调试用：打印所有控制请求（含标准请求），排查 Windows 客户端初始化流程停止位置
     SPDLOG_TRACE("[CTRL] seq={} bmReqType=0x{:02x} bRequest=0x{:02x} wValue=0x{:04x} wIndex=0x{:04x} len={} {}",
                 seqnum, setup_packet.calc_request_type(), setup_packet.request, setup_packet.value,
                 setup_packet.index, transfer_buffer_length, setup_packet.is_out() ? "OUT" : "IN");
+
+    // USB 2.0 Table 9-2：bmRequestType D6..5 = 3 是 Reserved 类型，不属于
+    // 标准/类/厂商请求；§9.4 规定不支持或无效的请求回 STALL，不能交给
+    // 类/厂商 handler 处理（handler 可能误把它当合法请求接受）
+    if (static_cast<RequestType>(setup_packet.calc_request_type()) == RequestType::Reserved) {
+        responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+        return;
+    }
 
     auto recipient = static_cast<RequestRecipient>(setup_packet.calc_recipient());
     // 标准的请求全在这里处理了
@@ -226,7 +239,17 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         }
                         case StandardRequest::SetConfiguration: {
                             SPDLOG_TRACE("设备SetConfiguration");
-                            request_set_configuration(setup_packet.value, &status);
+                            // USB 2.0 §9.4.7：wValue 只有低字节是配置值，高字节保留
+                            request_set_configuration(setup_packet.value & 0x00FF, &status);
+                            if (status == 0) {
+                                // USB 2.0 §9.4.5：SetConfiguration() 之后所有端点的
+                                // Halt 必须清零，即使配置与当前相同
+                                for (auto &intf: handle_device.interfaces) {
+                                    if (intf.handler) {
+                                        intf.handler->reset_endpoint_halt_state();
+                                    }
+                                }
+                            }
                             break;
                         }
                         case StandardRequest::SetDescriptor: {
@@ -264,10 +287,16 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         }
                         case StandardRequest::GetDescriptor: {
                             SPDLOG_TRACE("设备GetDescriptor");
-                            result = request_get_descriptor(setup_packet.value >> 8, setup_packet.value,
-                                                            setup_packet.length, &status);
-                            if (setup_packet.length < result.size()) {
-                                result.resize(setup_packet.length);
+                            // USB 2.0 §9.4.3：wValue 高字节是描述符类型，低字节是
+                            // 描述符索引；wIndex 对 String 描述符是 Language ID
+                            auto desc_type = static_cast<std::uint8_t>(setup_packet.value >> 8);
+                            if (static_cast<DescriptorType>(desc_type) == DescriptorType::String) {
+                                result = get_string_descriptor(setup_packet.index, setup_packet.value & 0x00FF,
+                                                               setup_packet.length, &status);
+                            }
+                            else {
+                                result = request_get_descriptor(desc_type, setup_packet.value & 0x00FF,
+                                                                setup_packet.length, &status);
                             }
                             break;
                         }
@@ -285,6 +314,7 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                         }
                     }
+                    clamp_to_wlength(result);
                     // 将数据写入 transfer_handle
                     trx->data = std::move(result);
                     trx->actual_length = trx->data.size();
@@ -322,12 +352,19 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 break;
                             }
                             case StandardRequest::SetInterface: {
-                                SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", intf_idx, setup_packet.value);
-                                handler->request_set_interface(setup_packet.value, &status);
-                                if (status == 0 &&
-                                    setup_packet.value < handle_device.interfaces[intf_idx].endpoints.size())
-                                    handle_device.interfaces[intf_idx].current_altsetting =
-                                            static_cast<std::uint8_t>(setup_packet.value);
+                                // USB 2.0 §9.4.10：wValue 低字节是 alternate setting
+                                auto alt = static_cast<std::uint16_t>(setup_packet.value & 0x00FF);
+                                SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", intf_idx, alt);
+                                handler->request_set_interface(alt, &status);
+                                if (status == 0) {
+                                    // USB 2.0 §9.4.5：SetInterface() 之后该接口端点的
+                                    // Halt 必须清零，即使 alt 与当前相同
+                                    handler->reset_endpoint_halt_state();
+                                    if (alt < handle_device.interfaces[intf_idx].endpoints.size()) {
+                                        handle_device.interfaces[intf_idx].current_altsetting =
+                                                static_cast<std::uint8_t>(alt);
+                                    }
+                                }
                                 break;
                             }
                             default: {
@@ -377,6 +414,7 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                             }
                         }
+                        clamp_to_wlength(result);
                         // 将数据写入 transfer_handle
                         trx->data = std::move(result);
                         trx->actual_length = trx->data.size();
@@ -460,6 +498,7 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                         status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
                                     }
                                 }
+                                clamp_to_wlength(result);
                                 // 将数据写入 transfer_handle
                                 trx->data = std::move(result);
                                 trx->actual_length = trx->data.size();
@@ -712,8 +751,10 @@ data_type VirtualDeviceHandler::request_get_descriptor(std::uint8_t type, std::u
         }
         case DescriptorType::String: {
             SPDLOG_TRACE("设备get_string_descriptor");
-            return get_string_descriptor(language_id, descriptor_length, p_status);
-            break;
+            // 走到这里时没有 wIndex 信息（接口级 GET_DESCRIPTOR 极少用于
+            // String），语言按设备声明的默认值处理；设备级路径在
+            // handle_control_urb 里用 wIndex 直接调用
+            return get_string_descriptor(get_string_language_id(), language_id, descriptor_length, p_status);
         }
         case DescriptorType::OtherSpeedConfiguration: {
             SPDLOG_TRACE("设备get_other_speed_descriptor");
@@ -887,35 +928,11 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                              endpoint.address, endpoint.attributes, endpoint.max_packet_size, endpoint.interval}
                         .append_to(intf_desc);
 
-                // UVC 1.5 Table 3-12: VC interrupt endpoint requires class-specific endpoint descriptor
-                if (intf.interface_class == CC_VIDEO && intf.interface_subclass == SC_VIDEOCONTROL &&
-                    (endpoint.attributes & 0x03) == 0x03) {
-                    VcInterruptEndpointDesc{0x05, CS_ENDPOINT, EP_INTERRUPT, endpoint.max_packet_size}.append_to(
-                            intf_desc);
-                }
-                // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
-                // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
-                // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
-                // 标准端点描述符保持 7 字节：音频规范虽要求 9（audio10.pdf Table
-                // 4-20），但 usbip-win 场景下实测 9 字节致 Windows usbaudio 启动失败，
-                // 7 字节可用（mock_audio 长期验证，勿改）
-                // UAC 1.0 §4.6.1.2: AS 的 ISO 音频数据端点需要 class-specific endpoint descriptor。
-                // bmAttributes 的 SamplingFreqControl 位是 Linux snd-usb-audio 发起
-                // 采样率 SET_CUR 协商的前提，缺失时驱动按描述符默认速率直接开流。
-                // 标准端点描述符保持 7 字节：audio10.pdf Table 4-20 虽要求音频端点
-                // 9 字节（bRefresh/bSynchAddress），但 usbip-win2 基于 UDE 框架，
-                // Udecx.sys 按 7 字节 USB_ENDPOINT_DESCRIPTOR 解析配置描述符，
-                // 9 字节导致后续描述符错位、Windows 枚举直接失败（服务器收不到
-                // 任何控制请求）。7 字节实测可用（mock_audio 长期验证），勿改
-                if (intf.interface_class == CC_AUDIO && intf.interface_subclass == SC_AUDIOSTREAMING &&
-                    (endpoint.attributes & 0x03) == 0x01) {
-                    AsEpGeneralDesc{AS_EP_DESC_GENERAL_LEN,
-                                    CS_ENDPOINT,
-                                    AS_EP_DESC_GENERAL,
-                                    AS_EP_ATTR_SAMPLING_FREQ,
-                                    0x00, // bLockDelayUnits
-                                    0x00} // wLockDelay
-                            .append_to(intf_desc);
+                // 端点级类特定描述符由接口 handler 按自己的类规则生成，
+                // 设备级基类只负责拼接（不再特判 UAC/UVC）
+                if (intf.handler) {
+                    auto ep_cs = intf.handler->get_class_specific_endpoint_descriptor(endpoint);
+                    intf_desc.insert(intf_desc.end(), ep_cs.begin(), ep_cs.end());
                 }
             }
             desc.insert(desc.end(), intf_desc.begin(), intf_desc.end());
@@ -929,25 +946,37 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
     return desc;
 }
 
-data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
-                                                      std::uint32_t *p_status) {
+data_type VirtualDeviceHandler::get_string_descriptor(std::uint16_t language_id, std::uint8_t descriptor_index,
+                                                      std::uint16_t descriptor_length, std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
     // 先尝试虚函数：允许子类处理特殊字符串索引（如 Microsoft OS 0xEE）
-    if (auto special = get_special_string_descriptor(language_id)) {
+    if (auto special = get_special_string_descriptor(descriptor_index)) {
         if (descriptor_length < special->size())
             special->resize(descriptor_length);
         return *special;
     }
 
-    if (language_id == 0) [[unlikely]] {
-        // language ids - 特殊情况，用于获取支持的语言ID列表
-        data_type desc = {4, static_cast<std::uint8_t>(DescriptorType::String), 0x09, 0x04};
+    if (descriptor_index == 0) [[unlikely]] {
+        // USB 2.0 §9.6.7：字符串描述符索引 0 返回支持的 Language ID 列表
+        std::uint16_t langid = get_string_language_id();
+        data_type desc = {4,
+                          static_cast<std::uint8_t>(DescriptorType::String),
+                          static_cast<std::uint8_t>(langid & 0xFF),
+                          static_cast<std::uint8_t>(langid >> 8)};
         if (descriptor_length < desc.size()) {
             desc.resize(descriptor_length);
         }
         return desc;
     }
-    else if (auto string_ret = string_pool.get_string(language_id)) [[likely]] {
+
+    // USB 2.0 §9.4.3：wIndex 是 Language ID；只支持一种语言，其他 LANGID 回 STALL
+    if (language_id != get_string_language_id()) [[unlikely]] {
+        SPDLOG_DEBUG("不支持的字符串 Language ID：0x{:04x}", language_id);
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {};
+    }
+
+    if (auto string_ret = string_pool.get_string(descriptor_index)) [[likely]] {
         auto &string = string_ret.value();
         data_type desc = {
                 static_cast<std::uint8_t>((string.size() + 1) * 2),
@@ -963,7 +992,7 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint8_t language_id, 
         return desc;
     }
     else {
-        SPDLOG_ERROR("非法字符串描述符索引：{}", language_id);
+        SPDLOG_ERROR("非法字符串描述符索引：{}", descriptor_index);
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return {};
     }

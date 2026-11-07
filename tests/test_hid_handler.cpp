@@ -149,9 +149,11 @@ TEST(VirtualDeviceHandlers, HidProtocolFormalResponse) {
 TEST(VirtualDeviceHandlers, HidStandardRequests) {
     HidTestEnv env;
 
+    // USB 2.0 Table 9-6：标准 feature selector 只定义给 Device 和 Endpoint，
+    // 接口级 SET/CLEAR_FEATURE 没有合法 selector，§9.4 要求回 STALL
     std::uint32_t status = 1;
     env.handler.request_clear_feature(0, &status);
-    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 
     status = 0;
     EXPECT_EQ(env.handler.request_get_interface(&status), 0u);

@@ -57,6 +57,16 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
 // 虚拟设备没有硬件 halt，但主机会依赖 GET_STATUS 的 halt 位和 STALL 行为
 // （驱动出错恢复时会先 CLEAR_FEATURE 再重试），因此这里维护一份软件状态。
 
+void VirtualInterfaceHandler::reset_endpoint_halt_state() {
+    // USB 2.0 §9.4.5：SetConfiguration()/SetInterface() 之后 Halt 必须清零，
+    // 即使配置/接口与当前相同。遍历所有 alternate setting，避免只清当前 alt
+    for (auto &alt: handle_interface.endpoints) {
+        for (auto &ep: alt) {
+            endpoint_halted[ep.address].store(false, std::memory_order_relaxed);
+        }
+    }
+}
+
 void VirtualInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector,
                                                            std::uint8_t ep_address, std::uint32_t *p_status) {
     // 控制端点（0x00/0x80）不可设置 halt，按规范回 STALL

@@ -97,13 +97,14 @@ public:
     // ========== 标准请求回调（默认实现：未实现即回成功/EPIPE，子类按需重写）==========
     // 默认实现都很简单，放头文件内联：头文件即文档，子类无需跳去 cpp 看默认行为。
     
-    // feature 类请求回 0（成功）：虚拟设备没有 UDC 硬件层的端点 halt 状态机，
-    // 真实设备上 ENDPOINT_HALT 的 SET/CLEAR_FEATURE 由 UDC 硬件应答成功（软件层
-    // 的 STALL 只发生在不认识 selector 时）——无状态可清 = 成功，回 EPIPE 会让
-    // 主机驱动（初始化/出错恢复时的清 stall）莫名收到失败
+    // 接口级 feature 请求一律 STALL：USB 2.0 Table 9-6 只给 Device 和 Endpoint
+    // 定义了标准 feature selector，接口没有合法的 selector；§9.4 规定不支持
+    // 或无效的请求必须在 Data/Status 阶段回 STALL。
+    // 端点级 feature 由下面的 halt 状态机处理（§9.4.5）。
 
     virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-        *p_status = 0;
+        (void)feature_selector;
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
     virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                                 std::uint32_t *p_status);
@@ -152,7 +153,8 @@ public:
     }
 
     virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
-        *p_status = 0;
+        (void)feature_selector;
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
     virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                               std::uint32_t *p_status);
@@ -172,6 +174,18 @@ public:
 
     /// 类描述符（挂在配置描述符的接口描述符之后），默认空表示没有类描述符
     [[nodiscard]] virtual data_type get_class_specific_descriptor() {
+        return {};
+    }
+
+    /**
+     * @brief 端点级类特定描述符（紧跟在标准端点描述符之后）
+     *
+     * UAC/UVC 等设备类的端点需要类特定描述符；由接口 handler 按自己的类规则
+     * 生成，设备级基类只负责拼接，避免基类反向依赖具体设备类。
+     * @param ep 当前端点（地址、属性、包长）
+     * @return 追加到该端点标准描述符之后的字节，默认空
+     */
+    [[nodiscard]] virtual data_type get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) {
         return {};
     }
 
@@ -202,6 +216,14 @@ public:
     [[nodiscard]] bool is_endpoint_halted(std::uint8_t ep_address) const {
         return endpoint_halted[ep_address].load(std::memory_order_relaxed);
     }
+
+    /**
+     * @brief 清除本接口所有端点的 HALT 状态
+     *
+     * USB 2.0 §9.4.5：SetConfiguration() 和 SetInterface() 成功后端点 Halt
+     * 必须清零，即使请求的配置/接口与当前相同。设备级在标准请求成功后调用。
+     */
+    void reset_endpoint_halt_state();
 
     void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
         // 注意：HID 等基于 GenericTransfer 的类（handle_control_urb、

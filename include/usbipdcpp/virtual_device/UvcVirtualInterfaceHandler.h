@@ -55,6 +55,7 @@ public:
     explicit UvcVideoControlHandler(UsbInterface &handle_interface, StringPool &string_pool);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
+    [[nodiscard]] data_type get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) override;
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
                                      std::uint32_t *p_status) override;
     void handle_non_standard_request_type_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep,

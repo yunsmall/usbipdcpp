@@ -129,15 +129,8 @@ private:
 
 public:
     // ========== 标准请求默认实现 ==========
-
-    void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override {
-        *p_status = 0;
-    }
-
-    void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                        std::uint32_t *p_status) override {
-        *p_status = 0;
-    }
+    // 端点 feature/status 交给基类的 ENDPOINT_HALT 状态机（USB 2.0 §9.4.5
+    // 要求中断/批量端点必须实现 Halt）；接口级 feature 基类默认 STALL
 
     std::uint8_t request_get_interface(std::uint32_t *p_status) override {
         *p_status = 0;
@@ -151,20 +144,6 @@ public:
     std::uint16_t request_get_status(std::uint32_t *p_status) override {
         *p_status = 0;
         return 0;
-    }
-
-    std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) override {
-        *p_status = 0;
-        return 0;
-    }
-
-    void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-    }
-
-    void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                      std::uint32_t *p_status) override {
-        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     }
 
     [[nodiscard]] data_type get_class_specific_descriptor() override {

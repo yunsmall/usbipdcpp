@@ -391,6 +391,23 @@ data_type UacAudioStreamingSourceHandler::get_class_specific_descriptor() {
     return class_desc;
 }
 
+data_type UacAudioStreamingSourceHandler::get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) {
+    // UAC 1.0 §4.6.1.2：AS 的 ISO 音频数据端点需要 class-specific endpoint
+    // 描述符，bmAttributes 的 SamplingFreqControl 位是 snd-usb-audio 发起
+    // 采样率 SET_CUR 协商的前提。
+    // 标准端点描述符保持 7 字节：audio10.pdf Table 4-20 要求 9 字节，但
+    // usbip-win2 的 Udecx.sys 按 7 字节解析配置描述符，9 字节会让后续描述符
+    // 错位、Windows 枚举失败（服务器收不到控制请求）。7 字节实测可用，勿改。
+    data_type desc;
+    if ((ep.attributes & 0x03) == 0x01) {
+        AsEpGeneralDesc{AS_EP_DESC_GENERAL_LEN, CS_ENDPOINT, AS_EP_DESC_GENERAL, AS_EP_ATTR_SAMPLING_FREQ,
+                        0x00, // bLockDelayUnits
+                        0x00} // wLockDelay
+                .append_to(desc);
+    }
+    return desc;
+}
+
 void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
@@ -733,6 +750,18 @@ void UacAudioStreamingSinkHandler::build_class_descriptor() {
 
 data_type UacAudioStreamingSinkHandler::get_class_specific_descriptor() {
     return class_desc;
+}
+
+data_type UacAudioStreamingSinkHandler::get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) {
+    // 与 Source 方向相同：ISO 数据端点后的 class-specific 描述符（见上方
+    // UacAudioStreamingSourceHandler 的 7 字节说明）
+    data_type desc;
+    if ((ep.attributes & 0x03) == 0x01) {
+        AsEpGeneralDesc{AS_EP_DESC_GENERAL_LEN, CS_ENDPOINT, AS_EP_DESC_GENERAL, AS_EP_ATTR_SAMPLING_FREQ,
+                        0x00, 0x00}
+                .append_to(desc);
+    }
+    return desc;
 }
 
 void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb(

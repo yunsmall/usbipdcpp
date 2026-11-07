@@ -120,8 +120,18 @@ protected:
                                          std::uint32_t *p_status);
     virtual data_type get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                    std::uint32_t *p_status);
-    virtual data_type get_string_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
-                                            std::uint32_t *p_status);
+    virtual data_type get_string_descriptor(std::uint16_t language_id, std::uint8_t descriptor_index,
+                                            std::uint16_t descriptor_length, std::uint32_t *p_status);
+
+    /**
+     * @brief 字符串描述符使用的 Language ID（USB 2.0 §9.6.7）
+     *
+     * 索引 0 的 GET_DESCRIPTOR(String) 返回该值，其他索引的请求只有 wIndex
+     * 等于该值时才返回字符串。默认英语（0x0409），需要其他语言时覆盖。
+     */
+    [[nodiscard]] virtual std::uint16_t get_string_language_id() const {
+        return 0x0409;
+    }
     virtual data_type get_device_qualifier_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,
                                                       std::uint32_t *p_status);
     virtual data_type get_other_speed_descriptor(std::uint8_t language_id, std::uint16_t descriptor_length,

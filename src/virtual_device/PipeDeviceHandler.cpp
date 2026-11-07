@@ -56,7 +56,8 @@ public:
         pipe->on_pipe_unlink(unlink_seqnum, cmd_seqnum);
     }
 
-    // ========== 标准请求回调（未设置的回调用基类默认行为：feature/status 回成功，未实现的查询类回 EPIPE）==========
+    // ========== 标准请求回调（未设置的回调用基类默认：接口级 feature STALL、
+    // 端点级 feature/status 走 ENDPOINT_HALT 状态机，未实现的查询类回 EPIPE）==========
 
     void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) override {
         if (pipe->standard_request_handler.clear_feature) {

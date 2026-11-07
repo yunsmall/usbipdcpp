@@ -184,6 +184,15 @@ data_type UvcVideoControlHandler::get_class_specific_descriptor() {
     return class_desc_;
 }
 
+data_type UvcVideoControlHandler::get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) {
+    // UVC 1.5 Table 3-12：VC 的中断端点后必须跟 class-specific endpoint 描述符
+    data_type desc;
+    if ((ep.attributes & 0x03) == EP_INTERRUPT) {
+        VcInterruptEndpointDesc{0x05, CS_ENDPOINT, EP_INTERRUPT, ep.max_packet_size}.append_to(desc);
+    }
+    return desc;
+}
+
 void UvcVideoControlHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
         const SetupPacket &setup_packet, TransferHandle transfer, std::error_code &ec) {
