@@ -87,6 +87,11 @@ public:
 
     /**
      * @brief 阻塞读：等待一个 OUT 传输或非标准控制请求。timeout_ms=0 无限等。
+     *
+     * 非标准控制 IN 请求以"纯通知"形式返回：setup_req 有效、data 为空。
+     * 业务层收到后必须调用 write({ep=0, data}) 应答（零长度数据也要写），
+     * 否则该 IN 请求会一直挂起（主机 NAK 等待）直到断连。OUT 请求则带数据
+     * 返回，read() 取走时已自动应答主机。
      * @param xfer 出参，有数据时写入（控制请求带 setup_req）
      * @param timeout_ms 超时毫秒，0 表示无限等待
      * @return true 有数据；false 超时或断连
