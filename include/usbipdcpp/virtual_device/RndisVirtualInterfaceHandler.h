@@ -189,8 +189,9 @@ public:
     /**
      * @brief 主机发来一帧时回调（未设置 NetworkBackend 时的消费入口）
      * @param frame 以太网帧（右值引用，已剥 RNDIS 头）。契约：返回 false 表示
-     *        未处理，请求整体挂起入通道（frame 可被移动走，原数据留在挂起
-     *        请求里，等 take_frame() 取走）
+     *        未处理，该帧及其后尚未处理的原始消息挂起入通道，等 take_frame()
+     *        取走（一次 bulk OUT 聚合了多帧时，本帧之前已经返回 true 的帧不会
+     *        再出现在 take_frame() 的数据里）
      * @return true=已消费这条帧；false=未处理，挂起
      */
     virtual bool on_frame_received(data_type &&frame);
@@ -211,7 +212,9 @@ public:
 
     /**
      * @brief 阻塞取一帧主机发来的原始数据。timeout_ms=0 无限等；断连返回
-     * nullopt。OUT 请求先挂起不立即应答（主机 NAK 背压），取走时才应答
+     * nullopt。OUT 请求先挂起不立即应答（主机 NAK 背压），取走时才应答。
+     * 数据是原始 RNDIS 消息；一次 OUT 聚合多帧且部分已被 on_frame_received
+     * 消费时，只包含尚未处理的那部分
      */
     std::optional<OutEndpointChannel::Pending> take_frame(std::uint32_t timeout_ms = 0);
 

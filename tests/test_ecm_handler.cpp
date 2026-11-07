@@ -240,13 +240,13 @@ TEST(TestEcmDataHandler, FrameLongerThanInRequestTruncated) {
 }
 
 TEST(TestEcmDataHandler, SendFrameAfterDisconnectDropsData) {
-    // 断连后 send_frame 仍返回请求大小（调用方无感知），但数据被通道丢弃
+    // 断连后 send_frame 返回 0（头文件契约：断连返回 0），数据被通道丢弃
     //（断连拒绝入队）；重连后从干净缓冲开始，无残留
     EcmTestEnv env;
     std::error_code disc_ec;
     env.handler.on_disconnection(disc_ec);
 
-    EXPECT_EQ(env.handler.send_frame(data_type{1, 2, 3}), 3u);
+    EXPECT_EQ(env.handler.send_frame(data_type{1, 2, 3}), 0u);
     EXPECT_TRUE(env.stub.submits.empty());
 
     // 重连后 IN 请求挂起（缓冲为空，无残留数据）

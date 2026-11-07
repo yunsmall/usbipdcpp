@@ -58,8 +58,16 @@ data_type wrap_rndis_packet(const std::uint8_t *data, std::size_t size) {
 // 之后），每条消息可能有填充、OOB 字段非 0——按消息长度定位边界、
 // 按 DataOffset/DataLength 取帧，OOB 直接忽略（对齐内核 rndis_rm_hdr
 // 与 rndis_host.c 的 rndis_rx_fixup）。帧长 < 14 字节（以太网头）丢弃
-std::vector<data_type> unwrap_rndis_packets(const data_type &data) {
-    std::vector<data_type> frames;
+// 剥出来的以太网帧，以及该帧所在 RNDIS 消息在原始数据里的起始偏移。
+// 多帧聚合时子类可能只消费前几帧就要求挂起，此时按偏移把未处理的剩余
+// 消息原样留回挂起请求，take_frame() 不会重复看到已消费的帧
+struct RndisFrame {
+    data_type frame;
+    std::size_t message_offset;
+};
+
+std::vector<RndisFrame> unwrap_rndis_packets(const data_type &data) {
+    std::vector<RndisFrame> frames;
     std::size_t pos = 0;
     // 主机方向头 24 字节（RNDIS_HOST_HEADER_LEN）：不足则本条及之后都是残渣
     while (pos + RNDIS_HOST_HEADER_LEN <= data.size()) {
@@ -79,8 +87,10 @@ std::vector<data_type> unwrap_rndis_packets(const data_type &data) {
             break;
         }
         if (frame_len >= 14) { // 以太网头最小长度（对齐内核 u_ether 的 ETH_HLEN 校验）
-            frames.emplace_back(data.begin() + static_cast<std::ptrdiff_t>(frame_off),
-                                data.begin() + static_cast<std::ptrdiff_t>(frame_off + frame_len));
+            frames.push_back(RndisFrame{
+                    data_type(data.begin() + static_cast<std::ptrdiff_t>(frame_off),
+                              data.begin() + static_cast<std::ptrdiff_t>(frame_off + frame_len)),
+                    pos});
         }
         pos += ph->message_length;
     }
@@ -531,14 +541,19 @@ void RndisDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const
         bool consumed = false;
         if (backend_) {
             for (auto &frame : frames) {
-                backend_->send_frame(frame.data(), frame.size());
+                backend_->send_frame(frame.frame.data(), frame.frame.size());
             }
             consumed = true;
         }
         else if (!frames.empty()) {
             consumed = true;
-            for (auto &frame : frames) {
-                if (!on_frame_received(std::move(frame))) {
+            for (std::size_t i = 0; i < frames.size(); ++i) {
+                if (!on_frame_received(std::move(frames[i].frame))) {
+                    // 第 i 帧未消费：前面的帧已经交给子类，不能把整条原始
+                    // 消息挂起（take_frame 重新解析会让已消费的帧再收一遍）。
+                    // 从这一帧的消息起始处截取，挂起请求里只剩未处理的部分
+                    trx->data.assign(trx->data.begin() + static_cast<std::ptrdiff_t>(frames[i].message_offset),
+                                     trx->data.end());
                     consumed = false;
                     break;
                 }
@@ -550,6 +565,10 @@ void RndisDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const
                     UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, received_size));
         }
         else {
+            // 无 backend 且没有可解析帧，或子类拒绝消费某帧：按设计把原始
+            // 消息挂起交业务层 take_frame() 处理（见上方 Bulk OUT 说明），
+            // 不是"解析失败丢包"——有 backend 时任何输入都在上面的分支
+            // 直接消费并应答
             out_channel.on_out_request(ep.address, seqnum, std::move(transfer));
         }
     }
@@ -580,7 +599,10 @@ std::size_t RndisDataInterfaceHandler::send_frame(const std::uint8_t *data, std:
         return 0;
     }
     SPDLOG_TRACE("[RNDIS] push frame size={} buf_before={}", size, in_channel.size());
-    in_channel.push(wrap_rndis_packet(data, size));
+    // 断连时 push 返回 false，与"断连返回 0"的契约一致
+    if (!in_channel.push(wrap_rndis_packet(data, size))) {
+        return 0;
+    }
     return size;
 }
 

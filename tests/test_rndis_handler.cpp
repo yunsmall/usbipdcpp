@@ -28,6 +28,21 @@ struct StubBackend : NetworkBackend {
     std::vector<data_type> frames;
 };
 
+/// 无 backend 的数据接口：记录回调收到的帧，第 2 帧起返回 false
+///（模拟业务层当场消费不了、要求挂起）
+struct DeferringDataHandler : RndisDataInterfaceHandler {
+    DeferringDataHandler(UsbInterface &intf, StringPool &pool) :
+        RndisDataInterfaceHandler(intf, pool, nullptr, nullptr) {
+    }
+
+    bool on_frame_received(data_type &&frame) override {
+        frames.push_back(frame);
+        return frames.size() < 2;
+    }
+
+    std::vector<data_type> frames;
+};
+
 constexpr std::uint8_t EP_NOTIFY = 0x83;
 constexpr std::uint8_t EP_IN = 0x81;
 constexpr std::uint8_t EP_OUT = 0x02;
@@ -436,6 +451,45 @@ TEST(TestRndisHandler, OutMultipacketAggregation) {
     EXPECT_EQ(env.backend.frames[1], frame2);
 }
 
+TEST(TestRndisHandler, OutMultipacketPartialConsumptionSuspendsRemainder) {
+    // 无 backend、一次 bulk OUT 聚合两帧且子类拒绝第二帧：第一帧已交给
+    // 子类消费，挂起请求里只能留下第二帧的原始消息——否则业务层从
+    // take_frame() 重新解析会把第一帧再收一遍（重复投递）
+    StringPool pool;
+    GenericTransferOperator op;
+    UsbInterface data_intf = RndisDataInterfaceHandler::make_interface(EP_IN, EP_OUT);
+    DeferringDataHandler data(data_intf, pool);
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    data.on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    const data_type frame1 = {0xAA, 0xBB, 0x00, 0x01, 0x02, 0x03, 0x00, 0x11, 0x22, 0x33,
+                              0x44, 0x55, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04};
+    const data_type frame2 = {0xCC, 0xDD, 0x00, 0x02, 0x03, 0x04, 0x00, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB};
+    auto payload = make_host_packet(frame1);
+    const auto second_offset = payload.size();
+    auto p2 = make_host_packet(frame2);
+    payload.insert(payload.end(), p2.begin(), p2.end());
+
+    data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64}, 0,
+                              payload.size(),
+                              make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out, payload.size(), {}, payload).transfer,
+                              ec);
+    ASSERT_FALSE(ec);
+
+    // 两帧都交给了回调；第一帧消费、第二帧拒绝
+    ASSERT_EQ(data.frames.size(), 2u);
+    EXPECT_EQ(data.frames[0], frame1);
+    EXPECT_EQ(data.frames[1], frame2);
+    EXPECT_TRUE(stub.submits.empty()); // 未应答：请求挂起等 take_frame()
+
+    // 挂起的数据从第二帧的消息起始处开始，不含已消费的第一帧
+    auto pending = data.try_take_frame();
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_EQ(pending->data, data_type(payload.begin() + static_cast<std::ptrdiff_t>(second_offset), payload.end()));
+}
+
 TEST(TestRndisHandler, OutToleratesOobAndPadding) {
     // 容忍异常主机：OOB 字段非 0、DataOffset 非标准、消息尾部填充——
     // 按 DataOffset/DataLength 定位帧，OOB 直接忽略（对齐内核 rndis_rm_hdr）
@@ -542,6 +596,9 @@ TEST(TestRndisHandler, DisconnectResetsStateAndChannels) {
     env.data.on_disconnection(disc_ec);
     EXPECT_EQ(env.comm.get_state(), RndisState::Uninitialized);
     EXPECT_FALSE(env.comm.is_data_enabled());
+
+    // 断连状态下 send_frame 返回 0（头文件契约），数据不入队
+    EXPECT_EQ(env.data.send_frame(data_type{1, 2, 3}), 0u);
 
     // 重连：队列干净，无残留响应（INIT 从头开始）
     std::error_code conn_ec;

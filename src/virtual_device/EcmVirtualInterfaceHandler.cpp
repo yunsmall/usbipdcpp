@@ -279,7 +279,10 @@ std::size_t EcmDataInterfaceHandler::send_frame(const std::uint8_t *data, std::s
         return 0;
     }
     SPDLOG_TRACE("[ECM] push frame size={} buf_before={}", size, in_channel.size());
-    in_channel.push(data_type(data, data + size));
+    // 断连时 push 返回 false（数据不会入队），与头文件"断连返回 0"的契约一致
+    if (!in_channel.push(data_type(data, data + size))) {
+        return 0;
+    }
     SPDLOG_TRACE("[ECM] pushed, buf_after={}", in_channel.size());
     return size;
 }
