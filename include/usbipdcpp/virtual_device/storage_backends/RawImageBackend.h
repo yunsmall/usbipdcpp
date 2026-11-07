@@ -50,7 +50,7 @@ public:
         return path_;
     }
 
-    bool is_valid() const {
+    [[nodiscard]] bool is_valid() const override {
         return mapped_data_ != nullptr;
     }
 

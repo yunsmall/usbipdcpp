@@ -47,6 +47,16 @@ public:
     [[nodiscard]] virtual std::uint32_t block_size() const {
         return 512;
     }
+
+    /**
+     * @brief 后端是否可用（如镜像文件打开/映射成功）
+     *
+     * 构造期间失败的后端对象仍然存在但所有 I/O 都无法进行。MSC handler
+     * 据此提示配置错误；read/write 自身也必须在此状态下安全返回 0。
+     */
+    [[nodiscard]] virtual bool is_valid() const {
+        return true;
+    }
 };
 
 } // namespace usbipdcpp

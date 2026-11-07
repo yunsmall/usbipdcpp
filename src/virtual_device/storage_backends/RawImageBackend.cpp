@@ -154,6 +154,10 @@ RawImageBackend::~RawImageBackend() {
 
 std::size_t RawImageBackend::read(std::uint64_t lba, std::uint16_t count, void *buffer) {
     std::lock_guard lock(mutex_);
+    // 构造失败（打开/映射失败）后对象仍存在：按"读失败"返回 0，由 MSC 回
+    // CHECK CONDITION，不能拿空映射指针做 memcpy
+    if (!mapped_data_)
+        return 0;
     auto total = static_cast<std::size_t>(count) * block_size_;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
     std::memcpy(buffer, static_cast<const char *>(mapped_data_) + offset, total);
@@ -162,6 +166,8 @@ std::size_t RawImageBackend::read(std::uint64_t lba, std::uint16_t count, void *
 
 std::size_t RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const void *data) {
     std::lock_guard lock(mutex_);
+    if (!mapped_data_)
+        return 0;
     auto total = static_cast<std::size_t>(count) * block_size_;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
     std::memcpy(static_cast<char *>(mapped_data_) + offset, data, total);
@@ -170,6 +176,8 @@ std::size_t RawImageBackend::write(std::uint64_t lba, std::uint16_t count, const
 
 void RawImageBackend::punch_hole(std::uint64_t lba, std::uint64_t count) {
     std::lock_guard lock(mutex_);
+    if (!mapped_data_)
+        return;
     auto offset = static_cast<std::size_t>(lba) * block_size_;
     auto length = static_cast<std::size_t>(count) * block_size_;
     // 清零映射内存：mmap 进程页表不感知 fallocate 打洞，必须手动清零

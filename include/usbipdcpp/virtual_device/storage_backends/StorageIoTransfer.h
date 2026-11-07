@@ -18,7 +18,8 @@ namespace usbipdcpp {
  * handle_bulk_transfer 中设置 external_buf 和 actual_length，sender 线程通过
  * send_transfer_data 发送。优先走 sendfile / TransmitFile（direct_io），回退 asio::write。
  * - READ mmap：external_buf 指向 RawImageBackend 映射的文件内存，direct_io = true
- * - READ 回退：external_buf 指向 staging_data_ 内部
+ * - READ 回退：external_buf 指向本结构体 fallback_data（拷贝自 staging_data_，
+ *   不能直接指向 handler 的 staging：断连会清空它，而 sender 线程异步读取）
  * - CSW：external_buf 指向本结构体 fallback_data，direct_io = false
  *
  * === OUT 方向（host → 设备，CBW / WRITE / UNMAP） ===
@@ -36,7 +37,7 @@ struct StorageIoTransfer {
      * @brief 直读/直写的目标地址
      *
      * IN(READ mmap)：指向 RawImageBackend 映射的文件内存；
-     * IN(READ staging)：指向 staging_data_ 内部偏移；
+     * IN(READ staging)：指向 fallback_data 内的本包拷贝；
      * IN(CSW)：指向 fallback_data 内 CSW 内容；
      * OUT(WRITE mmap)：指向 mmap 映射内存，socket 直读入或 splice 直写；
      * OUT(WRITE staging)：指向 staging_data_ 尾部预留空间；

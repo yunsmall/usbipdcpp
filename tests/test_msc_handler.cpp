@@ -11,6 +11,7 @@
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/MscBulkOnlyHandler.h"
 #include "usbipdcpp/virtual_device/storage_backends/MemoryBackend.h"
+#include "usbipdcpp/virtual_device/storage_backends/RawImageBackend.h"
 #include "usbipdcpp/virtual_device/storage_backends/StorageIoTransfer.h"
 #include "usbipdcpp/virtual_device/storage_backends/StorageTransferOperator.h"
 
@@ -937,4 +938,114 @@ TEST(TestMscHandler, DataResidueDoesNotLeakToNextCommand) {
     EXPECT_EQ(csw.dCSWDataResidue, 0u);
 
     fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, ReadStagingDataSurvivesDisconnection) {
+    // staging 路径的 READ 应答由 sender 线程异步发送。RET_SUBMIT 入队后断连
+    // （on_disconnection 清空 staging_data_）不能让应答数据变成悬垂指针
+    StringPool string_pool;
+    data_type pattern(1024);
+    for (std::size_t i = 0; i < pattern.size(); i++) {
+        pattern[i] = static_cast<std::uint8_t>(i * 7 + 1);
+    }
+    // FailingBackend 不提供 direct buffer，强制走 staging 拷贝路径
+    auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
+    ASSERT_EQ(backend->write(0, 2, pattern.data()), 1024u);
+    auto fixture = make_msc_device(string_pool, std::move(backend));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x6A01, 0x80, read10_cdb(0, 2), 1024));
+    deliver_in_request(*fixture.msc, 2, 1024, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+
+    // 应答还没发出去就断连
+    fixture.msc->on_disconnection(ec);
+
+    // 应答缓冲必须仍持有拷贝的数据（不是 staging 内部指针）
+    EXPECT_EQ(data_from_submit(stub.submits[0]), pattern);
+}
+
+TEST(TestMscHandler, Write10DataStageLongerThanCbwIsRejected) {
+    // 主机声明的数据阶段比 CBW 的 dCBWDataTransferLength 还长：不能让 socket
+    // 直读进 mmap（会写出后端缓冲范围），必须丢弃并按 CHECK CONDITION 收尾
+    StringPool string_pool;
+    auto backend = std::make_unique<MemoryBackend>(8);
+    data_type original(512, 0x11);
+    ASSERT_EQ(backend->write(7, 1, original.data()), 512u);
+    auto fixture = make_msc_device(string_pool, std::move(backend));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // WRITE10 LBA=7（最后一块）写 1 块，CBW 声明 512 字节
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x6A02, 0x00, write10_cdb(7, 1), 512));
+
+    // 主机却发来 1024 字节的 OUT 传输
+    auto *op = fixture.msc->get_transfer_operator();
+    UsbIpHeaderBasic header{};
+    header.direction = UsbIpDirection::Out;
+    auto *trx = StorageIoTransfer::from_handle(op->alloc_transfer_handle(1024, 0, header, {}));
+    TransferHandle handle(trx, op);
+    EXPECT_EQ(trx->external_buf, nullptr); // 不直指 mmap
+    EXPECT_FALSE(trx->direct_io);
+    trx->fallback_data.assign(1024, 0x22); // 模拟读入的超长数据
+    fixture.msc->on_out_data_received(trx, 1024);
+
+    deliver_in_request(*fixture.msc, 2, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 1u); // failed
+    EXPECT_EQ(csw.dCSWDataResidue, 512u);
+
+    // 目标块内容不能被超长数据覆盖
+    data_type after(512, 0);
+    ASSERT_EQ(fixture.msc->get_backend()->read(7, 1, after.data()), 512u);
+    EXPECT_EQ(after, original);
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, UnmapWithoutBackendFailsCsw) {
+    // 没装配后端（配置错误）的设备收到 UNMAP：不能解引用空后端，回 CHECK CONDITION
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, nullptr);
+    ASSERT_EQ(fixture.msc->get_backend(), nullptr);
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Unmap;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x6A03, 0x00, cdb, 40));
+    deliver_out_data(*fixture.msc, 2, data_type(40, 0));
+
+    deliver_in_request(*fixture.msc, 3, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 1u);
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, RawImageBackendInvalidPathIsSafe) {
+    // 镜像打不开（目录不存在）时后端对象仍然构造成功但不可用：I/O 必须安全
+    // 返回 0，不能拿空映射指针做 memcpy
+    RawImageBackend backend("usbipdcpp_no_such_dir_6f1c/img.bin", 8);
+    EXPECT_FALSE(backend.is_valid());
+    data_type buf(512, 0xAA);
+    EXPECT_EQ(backend.read(0, 1, buf.data()), 0u);
+    EXPECT_EQ(backend.write(0, 1, buf.data()), 0u);
+    backend.punch_hole(0, 1); // 不能崩
+    EXPECT_EQ(backend.get_direct_buffer(0), nullptr);
 }

@@ -50,6 +50,11 @@ void MscBulkOnlyHandler::on_setup_interface_handlers() {
         SPDLOG_ERROR("存储容量 {} 块（{} 字节）超过 2TB，10 字节 CDB 无法寻址，请缩小镜像",
                      backend_->block_count(), backend_->block_count() * backend_->block_size());
     }
+    if (backend_ && !backend_->is_valid()) {
+        // 后端构造时就失败了（镜像打不开/映射失败）：设备仍会出现在设备列表里，
+        // 但所有读写都会回 CHECK CONDITION
+        SPDLOG_ERROR("存储后端不可用（镜像文件打开或映射失败），MSC 设备无法读写数据");
+    }
 }
 
 void MscBulkOnlyHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
@@ -105,6 +110,21 @@ void *MscBulkOnlyHandler::prepare_out_buffer(std::size_t length, StorageIoTransf
 
         case BotState::DataOut:
             if (write_mmap_base_) {
+                const auto expected = static_cast<std::size_t>(write_count_) * backend_->block_size();
+                if (write_accumulated_ > expected || length > expected - write_accumulated_) {
+                    // 主机声明的数据阶段比 CBW 的 dCBWDataTransferLength 还长：
+                    // 直读进 mmap 会越过映射/后端缓冲范围（越界写）。改读入
+                    // fallback_data 丢弃，命令以 CHECK CONDITION 收尾；length
+                    // 字节仍必须从 socket 读走，否则后续协议错位
+                    SPDLOG_ERROR("MSC::prepare_out WRITE 数据阶段超长：len={} 已收={} 期望={}", length,
+                                 write_accumulated_, expected);
+                    write_mmap_base_ = nullptr;
+                    write_accumulated_ = 0;
+                    command_failed_ = true;
+                    state_ = BotState::Status;
+                    trx->direct_io = false;
+                    return nullptr;
+                }
                 // 零拷贝 WRITE：socket 用 splice 直写入文件，仅回退时用 mmap 指针
                 trx->direct_io = true;
                 trx->file_lba = write_lba_;
@@ -496,7 +516,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     // UNMAP，数据长度以 CBW.dCBWDataTransferLength 为准（某些内核 CDB 参数长度为 0）
                     auto data_len = current_cbw_.dCBWDataTransferLength;
                     SPDLOG_DEBUG("UNMAP CBW tag=0x{:08X} dataLen={}", current_cbw_.dCBWTag, data_len);
-                    if (read_only_) {
+                    if (read_only_ || !backend_) {
                         command_failed_ = true;
                         state_ = BotState::Status;
                         break;
@@ -645,7 +665,14 @@ void MscBulkOnlyHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEnd
                                      static_cast<const void *>(transfer.get()), read_lba_, staging_offset_, len);
                     }
                     else {
-                        trx->external_buf = staging_data_.data() + staging_offset_;
+                        // staging 数据归 handler 所有：断连/重连的 on_disconnection、
+                        // on_new_connection 会清空它，而 RET_SUBMIT 入队后由 sender
+                        // 线程异步读取。指向 staging 会让 sender 读到已释放内存，
+                        // 拷贝到 transfer 自有缓冲，生命周期跟随 transfer
+                        trx->fallback_data.assign(staging_data_.begin() + static_cast<std::ptrdiff_t>(staging_offset_),
+                                                  staging_data_.begin() +
+                                                          static_cast<std::ptrdiff_t>(staging_offset_ + len));
+                        trx->external_buf = trx->fallback_data.data();
                         SPDLOG_DEBUG("MSC::hb IN staging handle={:p} offset={} len={}",
                                      static_cast<const void *>(transfer.get()), staging_offset_, len);
                     }
