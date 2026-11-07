@@ -117,12 +117,17 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                     }
                 }
                 // 将数据写入 transfer_handle
+                if (status != 0) {
+                    // 失败（如未知请求回 EPIPE）不能当成功应答：数据阶段清空，
+                    // 由 status 让主机看到 STALL
+                    result.clear();
+                }
                 trx->data = std::move(result);
                 trx->actual_length = trx->data.size();
                 trx->data_offset = 0;
 
-                responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_with_no_iso(
-                        seqnum, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
+                responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_iso(
+                        seqnum, status, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             }
             else {
                 // 从 transfer_handle 获取 OUT 数据

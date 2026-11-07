@@ -294,3 +294,38 @@ TEST(TestUacSpeakerStream, DeclaredIsoLengthExceedsActualData) {
     EXPECT_EQ(ret->header.seqnum, 2u);
     EXPECT_EQ(ret->actual_length, 100u); // 实际字节，非声明值
 }
+
+TEST(TestUacSpeakerStream, ShortFirstPacketKeepsLaterPacketsEmpty) {
+    // 第一包声明长度就超过实际数据：第二包 data_pos 已越过缓冲末尾，
+    // 不能用 data.size() - data_pos 计算（无符号下溢会读越界地址）
+    StringPool string_pool;
+    auto fx = make_speaker_device(string_pool);
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fx.dh->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    set_as_interface(fx, 1, stub, ec);
+
+    data_type payload(100, 0x22);
+    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 100, {}, payload, 2);
+    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
+    trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
+    trx->iso_descriptors[1] = {.offset = 192, .length = 192, .actual_length = 0, .status = 0};
+    fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
+    ASSERT_FALSE(ec);
+
+    wait_for_sink_data(fx, 100);
+    EXPECT_EQ(fx.sink->snapshot(), payload);
+
+    fx.dh->on_disconnection(ec);
+    const auto *ret = &stub.submits[0];
+    if (ret->header.seqnum != 2u) {
+        ret = &stub.submits[1];
+    }
+    ASSERT_EQ(ret->header.seqnum, 2u);
+    auto *resp_trx = GenericTransfer::from_handle(ret->transfer.get());
+    ASSERT_EQ(resp_trx->iso_descriptors.size(), 2u);
+    EXPECT_EQ(resp_trx->iso_descriptors[0].actual_length, 100u);
+    EXPECT_EQ(resp_trx->iso_descriptors[1].actual_length, 0u); // 没有数据，不能沿用主机声明值
+}

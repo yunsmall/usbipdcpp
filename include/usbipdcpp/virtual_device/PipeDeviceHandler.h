@@ -142,23 +142,26 @@ private:
     bool cancel_pipe_unlink(std::uint32_t unlink_seqnum);
 
     /// 获取端点 IN 通道（懒创建：首次访问时按 fifo_capacity 建通道并绑定会话）。
-    /// 调用者必须已持有 pipe_mutex
-    ByteStreamInChannel &get_in_channel(std::uint8_t ep_addr);
+    /// 调用者必须已持有 pipe_mutex。返回 shared_ptr：write() 释放锁后仍要用通道，
+    /// 断连清 map 时必须保证在途写者持有的对象不被销毁
+    std::shared_ptr<ByteStreamInChannel> get_in_channel(std::uint8_t ep_addr);
 
     /// 获取端点 OUT 通道（懒创建：首次访问时绑定会话并重置断连状态）。
     /// 调用者必须已持有 pipe_mutex
-    OutEndpointChannel &get_out_channel(std::uint8_t ep_addr);
+    std::shared_ptr<OutEndpointChannel> get_out_channel(std::uint8_t ep_addr);
 
     // 保护 out_channels / in_channels / disconnected
     mutable std::mutex pipe_mutex;
     // 任一 OUT 通道非空或断连（read 的等待条件）；入队/断连时 notify
     std::condition_variable out_cv;
     // 每端点 OUT 通道（NAK 背压），键 = 端点地址（含方向位）；控制请求
-    // （ep==0）也走这里。挂起的请求由 read() 取走时应答
-    std::map<std::uint8_t, OutEndpointChannel> out_channels;
+    // （ep==0）也走这里。挂起的请求由 read() 取走时应答。
+    // shared_ptr：断连时清 map 不能销毁仍在被使用的通道对象
+    std::map<std::uint8_t, std::shared_ptr<OutEndpointChannel>> out_channels;
     // 每端点 IN 通道（字节流模式），键 = 端点地址（含方向位）；控制应答
-    // （ep==0）也走这里。挂起-应答/阻塞写在通道内部
-    std::unordered_map<std::uint8_t, ByteStreamInChannel> in_channels;
+    // （ep==0）也走这里。挂起-应答/阻塞写在通道内部。
+    // shared_ptr：write() 在锁外使用通道，断连清 map 时写者仍持有引用
+    std::unordered_map<std::uint8_t, std::shared_ptr<ByteStreamInChannel>> in_channels;
     bool disconnected = true;
 
     std::size_t fifo_capacity = 64 * 1024;

@@ -598,6 +598,45 @@ TEST(TestMscHandler, UnmapPunchesHoles) {
     fixture.msc->on_disconnection(ec);
 }
 
+TEST(TestMscHandler, UnmapOutOfRangeFailsWithoutPunching) {
+    // UNMAP 描述符越界（LBA + 块数超出介质）：SBC-4 要求回 CHECK CONDITION，
+    // 不能把越界范围交给 punch_hole（后端直接写内存，越界即写坏）
+    StringPool string_pool;
+    auto backend = std::make_unique<MemoryBackend>(8);
+    data_type pattern(512, 0xFF);
+    for (std::uint64_t lba = 0; lba < 8; lba++) {
+        std::memcpy(backend->get_direct_buffer(lba), pattern.data(), 512);
+    }
+    auto fixture = make_msc_device(string_pool, std::move(backend));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Unmap;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x9998, 0x00, cdb, 40));
+
+    // 描述符 1 合法（LBA=2 cnt=1），描述符 2 越界（LBA=8 cnt=1，共 8 块）
+    data_type unmap_data(40, 0);
+    unmap_data[15] = 2;
+    unmap_data[19] = 1;
+    unmap_data[31] = 8;
+    unmap_data[35] = 1;
+    deliver_out_data(*fixture.msc, 2, unmap_data);
+
+    deliver_in_request(*fixture.msc, 3, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(csw_from_submit(stub.submits[0]).bCSWStatus, 1u); // CHECK CONDITION
+
+    // 先整体校验再执行：前面合法的描述符也不能被部分执行
+    EXPECT_EQ(std::memcmp(fixture.msc->get_backend()->get_direct_buffer(2), pattern.data(), 512), 0);
+
+    fixture.msc->on_disconnection(ec);
+}
+
 TEST(TestMscHandler, WriteSameFillsRange) {
     // WRITE SAME(16)：DataOut 收 1 块填充数据，逐块写入整个范围（LBA=1 起 3 块）
     StringPool string_pool;

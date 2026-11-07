@@ -67,7 +67,12 @@ void StorageTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::so
         SPDLOG_DEBUG("STO::send direct OK");
         return;
     }
-    ec.clear();
+    // 零拷贝中途失败时可能已送出部分字节（ec 非空）：从头重发整段会让主机收到
+    // 重复数据，直接保留错误上报；只有"平台不支持"（ec 为空、未传输）才回退
+    if (ec) {
+        SPDLOG_DEBUG("STO::send direct failed: {}", ec.message());
+        return;
+    }
 
     // 回退：从 external_buf / fallback_data 发送
     void *buf = trx->external_buf ? trx->external_buf : trx->fallback_data.data();
@@ -92,7 +97,13 @@ void StorageTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::so
         handler_->on_out_data_received(trx, length);
         return;
     }
-    ec.clear();
+    // 零拷贝中途失败时可能已从 socket 读走部分数据并写入文件（ec 非空）：回退
+    // 从头再读整段会把后续字节写到错误偏移，直接保留错误上报；只有"平台不支持"
+    // （ec 为空、未读取）才回退
+    if (ec) {
+        SPDLOG_DEBUG("STO::recv direct failed: {}", ec.message());
+        return;
+    }
 
     // 回退：直读到 external_buf 或 fallback_data
     void *buf = trx->external_buf;

@@ -182,6 +182,36 @@ TEST(TestUvcHandler, IsoInServesFrameWithHeaders) {
     }
 }
 
+TEST(TestUvcHandler, IsoPacketOutsideTransferBufferIsSkipped) {
+    // 主机提供的 iso.offset/length 不可信：包区间超出 transfer 缓冲时按空包
+    // 处理，不能按 offset 直接写越界地址
+    UvcTestEnv env;
+    env.start_streaming();
+
+    const int num_packets = 4;
+    auto submit = make_cmd_submit(env.op, 6, 0x01, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
+    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
+    for (int i = 0; i < num_packets; i++) {
+        trx->iso_descriptors[i] = {.offset = static_cast<std::uint32_t>(i * 512),
+                                   .length = 512,
+                                   .actual_length = 0,
+                                   .status = 0};
+    }
+    // 第一包 offset 等于缓冲长度（越界）：跳过，帧数据顺延到第二包
+    trx->iso_descriptors[0].offset = num_packets * 512;
+    env.handler.handle_isochronous_transfer(
+            6, UsbEndpoint{.address = 0x81, .attributes = 0x05, .max_packet_size = 512}, 0, num_packets * 512,
+            std::move(submit.transfer), num_packets, env.ec);
+    ASSERT_FALSE(env.ec);
+
+    const auto *ret = &env.stub.submits.back();
+    ASSERT_EQ(ret->header.seqnum, 6u);
+    auto *resp = GenericTransfer::from_handle(ret->transfer.get());
+    ASSERT_EQ(resp->iso_descriptors.size(), static_cast<std::size_t>(num_packets));
+    EXPECT_EQ(resp->iso_descriptors[0].actual_length, 0u);
+    EXPECT_EQ(resp->iso_descriptors[1].actual_length, 66u); // 2 字节 header + 64 字节帧
+}
+
 TEST(TestUvcHandler, FrameIntervalGateEmitsEmptyPacket) {
     // 第一帧传完立即再发 iso IN：帧间隔（33ms）未到 → 空包（actual_length=0），
     // 避免主机拉得快时快放

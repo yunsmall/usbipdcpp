@@ -501,12 +501,33 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
             if (data_out_unmap_) {
                 if (staging_data_.size() >= write_count_) {
                     auto &d = staging_data_;
+                    // SBC-4 UNMAP 参数表：前 8 字节是列表头，其后每个块描述符
+                    // 16 字节。先整体校验再执行——LBA 或块数超出介质范围时必须
+                    // 回 CHECK CONDITION，不能把越界范围交给 punch_hole（后端会
+                    // 直接 memset/fallocate，越界即写坏内存或镜像）
+                    auto blocks = backend_->block_count();
+                    bool out_of_range = false;
                     for (std::size_t i = 8; i + 16 <= d.size(); i += 16) {
                         const auto *desc = reinterpret_cast<const UnmapBlockDescriptor *>(&d[i]);
                         auto lba = get_be64(desc->lba);
                         auto cnt = get_be32(desc->block_count);
-                        SPDLOG_DEBUG("UNMAP punch lba={} cnt={}", lba, cnt);
-                        backend_->punch_hole(lba, cnt);
+                        if (lba > blocks || cnt > blocks - lba) {
+                            SPDLOG_WARN("UNMAP LBA={} cnt={} 超出介质范围（共{}块）", lba, cnt, blocks);
+                            out_of_range = true;
+                            break;
+                        }
+                    }
+                    if (!out_of_range) {
+                        for (std::size_t i = 8; i + 16 <= d.size(); i += 16) {
+                            const auto *desc = reinterpret_cast<const UnmapBlockDescriptor *>(&d[i]);
+                            auto lba = get_be64(desc->lba);
+                            auto cnt = get_be32(desc->block_count);
+                            SPDLOG_DEBUG("UNMAP punch lba={} cnt={}", lba, cnt);
+                            backend_->punch_hole(lba, cnt);
+                        }
+                    }
+                    else {
+                        command_failed_ = true;
                     }
                     staging_data_.clear();
                     data_out_unmap_ = false;

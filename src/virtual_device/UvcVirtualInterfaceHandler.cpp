@@ -821,7 +821,10 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
 
     for (int i = 0; i < num_iso_packets && frame_remaining > 0; ++i) {
         auto &iso = iso_descs[i];
-        if (iso.length < UVC_PAYLOAD_HEADER_SIZE) {
+        // 主机提供的 offset/length 不可信：包缓冲区间必须完整落在 transfer
+        // 缓冲内，否则 &data[iso.offset] + chunk 会越界写
+        if (iso.length < UVC_PAYLOAD_HEADER_SIZE || iso.offset > data.size() ||
+            iso.length > data.size() - iso.offset) {
             iso.actual_length = 0;
             continue;
         }

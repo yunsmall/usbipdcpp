@@ -637,6 +637,7 @@ void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder
 
     for (int i = 0; i < num_iso_packets; ++i) {
         auto &iso = iso_descs[i];
+        iso.actual_length = 0;
         packet_residue_acc += packet_residue_step;
         auto packet_bytes = packet_base;
         if (packet_residue_acc >= packet_framesize * packet_interval) {
@@ -644,7 +645,9 @@ void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder
             packet_residue_acc -= packet_framesize * packet_interval;
         }
         auto want = std::min(static_cast<std::size_t>(iso.length), packet_bytes);
-        if (want == 0)
+        // 主机提供的 offset/length 不可信：写入区间必须完整落在 transfer
+        // 缓冲内，否则 &data[iso.offset] 越界写；越界包按 0 字节空包应答
+        if (want == 0 || iso.offset > data.size() || want > data.size() - iso.offset)
             continue;
 
         fill_pcm(&data[iso.offset], want);
@@ -952,7 +955,14 @@ void UacAudioStreamingSinkHandler::process_iso_out(TransferResponder &responder,
     std::uint32_t total_received = 0;
     std::size_t data_pos = 0;
     for (auto &iso: iso_descs) {
-        auto take = std::min(static_cast<std::size_t>(iso.length), data.size() - data_pos);
+        // 短包/异常包（主机声明的包长总和超过实际收到的数据）时后续包没有
+        // 数据：data_pos >= data.size() 时直接取 0，不能算
+        // data.size() - data_pos（无符号下溢会把整个 iso.length 当可用数据）
+        auto take = data_pos < data.size()
+                            ? std::min(static_cast<std::size_t>(iso.length), data.size() - data_pos)
+                            : 0;
+        // actual_length 由设备按实际消费量回填，不能沿用主机送来的值
+        iso.actual_length = static_cast<std::uint32_t>(take);
         if (take > 0) {
             // 应用 AC 音量控制（mute/volume）——对齐麦克风 fill_pcm 的增益处理。
             // Windows 音量滑块走 FU 的 SET_CUR，音量状态在 AC handler，收流侧
@@ -973,7 +983,6 @@ void UacAudioStreamingSinkHandler::process_iso_out(TransferResponder &responder,
                 }
             }
             sink->write_pcm(&data[data_pos], take);
-            iso.actual_length = static_cast<std::uint32_t>(take);
             total_received += iso.actual_length;
         }
         data_pos += iso.length;

@@ -204,8 +204,11 @@ bool RawImageBackend::recv_direct(std::uint64_t lba, std::size_t offset, std::si
         // sock → pipe
         ssize_t n = splice(static_cast<int>(sock_fd), nullptr, splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
         if (n <= 0) {
-            if (n == 0)
-                break;
+            if (n == 0) {
+                // 对端提前关闭：不能当作成功返回，否则上层以为数据已收全
+                ec.assign(EIO, std::generic_category());
+                return false;
+            }
             ec.assign(errno, std::generic_category());
             return false;
         }
@@ -260,8 +263,11 @@ bool RawImageBackend::send_direct(std::uint64_t lba, std::size_t offset, std::si
     while (remaining > 0) {
         ssize_t n = splice(fd_, &off, splice_pipe_[1], nullptr, remaining, SPLICE_F_MOVE);
         if (n <= 0) {
-            if (n == 0)
-                break;
+            if (n == 0) {
+                // 文件提前 EOF（LBA 越界或镜像被截断）：不能当作成功返回
+                ec.assign(EIO, std::generic_category());
+                return false;
+            }
             ec.assign(errno, std::generic_category());
             return false;
         }

@@ -463,6 +463,28 @@ TEST(TestPipeDeviceHandler, ReadWriteTimeout) {
     fixture.pipe->on_disconnection(ec);
 }
 
+TEST(TestPipeDeviceHandler, DisconnectWhileWriteBlockedIsSafe) {
+    // 写者阻塞在满 FIFO 时断连：on_disconnection 清空通道 map，写者仍持有
+    // shared_ptr，通道对象不能在写期间被销毁（否则 use-after-free）；
+    // 唤醒后返回已写入量
+    StringPool string_pool;
+    auto fixture = make_pipe_device(string_pool);
+    fixture.pipe->set_in_fifo_capacity(4);
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.pipe->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::size_t written = 1;
+    std::thread writer(
+            [&]() { written = fixture.pipe->write(PipeXfer{.ep = 0x81, .data = data_type(32, 0x5A)}, 0); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 确保已阻塞在 FIFO 满
+
+    fixture.pipe->on_disconnection(ec);
+    writer.join();
+    EXPECT_EQ(written, 4u); // 只写入 FIFO 容量部分，断连后立即返回
+}
+
 TEST(TestPipeDeviceHandler, UnlinkPendingRequest) {
     // 挂起的 IN 请求被 UNLINK 取消：回 RET_UNLINK 且状态为 -ECONNRESET
     // （对齐内核 stub_tx.c 对取消 URB 的处理）
