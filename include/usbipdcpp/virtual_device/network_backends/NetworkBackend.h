@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 
 #include "usbipdcpp/Export.h"
 
@@ -34,7 +35,10 @@ public:
     virtual void reset() {}
 
     /// 设置发往主机的回调（EcmDataInterfaceHandler 构造时注入，内部使用）
+    /// @note 回调会与后端的收帧线程并发访问，注入/清空都持锁；handler 析构
+    /// 时清空回调会等待正在执行的回调返回，避免回调访问已销毁的 handler
     void set_send_to_host(std::function<void(const std::uint8_t *, std::size_t)> callback) {
+        std::lock_guard lock(send_to_host_mutex_);
         send_to_host_ = std::move(callback);
     }
 
@@ -65,7 +69,10 @@ protected:
     }
 
     /// 后端产生一帧时调用此函数发往主机（未注入回调时静默丢弃）
+    /// @note 整个调用在 send_to_host_mutex_ 内完成：set_send_to_host({})
+    /// 必须等到执行中的回调返回才返回，否则 handler 析构后回调仍可能触碰它
     void send_to_host(const std::uint8_t *data, std::size_t size) {
+        std::lock_guard lock(send_to_host_mutex_);
         if (send_to_host_) {
             send_to_host_(data, size);
             tx_frames_++;
@@ -74,6 +81,7 @@ protected:
     }
 
 private:
+    std::mutex send_to_host_mutex_;
     std::function<void(const std::uint8_t *, std::size_t)> send_to_host_;
     std::atomic<std::uint64_t> rx_frames_{0};
     std::atomic<std::uint64_t> rx_bytes_{0};

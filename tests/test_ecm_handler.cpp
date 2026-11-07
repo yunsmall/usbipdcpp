@@ -3,8 +3,10 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <thread>
 
 #include "test_utils.h"
 
@@ -286,4 +288,36 @@ TEST(TestEcmDataHandler, DestructorClearsBackendCallback) {
     const std::uint8_t frame[] = {4, 5, 6};
     backend.push_from_network(frame, sizeof(frame));
     EXPECT_EQ(backend.tx_frames(), 1u); // 回调已清除，不再调用 handler
+}
+
+TEST(TestEcmDataHandler, SetSendToHostConcurrentWithSendIsSafe) {
+    // 后端收帧线程可能正在执行回调，handler 同时析构/重建回调：注入与调用
+    // 必须互斥（TSan 下跑本用例能抓到裸 std::function 的竞争）
+    ProbeBackend backend;
+    std::atomic<int> calls{0};
+    auto make_cb = [&calls] {
+        return [&calls](const std::uint8_t *, std::size_t) { calls.fetch_add(1); };
+    };
+    backend.set_send_to_host(make_cb());
+
+    std::atomic<bool> stop{false};
+    std::thread sender([&] {
+        const std::uint8_t frame[] = {1, 2, 3};
+        while (!stop.load()) {
+            backend.push_from_network(frame, sizeof(frame));
+        }
+    });
+
+    for (int i = 0; i < 2000; i++) {
+        backend.set_send_to_host({});
+        backend.set_send_to_host(make_cb());
+    }
+
+    stop = true;
+    sender.join();
+    backend.set_send_to_host({});
+    const auto before = calls.load();
+    const std::uint8_t frame[] = {4};
+    backend.push_from_network(frame, sizeof(frame));
+    EXPECT_EQ(calls.load(), before); // 清空后不再回调
 }
