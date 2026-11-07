@@ -42,6 +42,17 @@ public:
         return transfer_scheduler;
     }
 
+    /**
+     * @brief 当前设备总线速度
+     *
+     * 接口 handler 计算端点事务间隔（bInterval 的编码随速度不同）等需要
+     * 设备速度，而它们只持有 device_handler 指针，故在此暴露只读访问。
+     * @return 设备描述符里的 UsbSpeed
+     */
+    [[nodiscard]] UsbSpeed get_speed() const {
+        return static_cast<UsbSpeed>(handle_device.speed);
+    }
+
     /// 启用/禁用设备级传输调度器（默认禁用：不需要调度器的设备不启动
     /// 调度线程，避免无谓开销）。需要等时等帧节奏传输的派生类在构造时
     /// 调用此函数启用，调度器随连接建立/断开自动启动/停止

@@ -332,19 +332,31 @@ UacAudioStreamingSourceHandler::UacAudioStreamingSourceHandler(UsbInterface &han
 
 void UacAudioStreamingSourceHandler::update_packet_bytes() {
     auto fmt = source->current_format();
-    // 高速等时端点 bInterval=4（对齐内核 gadget f_uac1.c 的 as_in_ep_desc）：
-    // 每 1ms 一个包，每秒 1000 包。
-    // 基准包长 = 帧大小×(采样率/1000)；采样率对 1000 的余数折算成帧数逐包累加，
-    // 累加值够一帧时本包补一帧。包长恒为帧大小整数倍，平均速率精确等于采样率
+    // 包间隔由等时 IN 端点的 bInterval 与设备速度决定（USB 2.0/3.0 §9.6.6）：
+    // 高速/超速 2^(bInterval-1)×125µs、全速 bInterval×1ms。UAC 设备可以跑在
+    // 全速，不能固定按每秒 1000 包算，否则全速下数据速率只有标称的 1/4
+    std::size_t interval_us = 1000;
+    if (device_handler && handle_interface.endpoints.size() > 1 && !handle_interface.endpoints[1].empty()) {
+        auto interval = TransferScheduler::endpoint_interval(handle_interface.endpoints[1][0],
+                                                             device_handler->get_speed());
+        auto us = static_cast<std::size_t>(interval.count());
+        if (us > 0) {
+            interval_us = us;
+        }
+    }
+    // 每包样本数 = 采样率 × 包间隔（分母 1e6 表示 µs）；整数部分作为基准包长，
+    // 余数折算成帧数逐包累加。包长恒为帧大小整数倍，平均速率精确等于采样率
     packet_framesize = static_cast<std::size_t>(fmt.channels) * (fmt.bits_per_sample / 8);
-    packet_interval = 1000;
-    auto rate = static_cast<std::size_t>(fmt.sample_rate);
-    packet_base = packet_framesize * (rate / packet_interval);
-    packet_residue_step = packet_framesize * (rate % packet_interval);
+    const auto frames_scaled = static_cast<std::uint64_t>(fmt.sample_rate) * interval_us;
+    packet_base = packet_framesize * static_cast<std::size_t>(frames_scaled / 1'000'000);
+    packet_residue_step = packet_framesize * static_cast<std::size_t>(frames_scaled % 1'000'000);
     packet_residue_acc = 0;
 }
 
 void UacAudioStreamingSourceHandler::on_setup_interface_handlers() {
+    // device_handler 在基类 setup 阶段设置，此时才能拿到设备速度/端点定义；
+    // 重新计算包调度参数（构造函数里只能按默认 1ms 估）
+    update_packet_bytes();
     build_class_descriptor();
 }
 
@@ -364,6 +376,14 @@ std::vector<std::uint32_t> UacAudioStreamingSourceHandler::supported_sample_rate
 void UacAudioStreamingSourceHandler::build_class_descriptor() {
     auto fmt = source->current_format();
     auto rates = supported_sample_rates(fmt);
+    if (rates.empty()) {
+        // UAC 1.0 §4.3.2.5：bSamFreqType=0 表示连续采样率，后面必须跟两个
+        // 3 字节的 tSamFreq（min/max）；空列表会生成缺字段的 8 字节描述符，
+        // 主机解析越界。回退为只报当前采样率（离散 1 项），与 set_format
+        // 实际能接受的值一致
+        SPDLOG_WARN("AS 描述符：当前格式没有支持的采样率，回退为当前值 {}", fmt.sample_rate);
+        rates.push_back(fmt.sample_rate);
+    }
 
     data_type d;
     // AS General: bTerminalLink 指向 AC 的 Output Terminal（USB streaming）
@@ -651,9 +671,10 @@ void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder
         iso.actual_length = 0;
         packet_residue_acc += packet_residue_step;
         auto packet_bytes = packet_base;
-        if (packet_residue_acc >= packet_framesize * packet_interval) {
+        // 残差累加够 1e6（一个整帧的缩放分母）时补一帧
+        if (packet_residue_acc >= packet_framesize * 1'000'000) {
             packet_bytes += packet_framesize;
-            packet_residue_acc -= packet_framesize * packet_interval;
+            packet_residue_acc -= packet_framesize * 1'000'000;
         }
         auto want = std::min(static_cast<std::size_t>(iso.length), packet_bytes);
         // 主机提供的 offset/length 不可信：写入区间必须完整落在 transfer
@@ -738,6 +759,12 @@ void UacAudioStreamingSinkHandler::build_class_descriptor() {
     }
     std::sort(rates.begin(), rates.end());
     rates.erase(std::unique(rates.begin(), rates.end()), rates.end());
+    if (rates.empty()) {
+        // 同 Source：bSamFreqType=0 必须跟 min/max，空列表会生成不完整描述符；
+        // 回退为只报当前采样率
+        SPDLOG_WARN("AS 描述符：当前格式没有支持的采样率，回退为当前值 {}", fmt.sample_rate);
+        rates.push_back(fmt.sample_rate);
+    }
 
     data_type d;
     // AS General: bTerminalLink 指向 AC 的 Input Terminal（USB streaming，扬声器方向
@@ -1057,12 +1084,16 @@ void UacAudioStreamingSinkHandler::on_new_connection(TransferResponder &current_
     streaming = false;
     sink->reset();
     // 闭环状态从零开始：新连接的水位/节奏与上次无关（统计字段全清，
-    // 否则残留的字节数/墙钟时刻会污染重连后第一个测速窗口）
+    // 否则残留的字节数/墙钟时刻会污染重连后第一个测速窗口）。
+    // 时间基准取当前时刻而不是 0：第一个窗口若从 epoch 起算，time_delta
+    // 是几十年，算出的接收速率≈0，修正量会被直接推到 -600µs 限幅
     pacing_delta_us = 0;
     urb_stat_count = 0;
     urb_stat_bytes = 0;
     urb_stat_last_bytes = 0;
-    urb_stat_last_time_us = 0;
+    urb_stat_last_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count();
 }
 
 void UacAudioStreamingSinkHandler::on_disconnection(error_code &ec) {

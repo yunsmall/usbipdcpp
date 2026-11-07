@@ -182,9 +182,8 @@ private:
     // （样本交错结构不被切断），平均速率精确匹配采样率，非 8kHz 整数倍采样率
     // （如 44100）也正确。采样率变化时由 update_packet_bytes 重算
     std::size_t packet_framesize = 0;   // 一帧 PCM 字节数 = 声道数×样本字节
-    std::size_t packet_interval = 0;    // 每秒包数：高速 bInterval=1 → 每 microframe 一包
-    std::size_t packet_base = 0;        // 基准包长 = 帧大小×(采样率/interval)
-    std::size_t packet_residue_step = 0; // 每包累加的残差 = 帧大小×(采样率%interval)
+    std::size_t packet_base = 0;        // 基准包长 = 帧大小×(采样率×间隔/1e6)
+    std::size_t packet_residue_step = 0; // 每包累加的残差 = 帧大小×(采样率×间隔%1e6)
     std::size_t packet_residue_acc = 0;  // 残差累加器（跨包/跨 URB 连续）
 
     // 当前音频块引用 + 已消费偏移（跨 URB 连续流）

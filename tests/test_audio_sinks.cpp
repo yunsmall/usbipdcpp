@@ -277,3 +277,33 @@ TEST(UacAudioStreamingControl, SourceSetCurWithoutSupportedRatesStalls) {
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }
+
+TEST(UacAudioStreamingControl, DescriptorFallsBackToCurrentRateWhenListEmpty) {
+    // UAC 1.0 §4.3.2.5：bSamFreqType=0 表示连续采样率，后面必须跟 min/max
+    // 两个 3 字节 tSamFreq；支持列表为空时不能生成缺字段的描述符。源/汇都
+    // 回退为当前采样率一个离散值（bSamFreqType=1）
+    UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
+
+    {
+        StringPool pool;
+        UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+        handler.on_setup_interface_handlers();
+        auto desc = handler.get_class_specific_descriptor();
+        ASSERT_EQ(desc.size(), 18u); // General(7) + FormatHead(8) + 1 个采样率(3)
+        EXPECT_EQ(desc[14], 1); // bSamFreqType = 1（离散）
+        EXPECT_EQ(desc[15], 0x80); // tSamFreq = 48000 (0x00BB80) 小端
+        EXPECT_EQ(desc[16], 0xBB);
+        EXPECT_EQ(desc[17], 0x00);
+    }
+    {
+        StringPool pool;
+        UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+        handler.on_setup_interface_handlers();
+        auto desc = handler.get_class_specific_descriptor();
+        ASSERT_EQ(desc.size(), 18u);
+        EXPECT_EQ(desc[14], 1);
+        EXPECT_EQ(desc[15], 0x80);
+        EXPECT_EQ(desc[16], 0xBB);
+        EXPECT_EQ(desc[17], 0x00);
+    }
+}

@@ -100,6 +100,10 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_uac_speaker_stream)
     target_link_libraries(test_uac_speaker_stream PRIVATE usbipdcpp_virtual_device)
 
+    # UAC 麦克风（IN 送流）每包字节数随 bInterval/速度变化
+    add_test_file(test_uac_microphone_stream)
+    target_link_libraries(test_uac_microphone_stream PRIVATE usbipdcpp_virtual_device)
+
     # 传输调度器（vudc 帧调度等价物）测试
     add_test_file(test_transfer_scheduler)
     target_link_libraries(test_transfer_scheduler PRIVATE usbipdcpp_virtual_device)
