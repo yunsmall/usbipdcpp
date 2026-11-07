@@ -139,6 +139,10 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
             read_total_size_ = 0;
             write_mmap_base_ = nullptr;
             write_accumulated_ = 0;
+            // 每条新命令从零残留开始：WRITE SAME 会在 CBW 解析时按需设置，
+            // 不重置会让后面无数据阶段的命令（TestUnitReady 等）把上一条
+            // 命令的残留值带进 CSW（BOT 要求 dCSWDataResidue 为应传未传字节）
+            data_residue_ = 0;
 
             // CBW 在 fallback_data 中
             if (trx->fallback_data.size() < sizeof(CBW)) {

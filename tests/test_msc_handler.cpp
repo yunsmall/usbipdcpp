@@ -898,3 +898,43 @@ TEST(TestMscHandler, ReadWriteLbaPlusCountOverflowRejected) {
 
     fixture.msc->on_disconnection(ec);
 }
+
+TEST(TestMscHandler, DataResidueDoesNotLeakToNextCommand) {
+    // WRITE SAME 的 dCBWDataTransferLength 大于 1 块时 CSW 残留非零；下一条
+    // 无数据阶段的命令（TEST UNIT READY）必须从 0 残留开始，不能把上一条
+    // 的残留带进 CSW（BOT：dCSWDataResidue = 应传未传字节数）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // WRITE SAME(16) LBA=1 共 1 块，但主机声明传输 1024 字节 → 残留 512
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = 0x93;
+    cdb[9] = 1;  // LBA=1
+    cdb[13] = 1; // cnt=1
+    deliver_out_data(*fixture.msc, 1, make_cbw(0xAAAA, 0x00, cdb, 1024));
+    deliver_out_data(*fixture.msc, 2, data_type(512, 0x5A));
+    deliver_in_request(*fixture.msc, 3, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 0u);
+    EXPECT_EQ(csw.dCSWDataResidue, 512u); // 多出的 512 字节未消费
+
+    // TEST UNIT READY：无数据阶段，残留必须是 0
+    std::array<std::uint8_t, 16> tur{};
+    tur[0] = ScsiCmd::TestUnitReady;
+    deliver_out_data(*fixture.msc, 4, make_cbw(0xAAAB, 0x00, tur, 0));
+    deliver_in_request(*fixture.msc, 5, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    csw = csw_from_submit(stub.submits[1]);
+    EXPECT_EQ(csw.bCSWStatus, 0u);
+    EXPECT_EQ(csw.dCSWDataResidue, 0u);
+
+    fixture.msc->on_disconnection(ec);
+}
