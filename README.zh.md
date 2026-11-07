@@ -735,6 +735,27 @@ AbstDeviceHandler
 
 虚拟设备需要模拟这个"按顺序存储 URB"的行为，因此使用请求队列（`std::deque`）来存储收到的请求，按顺序逐个处理。
 
+#### USB 3.0（SuperSpeed）支持范围
+
+描述符层支持 SuperSpeed：`UsbSpeed::Super`/`SuperPlus` 时 `bMaxPacketSize0` 用指数编码（9），
+返回带 SuperSpeed capability 的 BOS 描述符，不返回 Device_Qualifier/OtherSpeedConfiguration，
+中断/等时间隔使用 SuperSpeed 的 `2^(bInterval-1) × 125µs` 规则。
+
+设备框架语义按 USB 2.0 实现，这是有意的：
+
+- Linux `vudc` 是 USB/IP 设备控制器的参考实现，最高只到 High Speed
+  （`udc->gadget.max_speed = USB_SPEED_HIGH`）。`vudc_transfer.c` 里的
+  `USB_SPEED_SUPER` 分支是从 dummy_hcd 继承来的，实际不可达。
+- USB/IP 协议不携带 SuperSpeed 的 endpoint companion / burst / stream 信息，
+  没有真实客户端会使用 SuperSpeed 设备语义。
+- 只实现一半 USB 3.0 设备框架（`U1_ENABLE`/`U2_ENABLE`/`LTM_ENABLE`、
+  `FUNCTION_SUSPEND`、`SET_SEL`）而没有真正的 U1/U2 状态机和退出延迟处理，
+  在严格的 SuperSpeed 主机上比直接 STALL 更容易导致枚举失败。
+
+具体表现：接口级标准 SET/CLEAR_FEATURE 回 STALL（USB 2.0 没有接口级 feature
+selector），设备级 GET_STATUS 使用 USB 2.0 的位定义，`SET_SEL`/`SET_ISOCH_DELAY`
+不处理。如果以后虚拟设备需要作为真正的 SuperSpeed 设备运行，这里列的就是要补的工作。
+
 ## 平台说明
 
 ### Windows：libusb 需要替换驱动

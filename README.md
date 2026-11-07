@@ -757,6 +757,30 @@ The client only sends URBs, and the server receives them. In the original USBIP,
 
 Virtual devices need to simulate this "store URBs in order" behavior, so request queues (`std::deque`) are used to store received requests and process them sequentially.
 
+#### USB 3.0 (SuperSpeed) support scope
+
+The descriptor layer supports SuperSpeed: `UsbSpeed::Super`/`SuperPlus` encode
+`bMaxPacketSize0` in exponent form (9), return a BOS descriptor with the SuperSpeed
+capability, suppress Device_Qualifier/OtherSpeedConfiguration, and use the
+SuperSpeed `2^(bInterval-1) x 125us` scheduling interval.
+
+The device-framework semantics are implemented to USB 2.0. This is deliberate:
+
+- Linux `vudc`, the reference USB/IP device controller, caps at High Speed
+  (`udc->gadget.max_speed = USB_SPEED_HIGH`). Its `USB_SPEED_SUPER` branch in
+  `vudc_transfer.c` is inherited from dummy_hcd and unreachable.
+- The USB/IP protocol carries no SuperSpeed endpoint companion / burst / stream
+  information, so no real client exercises SuperSpeed device semantics.
+- Implementing only part of the USB 3.0 device framework (`U1_ENABLE`/`U2_ENABLE`/
+  `LTM_ENABLE`, `FUNCTION_SUSPEND`, `SET_SEL`) without a real U1/U2 state machine
+  and exit-latency handling is more likely to break enumeration on a strict
+  SuperSpeed host than STALLing those requests.
+
+Consequences: interface-level standard SET/CLEAR_FEATURE return STALL (USB 2.0 has
+no interface feature selector), device-level GET_STATUS uses the USB 2.0 bit
+layout, and `SET_SEL`/`SET_ISOCH_DELAY` are not handled. If a virtual device ever
+has to behave as a real SuperSpeed device, this list is the work to do.
+
 ## Platform Notes
 
 ### Windows: libusb requires driver replacement

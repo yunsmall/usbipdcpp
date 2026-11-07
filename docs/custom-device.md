@@ -230,12 +230,15 @@ pipe->set_custom_descriptor(0x22, report_descriptor_bytes);
 ### 标准请求行为可配置
 
 管道设备的接口级标准请求默认行为：接受接口定义里存在的 alt（SET_INTERFACE，
-其余拒绝）、其余请求接受并回成功。需要特殊行为时，在连接前设置回调结构体
-`standard_request_handler`——8 个回调对应 8 个接口/端点级标准请求，未设置的回调
-保持默认行为。回调在 session receiver 线程调用，第一个参数是 handler 自身的引用：
+其余拒绝）；接口级 CLEAR/SET_FEATURE 回 STALL（USB 2.0 Table 9-6 只给设备
+和端点定义了标准 feature selector，接口级没有合法 selector，§9.4 要求 STALL）；
+端点级 CLEAR/SET_FEATURE 由基类的 ENDPOINT_HALT 状态机处理（§9.4.5）。
+需要特殊行为时，在连接前设置回调结构体 `standard_request_handler`——8 个回调
+对应 8 个接口/端点级标准请求，未设置的回调保持默认行为。回调在 session
+receiver 线程调用，第一个参数是 handler 自身的引用：
 
 ```cpp
-// 演示：拒绝接口级 SET_FEATURE（该设备不支持任何接口级 feature）
+// 演示重写方式（默认实现已经是 STALL；这里展示如何接管接口级 SET_FEATURE）
 PipeStandardRequestHandler handler;
 handler.set_feature = [](PipeDeviceHandler &pipe, std::uint16_t feature_selector, std::uint32_t *p_status) {
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
@@ -273,7 +276,8 @@ AbstInterfaceHandler
       └── 你自己的 handler             ← 从这里继承
 ```
 
-设备级 handler 用 `SimpleVirtualDeviceHandler`（标准请求默认实现都回 OK），接口 handler 的标准请求回调也都有默认实现。
+设备级 handler 用 `SimpleVirtualDeviceHandler`（标准请求由库处理，未支持的能力回 STALL），
+接口 handler 的标准请求回调也都有默认实现。
 
 ### 标准请求：库内部处理，默认行为已够用
 
@@ -293,17 +297,16 @@ SET_CONFIGURATION / GET_STATUS / GET_INTERFACE / SET_INTERFACE / SET_FEATURE ...
 
 | 回调 | 默认行为 |
 |---|---|
-| 8 个标准请求回调（`request_*`） | 接受并回成功；`request_set_interface` 只接受设备定义里存在的 alt（其余回 EPIPE）；`request_get_interface` 返回当前 alt |
+| `request_clear_feature` / `request_set_feature` | 接口级回 STALL：USB 2.0 Table 9-6 没有接口级标准 feature selector，§9.4 要求无效请求回 STALL |
+| `request_endpoint_clear_feature` / `request_endpoint_set_feature` / `request_endpoint_get_status` | 维护 ENDPOINT_HALT 状态：SET 置位、CLEAR 清零、GET_STATUS 返回 bit0（USB 2.0 §9.4.5）；端点 0 不可 halt |
+| `request_set_interface` | 只接受设备定义里存在的 alt，其余回 EPIPE；成功后清除该接口端点的 HALT（§9.4.5） |
+| `request_get_interface` | 返回当前 alt |
+| `request_get_status` | 返回 0 |
 | `get_class_specific_descriptor` | 返回空（没有类描述符） |
+| `get_class_specific_endpoint_descriptor` | 返回空（端点后没有类特定描述符） |
 | 数据面 5 个（`handle_bulk_transfer` / `handle_interrupt_transfer` / `handle_isochronous_transfer` / `handle_non_standard_request_type_control_urb`（及 to_endpoint）） | 回 EPIPE——**必须重写**，否则主机发的传输全部报错 |
 
-重写示例（接口级 SET_FEATURE 一律拒绝）：
-
-```cpp
-void request_set_feature(std::uint16_t, std::uint32_t *p_status) override {
-    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
-}
-```
+接口级 feature 的默认行为已经符合规范，通常不需要重写；需要类特定应答时再覆盖。
 
 **只有非标准请求（CLASS/VENDOR 类型）才需要你自己解析**——回调是
 `handle_non_standard_request_type_control_urb`（默认回 EPIPE）。例如 HID 的

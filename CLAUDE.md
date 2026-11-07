@@ -30,6 +30,14 @@ AbstInterfaceHandler::on_new_connection：
 
 禁止用 `///` 或 `//` 给函数/方法/结构体写文档（行内注释说明"为什么"不受限）。
 
+## 文档同步
+
+修改文档时必须把中英文两个版本同步修改，不要只改一种语言：
+
+- `README.md` ↔ `README.zh.md`
+- `tests/e2e/README.en.md` ↔ `tests/e2e/README.md`
+- 新增文档如果只有一种语言，要同时补另一种语言的版本
+
 ## spdlog 日志级别被编译期裁剪时的调试手法
 
 Release/RelWithDebInfo 构建下 SPDLOG_ACTIVE_LEVEL 编译期定为 INFO，TRACE/DEBUG 日志
