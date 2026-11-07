@@ -478,65 +478,106 @@ void UvcVideoStreamingHandler::build_class_descriptor() {
     } else { // H264
         format_subtype = VS_DESC_FORMAT_H264;
         frame_subtype = VS_DESC_FRAME_H264;
-        // H.264 Format: 52 bytes（UVC 1.5 H.264 Payload Table 3-1）
-        format.resize(52, 0);
-        format[0] = 52;
+        // H.264 Format: 52 bytes（UVC 1.5 H.264 Payload Table 3-1）。
+        // 该描述符没有 guidFormat 字段：offset 6 起是编码器能力/吞吐量字段，
+        // 把 GUID 写到 21 会覆盖 wMaxMBperSecTwoResolutionsNoScalability
+        format.resize(VS_FMT_H264_LEN, 0);
+        format[0] = VS_FMT_H264_LEN;
         format[1] = 0x24;
         format[2] = format_subtype;
-        format[3] = 0x01;
-        format[4] = 0x01;
+        format[3] = 0x01; // bFormatIndex
+        format[4] = 0x01; // bNumFrameDescriptors
         format[5] = 0x01; // bDefaultFrameIndex
-        std::memcpy(&format[21], guid.data, 16);
-        format[37] = bpp;
-        format[38] = 0x01;
-        format[39] = 0x01;
     }
 
-    // Frame descriptor（Uncompressed/MJPEG/FrameBased: 26基础+12间隔=38; H264: 44基础+12间隔=56）
+    // Frame descriptor：
+    //   Uncompressed/MJPEG/FrameBased 用通用帧描述符（26 基础 + 12 间隔 = 38）
+    //   H.264 用 Table 3-2 的专用布局（44 基础 + 4*N 间隔）
     auto fps_val = 10'000'000ULL / fmt.default_frame_interval;
     auto bit_rate = static_cast<std::uint32_t>(fmt.max_frame_size * 8 * fps_val);
     auto min_iv = fmt.min_frame_interval;
     auto max_iv = fmt.max_frame_interval;
-    auto step_iv = min_iv;
 
-    auto frame_base = (cat == UvcFormatCategory::H264) ? VS_FRM_H264_BASE_LEN : 26u;
-    auto frame_len = frame_base + 12;
-    data_type frame(frame_len, 0);
-    frame[0] = static_cast<std::uint8_t>(frame_len);
-    frame[1] = 0x24;
-    frame[2] = frame_subtype;
-    frame[3] = 0x01; // bFrameIndex
-    frame[4] = 0x00; // bmCapabilities
-    frame[5] = static_cast<std::uint8_t>(fmt.width & 0xFF);
-    frame[6] = static_cast<std::uint8_t>((fmt.width >> 8) & 0xFF);
-    frame[7] = static_cast<std::uint8_t>(fmt.height & 0xFF);
-    frame[8] = static_cast<std::uint8_t>((fmt.height >> 8) & 0xFF);
-    for (int i = 0; i < 4; ++i) {
-        frame[9 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF);
-        frame[13 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF);
+    data_type frame;
+    if (cat == UvcFormatCategory::H264) {
+        // H.264 帧描述符字段偏移与通用布局完全不同：没有 bmCapabilities 和
+        // dwMaxVideoFrameBufferSize，wWidth 从 offset 4 开始；帧间隔是
+        // "数量 + 离散列表"（该格式没有连续间隔形式）
+        std::vector<std::uint32_t> intervals = {min_iv};
+        if (max_iv > min_iv) {
+            intervals.push_back(max_iv);
+        }
+        const auto frame_len = static_cast<std::size_t>(VS_FRM_H264_BASE_LEN + 4 * intervals.size());
+        frame.assign(frame_len, 0);
+        frame[0] = static_cast<std::uint8_t>(frame_len);
+        frame[1] = 0x24;
+        frame[2] = frame_subtype;
+        frame[3] = 0x01; // bFrameIndex
+        frame[4] = static_cast<std::uint8_t>(fmt.width & 0xFF); // wWidth
+        frame[5] = static_cast<std::uint8_t>((fmt.width >> 8) & 0xFF);
+        frame[6] = static_cast<std::uint8_t>(fmt.height & 0xFF); // wHeight
+        frame[7] = static_cast<std::uint8_t>((fmt.height >> 8) & 0xFF);
+        frame[8] = 0x01; // wSARwidth = 1（方形像素）
+        frame[10] = 0x01; // wSARheight = 1
+        frame[12] = 0x40; // wProfile = 0x4240 Constrained Baseline（小端）
+        frame[13] = 0x42;
+        frame[14] = 0x28; // bLevelIDC = Level 4.0
+        // bmSupportedUsages（offset 17，4 字节）：D16 "File Storage I,P,P"
+        // 是规范要求必须支持的位
+        frame[19] = 0x01;
+        for (int i = 0; i < 4; ++i) {
+            frame[31 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF); // dwMinBitRate
+            frame[35 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF); // dwMaxBitRate
+            frame[39 + i] = static_cast<std::uint8_t>((fmt.default_frame_interval >> (i * 8)) & 0xFF);
+        }
+        frame[43] = static_cast<std::uint8_t>(intervals.size()); // bNumFrameIntervals
+        for (std::size_t i = 0; i < intervals.size(); ++i) {
+            for (int b = 0; b < 4; ++b) {
+                frame[44 + i * 4 + b] = static_cast<std::uint8_t>((intervals[i] >> (b * 8)) & 0xFF);
+            }
+        }
     }
-    frame[17] = static_cast<std::uint8_t>(fmt.max_frame_size & 0xFF);
-    frame[18] = static_cast<std::uint8_t>((fmt.max_frame_size >> 8) & 0xFF);
-    frame[19] = static_cast<std::uint8_t>((fmt.max_frame_size >> 16) & 0xFF);
-    frame[20] = static_cast<std::uint8_t>((fmt.max_frame_size >> 24) & 0xFF);
-    frame[21] = static_cast<std::uint8_t>(fmt.default_frame_interval & 0xFF);
-    frame[22] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 8) & 0xFF);
-    frame[23] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 16) & 0xFF);
-    frame[24] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 24) & 0xFF);
-    frame[25] = 0x00; // bFrameIntervalType = 0 (continuous)
-    // usbvideo.sys!DumpAndValidateFrameUncompressed 对连续帧间隔有三项整除检查：
-    //   if (step != 0) {
-    //       if (max <= min)                → STATUS_INVALID_PARAMETER
-    //       if ((max - min) % step != 0)   → STATUS_INVALID_PARAMETER
-    //   }
-    // 因此 max 必须是 min + N*step（N 为正整数），否则 Windows 直接 Code 10。
-    // min/max/step 均取自 VideoSource，step=min 保证 (max-min) 是 min 的整数倍。
-    for (int i = 0; i < 4; ++i)
-        frame[frame_base + i] = static_cast<std::uint8_t>((min_iv >> (i * 8)) & 0xFF);
-    for (int i = 0; i < 4; ++i)
-        frame[frame_base + 4 + i] = static_cast<std::uint8_t>((max_iv >> (i * 8)) & 0xFF);
-    for (int i = 0; i < 4; ++i)
-        frame[frame_base + 8 + i] = static_cast<std::uint8_t>((step_iv >> (i * 8)) & 0xFF);
+    else {
+        auto step_iv = min_iv;
+        constexpr std::size_t frame_base = 26;
+        const auto frame_len = frame_base + 12;
+        frame.assign(frame_len, 0);
+        frame[0] = static_cast<std::uint8_t>(frame_len);
+        frame[1] = 0x24;
+        frame[2] = frame_subtype;
+        frame[3] = 0x01; // bFrameIndex
+        frame[4] = 0x00; // bmCapabilities
+        frame[5] = static_cast<std::uint8_t>(fmt.width & 0xFF);
+        frame[6] = static_cast<std::uint8_t>((fmt.width >> 8) & 0xFF);
+        frame[7] = static_cast<std::uint8_t>(fmt.height & 0xFF);
+        frame[8] = static_cast<std::uint8_t>((fmt.height >> 8) & 0xFF);
+        for (int i = 0; i < 4; ++i) {
+            frame[9 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF);
+            frame[13 + i] = static_cast<std::uint8_t>((bit_rate >> (i * 8)) & 0xFF);
+        }
+        frame[17] = static_cast<std::uint8_t>(fmt.max_frame_size & 0xFF);
+        frame[18] = static_cast<std::uint8_t>((fmt.max_frame_size >> 8) & 0xFF);
+        frame[19] = static_cast<std::uint8_t>((fmt.max_frame_size >> 16) & 0xFF);
+        frame[20] = static_cast<std::uint8_t>((fmt.max_frame_size >> 24) & 0xFF);
+        frame[21] = static_cast<std::uint8_t>(fmt.default_frame_interval & 0xFF);
+        frame[22] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 8) & 0xFF);
+        frame[23] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 16) & 0xFF);
+        frame[24] = static_cast<std::uint8_t>((fmt.default_frame_interval >> 24) & 0xFF);
+        frame[25] = 0x00; // bFrameIntervalType = 0 (continuous)
+        // usbvideo.sys!DumpAndValidateFrameUncompressed 对连续帧间隔有三项整除检查：
+        //   if (step != 0) {
+        //       if (max <= min)                → STATUS_INVALID_PARAMETER
+        //       if ((max - min) % step != 0)   → STATUS_INVALID_PARAMETER
+        //   }
+        // 因此 max 必须是 min + N*step（N 为正整数），否则 Windows 直接 Code 10。
+        // min/max/step 均取自 VideoSource，step=min 保证 (max-min) 是 min 的整数倍。
+        for (int i = 0; i < 4; ++i)
+            frame[frame_base + i] = static_cast<std::uint8_t>((min_iv >> (i * 8)) & 0xFF);
+        for (int i = 0; i < 4; ++i)
+            frame[frame_base + 4 + i] = static_cast<std::uint8_t>((max_iv >> (i * 8)) & 0xFF);
+        for (int i = 0; i < 4; ++i)
+            frame[frame_base + 8 + i] = static_cast<std::uint8_t>((step_iv >> (i * 8)) & 0xFF);
+    }
 
     // Color Matching: Uncompressed 和 MJPEG 强制（各自 payload spec §3）
     bool has_color = (cat == UvcFormatCategory::Uncompressed || cat == UvcFormatCategory::Mjpeg);

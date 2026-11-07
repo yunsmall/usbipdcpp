@@ -338,3 +338,54 @@ TEST(TestUvcHandler, ShortCommitFallsBackToDefaults) {
     EXPECT_EQ(env.stub.submits.back().status, 0u);
     EXPECT_GT(env.stub.submits.back().actual_length, 0u);
 }
+
+TEST(UvcDescriptors, H264FormatAndFrameDescriptorFollowPayloadSpec) {
+    // UVC 1.5 H.264 Payload Table 3-1/3-2：格式描述符固定 52 字节且没有
+    // guidFormat 字段（GUID 只属于 Uncompressed/Frame-Based 格式）；
+    // 帧描述符的 wWidth 从 offset 4 开始，帧间隔数量/列表在 43/44
+    StringPool pool;
+    UsbInterface intf{.interface_class = 0x0E, .interface_subclass = 0x02, .interface_protocol = 0x00};
+    auto src = std::make_unique<StubSource>(64);
+    src->fmt = {.fourcc = UvcFourCC::H264,
+                .width = 1280,
+                .height = 720,
+                .max_frame_size = 4096,
+                .default_frame_interval = 333333,
+                .min_frame_interval = 333333,
+                .max_frame_interval = 666666,
+                .bits_per_pixel = 0};
+    UvcVideoStreamingHandler handler(intf, pool, std::move(src));
+    handler.on_setup_interface_handlers();
+    auto desc = handler.get_class_specific_descriptor();
+
+    ASSERT_EQ(desc.size(), 14u + 52u + 52u);
+    EXPECT_EQ(desc[4] | (desc[5] << 8), desc.size()); // VS Input Header wTotalLength
+
+    const auto *format = desc.data() + 14;
+    EXPECT_EQ(format[0], 52); // bLength
+    EXPECT_EQ(format[1], CS_INTERFACE);
+    EXPECT_EQ(format[2], VS_DESC_FORMAT_H264); // 0x13
+    EXPECT_EQ(format[4], 1); // bNumFrameDescriptors
+    EXPECT_EQ(format[5], 1); // bDefaultFrameIndex
+    // offset 6 起是编码器能力/吞吐量字段，不能出现 GUID 数据
+    for (int i = 6; i < 52; ++i) {
+        EXPECT_EQ(format[i], 0) << "format offset " << i;
+    }
+
+    const auto *frame = format + 52;
+    EXPECT_EQ(frame[0], 52); // bLength = 44 + 2*4
+    EXPECT_EQ(frame[1], CS_INTERFACE);
+    EXPECT_EQ(frame[2], VS_DESC_FRAME_H264); // 0x14
+    EXPECT_EQ(frame[3], 1); // bFrameIndex
+    EXPECT_EQ(frame[4] | (frame[5] << 8), 1280); // wWidth
+    EXPECT_EQ(frame[6] | (frame[7] << 8), 720); // wHeight
+    EXPECT_EQ(frame[8] | (frame[9] << 8), 1); // wSARwidth
+    EXPECT_EQ(frame[10] | (frame[11] << 8), 1); // wSARheight
+    EXPECT_EQ(frame[12] | (frame[13] << 8), 0x4240); // wProfile: Constrained Baseline
+    EXPECT_EQ(frame[14], 0x28); // bLevelIDC: Level 4.0
+    // bmSupportedUsages（offset 17-20）D16 必须为 1
+    EXPECT_EQ(frame[17] | (frame[18] << 8) | (frame[19] << 16) | (frame[20] << 24), 0x00010000u);
+    EXPECT_EQ(frame[43], 2); // bNumFrameIntervals
+    EXPECT_EQ(frame[44] | (frame[45] << 8) | (frame[46] << 16) | (frame[47] << 24), 333333u);
+    EXPECT_EQ(frame[48] | (frame[49] << 8) | (frame[50] << 16) | (frame[51] << 24), 666666u);
+}
