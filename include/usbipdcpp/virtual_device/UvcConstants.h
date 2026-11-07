@@ -140,8 +140,12 @@ constexpr std::uint8_t VS_COLOR_MATCHING_LEN = 6;
 // Windows usbvideo.sys 按规范位解释；Linux uvcvideo 驱动用自定义位
 // （UVC_STREAM_FID=0x80/UVC_STREAM_EOF=0x40，与规范相反），设备侧必须按规范发
 constexpr std::uint8_t UVC_PAYLOAD_HEADER_SIZE = 2;
-constexpr std::uint8_t UVC_PAYLOAD_HEADER_FID = 0x01; // D0: Frame ID bit
-constexpr std::uint8_t UVC_PAYLOAD_HEADER_EOF = 0x80; // D7: End of Frame
+constexpr std::uint8_t UVC_PAYLOAD_HEADER_FID = 0x01; // D0: Frame ID
+// UVC 1.5 §2.4.3.3 Table 2-5：D1 = End of Frame；D7 是 End of header，两者不能混用
+constexpr std::uint8_t UVC_PAYLOAD_HEADER_EOF = 0x02; // D1: End of Frame
+// D7 = End of header：本实现每包只有一个 header group（2 字节头），恒置位
+// （对齐内核 gadget uvc_video.c：data[1] = UVC_STREAM_EOH | fid）
+constexpr std::uint8_t UVC_PAYLOAD_HEADER_EOH = 0x80; // D7: End of header
 
 // ==================== 固定长度描述符结构体 ====================
 // UVC 1.5 描述符长度由规范硬性规定，用 packed 结构体表示，

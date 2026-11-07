@@ -42,6 +42,9 @@ struct StubSource : VideoSource {
     VideoFormatInfo current_format() const override { return fmt; }
     bool set_format(std::uint32_t fourcc, std::uint16_t width, std::uint16_t height,
                     std::uint32_t frame_interval) override {
+        if (reject_format) {
+            return false;
+        }
         fmt = {.fourcc = fourcc,
                .width = width,
                .height = height,
@@ -68,6 +71,7 @@ struct StubSource : VideoSource {
     std::uint32_t interval = 333333;
     data_type data;
     bool fail_next = false;
+    bool reject_format = false;
 };
 
 struct UvcTestEnv {
@@ -165,11 +169,11 @@ TEST(TestUvcHandler, IsoInServesFrameWithHeaders) {
 
     auto *trx = GenericTransfer::from_handle(ret->transfer.get());
     ASSERT_EQ(trx->iso_descriptors.size(), 4u);
-    // 第一包：header(2) + 全部帧数据，FID(0x01) + EOF(0x80)
+    // 第一包：header(2) + 全部帧数据，FID(0x01) + EOH(0x80) + EOF(0x02)
     EXPECT_EQ(trx->iso_descriptors[0].actual_length, 66u);
     EXPECT_EQ(trx->iso_descriptors[0].status, 0); // 初始 -EXDEV，已清零
     EXPECT_EQ(trx->data[0], UVC_PAYLOAD_HEADER_SIZE);
-    EXPECT_EQ(trx->data[1], UVC_PAYLOAD_HEADER_FID | UVC_PAYLOAD_HEADER_EOF);
+    EXPECT_EQ(trx->data[1], UVC_PAYLOAD_HEADER_EOH | UVC_PAYLOAD_HEADER_FID | UVC_PAYLOAD_HEADER_EOF);
     data_type expected_frame(64);
     for (std::size_t i = 0; i < 64; i++) {
         expected_frame[i] = static_cast<std::uint8_t>(i);
@@ -210,6 +214,25 @@ TEST(TestUvcHandler, IsoPacketOutsideTransferBufferIsSkipped) {
     ASSERT_EQ(resp->iso_descriptors.size(), static_cast<std::size_t>(num_packets));
     EXPECT_EQ(resp->iso_descriptors[0].actual_length, 0u);
     EXPECT_EQ(resp->iso_descriptors[1].actual_length, 66u); // 2 字节 header + 64 字节帧
+}
+
+TEST(TestUvcHandler, CommitRejectedFormatStalls) {
+    // 源端不接受提交的帧间隔：COMMIT 必须 STALL 且不进入已提交状态，
+    // 不能置 committed_ 让主机以为已按新参数开流（流仍用旧格式）
+    UvcTestEnv env;
+    env.source->reject_format = true;
+    env.start_streaming();
+
+    // start_streaming 的最后一个提交是 COMMIT 应答（seqnum 1）
+    ASSERT_FALSE(env.stub.submits.empty());
+    const auto &ack = env.stub.submits.back();
+    EXPECT_EQ(ack.header.seqnum, 1u);
+    EXPECT_EQ(ack.status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // 未提交成功：iso IN 继续 STALL
+    env.deliver_iso_in(3);
+    EXPECT_EQ(env.stub.submits.back().header.seqnum, 3u);
+    EXPECT_EQ(env.stub.submits.back().status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }
 
 TEST(TestUvcHandler, FrameIntervalGateEmitsEmptyPacket) {

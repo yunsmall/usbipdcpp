@@ -734,6 +734,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
                 seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusOK), transfer_buffer_length));
     }
     else if (request == SET_CUR && is_commit) {
+        auto previous_probe = probe_data_;
         if (trx->data.size() >= 26) {
             probe_data_.deserialize(trx->data.data(), trx->data.size());
             // UVC 1.5 §4.3.1.1 Table 4-75: 同 PROBE SET_CUR，写入设备状态
@@ -752,7 +753,14 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
             }
         }
         auto fmt = source_->current_format();
-        source_->set_format(fmt.fourcc, fmt.width, fmt.height, probe_data_.dwFrameInterval);
+        if (!source_->set_format(fmt.fourcc, fmt.width, fmt.height, probe_data_.dwFrameInterval)) {
+            // 提交的帧间隔/格式源端不接受：按请求错误 STALL，并恢复提交前的
+            // probe 状态。不能置 committed_ 让主机以为已按新参数开流——后续流
+            // 仍用旧格式，帧长/时序会与主机预期不符
+            probe_data_ = std::move(previous_probe);
+            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+            return;
+        }
         committed_ = true;
         frame_buffer_.resize(source_->max_frame_size());
         frame_offset_ = 0;
@@ -831,11 +839,13 @@ void UvcVideoStreamingHandler::handle_isochronous_transfer(std::uint32_t seqnum,
 
         auto chunk = std::min(static_cast<std::size_t>(iso.length - UVC_PAYLOAD_HEADER_SIZE), frame_remaining);
 
-        std::uint8_t header_info = current_fid_ ? UVC_PAYLOAD_HEADER_FID : 0;
-        // EOF 位（D7）按 UVC 1.5 Table 2-5 规范位发：Windows usbvideo.sys 据此切帧。
-        // Linux uvcvideo 用自定义位（EOF=0x40）解释不到，但缓冲满强制切帧兜底，行为不变
+        // UVC 1.5 §2.4.3.3 Table 2-5：D7 = End of header（每包恒置位），
+        // D0 = Frame ID，末包再置 D1 = End of Frame。Linux uvcvideo /
+        // Windows usbvideo.sys 都靠 D1 切帧（对齐内核 gadget uvc_video.c）
+        std::uint8_t header_info = UVC_PAYLOAD_HEADER_EOH |
+                                   (current_fid_ ? UVC_PAYLOAD_HEADER_FID : 0);
         if (frame_offset_ + chunk >= frame_buffer_.size())
-            header_info |= UVC_PAYLOAD_HEADER_EOF; // EOF
+            header_info |= UVC_PAYLOAD_HEADER_EOF; // End of Frame
 
         auto *dst = &data[iso.offset];
         dst[0] = UVC_PAYLOAD_HEADER_SIZE;
