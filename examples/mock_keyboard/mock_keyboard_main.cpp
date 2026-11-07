@@ -10,9 +10,12 @@ using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("mock_keyboard", "USB/IP virtual keyboard device");
+    // e2e 测试只验证枚举时必须关掉自动按键，否则会持续向宿主机输入 A 键
+    opts.add_options()("no-demo", "Do not inject key presses, just enumerate");
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
+    bool demo = result.count("no-demo") == 0;
 
     spdlog::set_level(spdlog::level::trace);
 
@@ -39,23 +42,28 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Connect with: usbip attach -r <host> -b {}", busid);
     SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
-    // 每隔一秒按下/释放 A 键
+    // 每隔一秒按下/释放 A 键（--no-demo 时不启动）
     std::atomic<bool> running{true};
-    std::thread key_thread([&]() {
-        while (running) {
-            kb.press_key(HIDKey::A);
-            SPDLOG_INFO("Key A pressed");
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::thread key_thread;
+    if (demo) {
+        key_thread = std::thread([&]() {
+            while (running) {
+                kb.press_key(HIDKey::A);
+                SPDLOG_INFO("Key A pressed");
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-            kb.release_key(HIDKey::A);
-            SPDLOG_INFO("Key A released");
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        }
-    });
+                kb.release_key(HIDKey::A);
+                SPDLOG_INFO("Key A released");
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+        });
+    }
 
     wait_for_exit();
     running = false;
-    key_thread.join();
+    if (key_thread.joinable()) {
+        key_thread.join();
+    }
     server.stop();
 
     return 0;

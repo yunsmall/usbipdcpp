@@ -12,9 +12,12 @@ using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("mock_gamepad", "USB/IP virtual gamepad device");
+    // e2e 测试只验证枚举时可以关掉演示线程
+    opts.add_options()("no-demo", "Do not send demo input, just enumerate");
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
+    bool demo = result.count("no-demo") == 0;
 
     spdlog::set_level(spdlog::level::info);
 
@@ -43,36 +46,41 @@ int main(int argc, char **argv) {
 
     // 演示线程：D-pad 旋转 + 左摇杆画圆
     std::atomic<bool> running{true};
-    std::thread demo_thread([&]() {
-        constexpr int steps = 16;
-        int step = 0;
-        while (running) {
-            // D-pad 旋转
-            auto hat = static_cast<GamepadHandler::HatDirection>(step % 8);
-            gp.set_hat(hat);
+    std::thread demo_thread;
+    if (demo) {
+        demo_thread = std::thread([&]() {
+            constexpr int steps = 16;
+            int step = 0;
+            while (running) {
+                // D-pad 旋转
+                auto hat = static_cast<GamepadHandler::HatDirection>(step % 8);
+                gp.set_hat(hat);
 
-            // 左摇杆画圆
-            double angle = step * 2.0 * std::numbers::pi / steps;
-            int16_t x = static_cast<int16_t>(std::sin(angle) * 16384);
-            int16_t y = static_cast<int16_t>(std::cos(angle) * 16384);
-            gp.set_axis(0, x);
-            gp.set_axis(1, y);
+                // 左摇杆画圆
+                double angle = step * 2.0 * std::numbers::pi / steps;
+                int16_t x = static_cast<int16_t>(std::sin(angle) * 16384);
+                int16_t y = static_cast<int16_t>(std::cos(angle) * 16384);
+                gp.set_axis(0, x);
+                gp.set_axis(1, y);
 
-            // 按下按钮 0（A 键）
-            gp.set_button(0, step % 2 == 0);
+                // 按下按钮 0（A 键）
+                gp.set_button(0, step % 2 == 0);
 
-            step = (step + 1) % steps;
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-        gp.release_all_buttons();
-        gp.set_hat(GamepadHandler::HatDirection::Center);
-        gp.set_axis(0, 0);
-        gp.set_axis(1, 0);
-    });
+                step = (step + 1) % steps;
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            gp.release_all_buttons();
+            gp.set_hat(GamepadHandler::HatDirection::Center);
+            gp.set_axis(0, 0);
+            gp.set_axis(1, 0);
+        });
+    }
 
     wait_for_exit();
     running = false;
-    demo_thread.join();
+    if (demo_thread.joinable()) {
+        demo_thread.join();
+    }
     server.stop();
 
     return 0;

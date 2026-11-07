@@ -14,10 +14,13 @@ using namespace usbipdcpp;
 int main(int argc, char **argv) {
     auto opts = make_example_options("mock_mouse", "USB/IP virtual mouse device");
     opts.add_options()("circle", "Move cursor in a circle pattern");
+    // e2e 测试只验证枚举时必须关掉自动移动，否则会干扰宿主机光标
+    opts.add_options()("no-demo", "Do not move the cursor or click, just enumerate");
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
     bool circle_mode = result.count("circle") > 0;
+    bool demo = result.count("no-demo") == 0;
 
     spdlog::set_level(spdlog::level::trace);
 
@@ -50,36 +53,41 @@ int main(int argc, char **argv) {
     SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
 
     std::atomic_bool running{true};
-    std::thread mouse_thread([&]() {
-        if (circle_mode) {
-            const double step = 5.0;
-            const int steps_per_circle = 60;
-            int i = 0;
-            while (running) {
-                double angle = 2.0 * std::numbers::pi * i / steps_per_circle;
-                auto dx = static_cast<std::int8_t>(-step * std::sin(angle));
-                auto dy = static_cast<std::int8_t>(step * std::cos(angle));
-                if (dx != 0 || dy != 0)
-                    mouse.move(dx, dy);
-                i = (i + 1) % steps_per_circle;
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::thread mouse_thread;
+    if (demo) {
+        mouse_thread = std::thread([&]() {
+            if (circle_mode) {
+                const double step = 5.0;
+                const int steps_per_circle = 60;
+                int i = 0;
+                while (running) {
+                    double angle = 2.0 * std::numbers::pi * i / steps_per_circle;
+                    auto dx = static_cast<std::int8_t>(-step * std::sin(angle));
+                    auto dy = static_cast<std::int8_t>(step * std::cos(angle));
+                    if (dx != 0 || dy != 0)
+                        mouse.move(dx, dy);
+                    i = (i + 1) % steps_per_circle;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
             }
-        }
-        else {
-            bool pressed = false;
-            while (running) {
-                pressed = !pressed;
-                mouse.set_left_button(pressed);
-                SPDLOG_INFO("Left button: {}", pressed ? "PRESSED" : "RELEASED");
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+            else {
+                bool pressed = false;
+                while (running) {
+                    pressed = !pressed;
+                    mouse.set_left_button(pressed);
+                    SPDLOG_INFO("Left button: {}", pressed ? "PRESSED" : "RELEASED");
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
             }
-        }
-    });
+        });
+    }
 
     wait_for_exit();
 
     running = false;
-    mouse_thread.join();
+    if (mouse_thread.joinable()) {
+        mouse_thread.join();
+    }
     server.stop();
 
     return 0;
