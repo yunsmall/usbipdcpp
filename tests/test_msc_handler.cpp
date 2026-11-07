@@ -138,6 +138,40 @@ CSW csw_from_submit(const UsbIpResponse::UsbIpRetSubmit &ret) {
     return csw;
 }
 
+/// 可注入短读/短写的后端：get_direct_buffer 恒为 nullptr，强制走
+/// staging 拷贝路径（短读写只在这条路径上能观察到）
+class FailingBackend : public StorageBackend {
+public:
+    explicit FailingBackend(std::unique_ptr<MemoryBackend> inner) : inner_(std::move(inner)) {
+    }
+
+    std::size_t read(std::uint64_t lba, std::uint16_t count, void *buffer) override {
+        if (short_read)
+            return 0;
+        return inner_->read(lba, count, buffer);
+    }
+
+    std::size_t write(std::uint64_t lba, std::uint16_t count, const void *data) override {
+        if (short_write)
+            return 0;
+        return inner_->write(lba, count, data);
+    }
+
+    std::uint64_t block_count() const override {
+        return inner_->block_count();
+    }
+
+    std::uint32_t block_size() const override {
+        return inner_->block_size();
+    }
+
+    bool short_read = false;
+    bool short_write = false;
+
+private:
+    std::unique_ptr<MemoryBackend> inner_;
+};
+
 } // namespace
 
 TEST(TestMscHandler, Read10ServesBlocksThenCsw) {
@@ -424,8 +458,8 @@ TEST(TestMscHandler, InquiryStandardReturnsIdentifiers) {
     auto data = data_from_submit(stub.submits[0]);
     EXPECT_EQ(data[0], 0x00); // 直接访问块设备
     EXPECT_EQ(data[1], 0x80); // 可移动介质
-    EXPECT_EQ(data[2], 0x07); // SPC-4
-    EXPECT_EQ(data[3], 0x12); // HiSup=1, 响应格式 2
+    EXPECT_EQ(data[2], 0x07); // SPC-5
+    EXPECT_EQ(data[3], 0x02); // HiSup=0（平坦寻址）、响应格式 2
     EXPECT_EQ(data[4], 31);   // 附加长度
     EXPECT_EQ(std::string(data.begin() + 8, data.begin() + 16), "TestVend"); // 8 字符正好
     EXPECT_EQ(std::string(data.begin() + 16, data.begin() + 32), "TestProduct1234 "); // 15 字符补 1 空格
@@ -455,6 +489,131 @@ TEST(TestMscHandler, ReadCapacity10ReportsCapacity) {
     ASSERT_EQ(stub.submits[0].actual_length, 8u);
     auto data = data_from_submit(stub.submits[0]);
     EXPECT_EQ(data, (data_type{0, 0, 0, 7, 0, 0, 2, 0})); // last_lba=7, block_size=512
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, ReadCapacityWithoutBackendReportsOneBlock) {
+    // backend 为空是设备配置错误：READ CAPACITY 不能解引用空指针，
+    // 按 1 个 512 字节块报告（块数 0 时同样不能回绕成 0xFFFFFFFF 个块）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, nullptr);
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::ReadCapacity10;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5556, 0x80, cdb, 8));
+
+    deliver_in_request(*fixture.msc, 2, 8, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].actual_length, 8u);
+    EXPECT_EQ(data_from_submit(stub.submits[0]), (data_type{0, 0, 0, 0, 0, 0, 2, 0}));
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, ReadCapacity16WithoutBackendReportsOneBlock) {
+    // READ CAPACITY(16) 同样不能解引用空 backend（12 字节：8 字节 LBA + 4 字节块大小）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, nullptr);
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::ReadCapacity16;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5557, 0x80, cdb, 12));
+
+    deliver_in_request(*fixture.msc, 2, 12, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].actual_length, 12u);
+    EXPECT_EQ(data_from_submit(stub.submits[0]),
+              (data_type{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0}));
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, ReadCapacityZeroBlockBackendDoesNotWrapLastLba) {
+    // 空镜像 block_count()==0：last_lba 必须是 0，不能是 block_count()-1 回绕出的
+    // 0xFFFFFFFF（主机会据此建出 2TB 卷）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(0));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::ReadCapacity10;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5558, 0x80, cdb, 8));
+
+    deliver_in_request(*fixture.msc, 2, 8, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].actual_length, 8u);
+    EXPECT_EQ(data_from_submit(stub.submits[0]), (data_type{0, 0, 0, 0, 0, 0, 2, 0}));
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, Read10ShortReadFailsCsw) {
+    // 后端短读（镜像截断/I/O 错误）：命令失败，CSW status=1，
+    // residue = 应传未传字节数（数据阶段一个字节都没发）
+    StringPool string_pool;
+    auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
+    backend->short_read = true;
+    auto fixture = make_msc_device(string_pool, std::move(backend));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5560, 0x80, read10_cdb(0, 2), 1024));
+
+    deliver_in_request(*fixture.msc, 2, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].actual_length, 13u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 1u); // failed
+    EXPECT_EQ(csw.dCSWDataResidue, 1024u);
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, Write10ShortWriteFailsCsw) {
+    // 后端短写（磁盘满/I/O 错误）：数据阶段已完成，但必须回 CHECK CONDITION，
+    // 不能让主机误以为数据已落盘
+    StringPool string_pool;
+    auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
+    backend->short_write = true;
+    auto fixture = make_msc_device(string_pool, std::move(backend));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5561, 0x00, write10_cdb(0, 1), 512));
+    deliver_out_data(*fixture.msc, 2, data_type(512, 0x5A));
+
+    deliver_in_request(*fixture.msc, 3, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].actual_length, 13u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 1u); // failed
+    EXPECT_EQ(csw.dCSWDataResidue, 512u);
 
     fixture.msc->on_disconnection(ec);
 }

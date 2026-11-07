@@ -99,8 +99,8 @@ inline std::uint64_t get_be64(const std::uint8_t *p) {
 struct InquiryData {
     std::uint8_t device_type;        // byte 0：0x00 = 直接访问块设备
     std::uint8_t rmb;                // byte 1：bit7 = 可移动介质
-    std::uint8_t version;            // byte 2：0x07 = SPC-4
-    std::uint8_t hisup_format;       // byte 3：bit7 = HiSup，bit3-0 = 响应数据格式
+    std::uint8_t version;            // byte 2：0x07 = SPC-5
+    std::uint8_t hisup_format;       // byte 3：bit4 = HiSup，bit3-0 = 响应数据格式
     std::uint8_t additional_length;  // byte 4：附加长度 = 31
     std::uint8_t reserved[2];        // byte 5-6
     std::uint8_t cmdque;             // byte 7：bit1 = 命令队列

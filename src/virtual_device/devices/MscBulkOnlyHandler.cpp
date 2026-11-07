@@ -194,8 +194,10 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                         };
                         InquiryData inquiry{};
                         inquiry.rmb = 0x80; // 可移动介质
-                        inquiry.version = 0x07; // SPC-4
-                        inquiry.hisup_format = 0x12; // HiSup=1, Response Format=2
+                        inquiry.version = 0x07; // SPC-5（VERSION 字段 07h）
+                        // byte 3：bit4 = HiSup（层次 LUN 寻址），bit3-0 = 响应数据格式。
+                        // 本设备只有 LUN 0、用平坦寻址，HiSup=0；格式 2 是 SPC-5 定义
+                        inquiry.hisup_format = 0x02;
                         inquiry.additional_length = sizeof(InquiryData) - 5;
                         inquiry.cmdque = 0x02; // CmdQue=1（byte 7 bit1）
                         std::memcpy(inquiry.vendor_id, pad(config_.vendor, 8).c_str(), 8);
@@ -316,9 +318,13 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 case ScsiCmd::ReadCapacity16: {
                     // READ CAPACITY (16)
                     SPDLOG_DEBUG("READ CAPACITY (16)");
+                    // backend_ 为空（设备配置错误）时不能解引用；块数为 0 时
+                    // 也不能让 block_count()-1 回绕成 2^64-1（主机会据此建出
+                    // 超大卷），这两种情况都按"1 个块"报告
+                    const auto blocks = backend_ ? backend_->block_count() : 0;
                     ReadCapacity16Data buf{};
-                    put_be64(buf.last_lba, backend_ ? backend_->block_count() - 1 : 0);
-                    put_be32(buf.block_size, backend_->block_size());
+                    put_be64(buf.last_lba, blocks > 0 ? blocks - 1 : 0);
+                    put_be32(buf.block_size, backend_ ? backend_->block_size() : 512);
                     auto len = std::min(transfer_len, std::uint32_t(12)); // 低 12 字节即可（LBA+块大小）
                     staging_offset_ = 0;
                     staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
@@ -328,9 +334,11 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 }
                 case ScsiCmd::ReadCapacity10: {
                     // READ CAPACITY (10)
+                    const auto blocks = backend_ ? backend_->block_count() : 0;
                     ReadCapacity10Data buf{};
-                    put_be32(buf.last_lba, static_cast<std::uint32_t>(backend_ ? backend_->block_count() - 1 : 0));
-                    put_be32(buf.block_size, backend_->block_size());
+                    put_be32(buf.last_lba,
+                             static_cast<std::uint32_t>(blocks > 0 ? blocks - 1 : 0));
+                    put_be32(buf.block_size, backend_ ? backend_->block_size() : 512);
                     auto len = std::min(transfer_len, std::uint32_t(sizeof(ReadCapacity10Data)));
                     staging_offset_ = 0;
                     staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
@@ -365,7 +373,17 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                         else {
                             staging_data_.resize(read_total_size_ =
                                                          static_cast<std::size_t>(count) * backend_->block_size());
-                            backend_->read(lba, count, staging_data_.data());
+                            auto read_bytes = backend_->read(lba, count, staging_data_.data());
+                            // 后端可能短读（镜像被截断、I/O 错误）：必须回
+                            // CHECK CONDITION，不能把补零/残留数据当成功发给主机
+                            if (read_bytes < read_total_size_) {
+                                SPDLOG_ERROR("READ10 LBA={} count={} 短读：期望{}字节，实际{}字节", lba, count,
+                                             read_total_size_, read_bytes);
+                                staging_data_.clear();
+                                command_failed_ = true;
+                                state_ = BotState::Status;
+                                break;
+                            }
                         }
                         state_ = BotState::DataIn;
                     }
@@ -544,7 +562,13 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     auto lba = write_same_lba_;
                     auto cnt = write_same_count_;
                     while (cnt > 0) {
-                        backend_->write(lba, 1, staging_data_.data());
+                        auto written = backend_->write(lba, 1, staging_data_.data());
+                        // 短写必须回 CHECK CONDITION（同 READ/WRITE 的短读写处理）
+                        if (written < bs) {
+                            SPDLOG_ERROR("WRITE SAME LBA={} 短写：期望{}字节，实际{}字节", lba, bs, written);
+                            command_failed_ = true;
+                            break;
+                        }
                         lba += 1;
                         cnt -= 1;
                     }
@@ -567,7 +591,15 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 // 非 mmap WRITE 回退：累积 staging 后写盘
                 if (write_lba_ + write_count_ <= backend_->block_count()) {
                     if (staging_data_.size() >= static_cast<std::size_t>(write_count_) * backend_->block_size()) {
-                        backend_->write(write_lba_, write_count_, staging_data_.data());
+                        const auto expected = static_cast<std::size_t>(write_count_) * backend_->block_size();
+                        auto written = backend_->write(write_lba_, write_count_, staging_data_.data());
+                        // 短写（磁盘满、I/O 错误）必须回 CHECK CONDITION，
+                        // 否则主机以为数据已落盘
+                        if (written < expected) {
+                            SPDLOG_ERROR("WRITE10 LBA={} count={} 短写：期望{}字节，实际{}字节", write_lba_,
+                                         write_count_, expected, written);
+                            command_failed_ = true;
+                        }
                         staging_data_.clear();
                         data_residue_ = 0;
                         state_ = BotState::Status;
