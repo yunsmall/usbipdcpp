@@ -866,3 +866,35 @@ TEST(TestMscHandler, SetInterfaceRejectsNonZeroAlt) {
     fixture.msc->request_set_interface(0, &status);
     EXPECT_EQ(status, 0u);
 }
+
+TEST(TestMscHandler, ReadWriteLbaPlusCountOverflowRejected) {
+    // lba=0xFFFFFFFF 时 uint32_t 的 lba+count 会回绕成小值，越界 CDB 曾能
+    // 绕过容量检查直达后端缓冲区。修复后按 64 位比较回 CHECK CONDITION
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(1024));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // READ10：lba=0xFFFFFFFF + 1 块，回绕后为 0
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x6667, 0x80, read10_cdb(0xFFFFFFFFu, 1), 512));
+    deliver_in_request(*fixture.msc, 2, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto csw = csw_from_submit(stub.submits[0]);
+    EXPECT_EQ(csw.bCSWStatus, 1u); // failed
+    EXPECT_EQ(csw.dCSWDataResidue, 512u);
+
+    // WRITE10：同样的回绕路径
+    deliver_out_data(*fixture.msc, 3, make_cbw(0x6668, 0x00, write10_cdb(0xFFFFFFFFu, 1), 512));
+    deliver_in_request(*fixture.msc, 4, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    csw = csw_from_submit(stub.submits[1]);
+    EXPECT_EQ(csw.bCSWStatus, 1u);
+    EXPECT_EQ(csw.dCSWDataResidue, 512u);
+
+    fixture.msc->on_disconnection(ec);
+}

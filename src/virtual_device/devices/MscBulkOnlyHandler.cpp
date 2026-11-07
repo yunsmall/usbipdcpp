@@ -354,7 +354,9 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     if (count == 0)
                         count = 256;
 
-                    if (lba + count > (backend_ ? backend_->block_count() : 0)) {
+                    // 64 位比较：lba 接近 0xFFFFFFFF 时 uint32_t 的 lba+count 会
+                    // 回绕，越界 CDB 可绕过检查直接读写后端缓冲区
+                    if (static_cast<std::uint64_t>(lba) + count > (backend_ ? backend_->block_count() : 0)) {
                         SPDLOG_WARN("SCSI cmd 0x{:02X} LBA={} count={} 超出范围", cmd, lba, count);
                         command_failed_ = true;
                         state_ = BotState::Status;
@@ -589,7 +591,8 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
             }
             else {
                 // 非 mmap WRITE 回退：累积 staging 后写盘
-                if (write_lba_ + write_count_ <= backend_->block_count()) {
+                // （同样用 64 位比较，防 write_lba_+write_count_ 回绕绕过范围检查）
+                if (static_cast<std::uint64_t>(write_lba_) + write_count_ <= backend_->block_count()) {
                     if (staging_data_.size() >= static_cast<std::size_t>(write_count_) * backend_->block_size()) {
                         const auto expected = static_cast<std::size_t>(write_count_) * backend_->block_size();
                         auto written = backend_->write(write_lba_, write_count_, staging_data_.data());
