@@ -753,6 +753,10 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
                 static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
     }
     else if (request == SET_CUR && !is_commit) {
+        // 容错契约：少于 26 字节（最小解析长度）的 PROBE 数据视为不完整主机的
+        // 提交，接受但保持原 probe 状态（见 ShortCommitFallsBackToDefaults 的
+        // 同类行为）。不能改成 STALL——该容错是为兼容发送短请求的驱动保留的。
+        // 26/34/48 字节按 deserialize 的分层字段解析
         if (trx->data.size() >= 26) {
             probe_data_.deserialize(trx->data.data(), trx->data.size());
             // UVC 1.5 §4.3.1.1 Table 4-75: 设备能力字段，host 不可修改
@@ -776,6 +780,7 @@ void UvcVideoStreamingHandler::handle_non_standard_request_type_control_urb(
     }
     else if (request == SET_CUR && is_commit) {
         auto previous_probe = probe_data_;
+        // 短包容错同 PROBE：接受不完整提交并沿用当前 probe 状态
         if (trx->data.size() >= 26) {
             probe_data_.deserialize(trx->data.data(), trx->data.size());
             // UVC 1.5 §4.3.1.1 Table 4-75: 同 PROBE SET_CUR，写入设备状态

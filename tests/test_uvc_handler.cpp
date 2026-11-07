@@ -389,3 +389,26 @@ TEST(UvcDescriptors, H264FormatAndFrameDescriptorFollowPayloadSpec) {
     EXPECT_EQ(frame[44] | (frame[45] << 8) | (frame[46] << 16) | (frame[47] << 24), 333333u);
     EXPECT_EQ(frame[48] | (frame[49] << 8) | (frame[50] << 16) | (frame[51] << 24), 666666u);
 }
+
+TEST(TestUvcHandler, ShortProbeCommitTolerated) {
+    // 容错契约：短于 26 字节的 PROBE/COMMIT 视为不完整主机的提交，接受但
+    // 保持原协商状态，不 STALL（见 ShortCommitFallsBackToDefaults）
+    UvcTestEnv env;
+    for (std::uint8_t selector : {VS_PROBE_CONTROL, VS_COMMIT_CONTROL}) {
+        const SetupPacket setup{
+                .request_type = 0x21, // Class | Interface | OUT
+                .request = 0x01,      // SET_CUR
+                .value = static_cast<std::uint16_t>(selector << 8),
+                .index = 0,
+                .length = 4,
+        };
+        const data_type short_data(4, 0);
+        env.handler.handle_non_standard_request_type_control_urb(
+                1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 4, setup,
+                make_cmd_submit(env.op, 1, 0x00, UsbIpDirection::Out, 4, setup, short_data).transfer, env.ec);
+        ASSERT_FALSE(env.ec);
+        ASSERT_EQ(env.stub.submits.size(), 1u);
+        EXPECT_EQ(env.stub.submits[0].status, 0u);
+        env.stub.submits.clear();
+    }
+}
