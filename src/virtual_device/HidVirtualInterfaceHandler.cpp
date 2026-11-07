@@ -136,8 +136,10 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                         seqnum, status, static_cast<std::uint32_t>(trx->actual_length), std::move(transfer)));
             }
             else {
-                // 从 transfer_handle 获取 OUT 数据
-                data_type out_data(trx->data.begin(), trx->data.begin() + transfer_buffer_length);
+                // 从 transfer_handle 获取 OUT 数据：主机可能只发短包，
+                // 声明的 wLength 不能超过实际收到的字节数
+                const auto copy_len = std::min<std::size_t>(transfer_buffer_length, trx->data.size());
+                data_type out_data(trx->data.begin(), trx->data.begin() + copy_len);
                 switch (request) {
                     case HIDRequest::SetIdle: {
                         request_set_idle(setup_packet.value >> 8, &status);

@@ -832,6 +832,56 @@ TEST(VirtualDeviceStandard, InterfaceRequestsRouteByInterfaceNumber) {
 
 // ==================== GET_DESCRIPTOR / SYNCH_FRAME ====================
 
+// ==================== SET_DESCRIPTOR 短包 ====================
+
+namespace {
+
+/// 记录 SET_DESCRIPTOR 收到的数据，用于检查截取长度
+class SetDescriptorProbe : public SimpleVirtualDeviceHandler {
+public:
+    using SimpleVirtualDeviceHandler::SimpleVirtualDeviceHandler;
+
+    void request_set_descriptor(std::uint8_t desc_type, std::uint8_t desc_index, std::uint16_t language_id,
+                                std::uint16_t descriptor_length, const data_type &descriptor,
+                                std::uint32_t *p_status) override {
+        (void) desc_type;
+        (void) desc_index;
+        (void) language_id;
+        (void) descriptor_length;
+        seen = descriptor;
+        *p_status = 0;
+    }
+
+    data_type seen;
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, SetDescriptorTruncatesToReceivedBytes) {
+    // 主机声明 wLength=16 但实际只收到 4 字节（控制 OUT 短包）：不能按声明
+    // 长度越界构造数据，传给 request_set_descriptor 的只能是从实际数据里截的
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto device_handler = device->with_handler<SetDescriptorProbe>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket set{.request_type = 0x00, .request = 7, .value = 0x0100, .index = 0, .length = 16};
+    auto cmd = make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 16, set, data_type(16, 0xAA));
+    GenericTransfer::from_handle(cmd.transfer.get())->data.resize(4); // 模拟短包
+    device_handler->receive_urb(std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Full), std::nullopt, ec);
+    ASSERT_FALSE(ec);
+
+    EXPECT_EQ(device_handler->seen.size(), 4u);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+
+    device_handler->on_disconnection(ec);
+}
+
 TEST(VirtualDeviceStandard, UnknownDescriptorTypeStalls) {
     // USB 2.0 §9.4.3：设备不支持请求的描述符时回 Request Error
     StringPool pool;
