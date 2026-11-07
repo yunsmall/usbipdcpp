@@ -512,6 +512,41 @@ TEST(TestPipeDeviceHandler, UnlinkPendingRequest) {
     fixture.pipe->on_disconnection(ec);
 }
 
+TEST(TestPipeDeviceHandler, UnlinkControlInAlsoClearsSetupNotification) {
+    // 控制 IN 请求同时在 IN 通道挂请求、在 OUT 通道挂纯 setup 通知。UNLINK
+    // 必须两处一起清：否则 read() 会取到已取消的 setup，业务层按它应答的
+    // 数据会被错配给后续控制请求
+    StringPool string_pool;
+    auto fixture = make_pipe_device(string_pool);
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.pipe->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    const SetupPacket setup{
+            .request_type = 0xC1, // Vendor | Interface | IN
+            .request = 0x11,
+            .value = 0,
+            .index = 0,
+            .length = 4,
+    };
+    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x00, UsbIpDirection::In, 4, setup),
+                              fixture.device->ep0_in, std::nullopt, ec);
+    ASSERT_FALSE(ec);
+
+    fixture.pipe->handle_unlink_seqnum(1, 2);
+    ASSERT_EQ(stub.unlinks.size(), 1u);
+    EXPECT_EQ(stub.unlinks[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET));
+    EXPECT_TRUE(stub.submits.empty());
+
+    // setup 通知不能在取消后仍被 read() 取到
+    PipeXfer xfer;
+    EXPECT_FALSE(fixture.pipe->read(xfer, 50));
+    EXPECT_FALSE(xfer.setup_req.has_value());
+
+    fixture.pipe->on_disconnection(ec);
+}
+
 TEST(TestPipeDeviceHandler, UnlinkCompletedRequestReportsSuccess) {
     // UNLINK 目标已正常完成（RET_SUBMIT 已发出）：请求不在挂起队列里，
     // RET_UNLINK 回 0（URB 已完成，对齐 stub_tx.c：找不到目标回 0）

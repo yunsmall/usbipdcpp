@@ -362,17 +362,21 @@ void PipeDeviceHandler::on_pipe_control_request(const SetupPacket &setup, std::u
 
 bool PipeDeviceHandler::cancel_pipe_unlink(std::uint32_t unlink_seqnum) {
     // 挂起请求分两处：IN 请求按端点分散在各通道里，OUT 请求同理，
-    // 逐个尝试取消；应答由设备级汇总后统一提交
+    // 逐个尝试取消；应答由设备级汇总后统一提交。
+    // 不能命中一处就返回：控制 IN 请求同时占着 IN 通道（真请求）和 OUT
+    // 通道（纯 setup 通知），只清 IN 会让 read() 之后仍取到已取消的 setup，
+    // 业务层按它应答的数据会被错配给后续控制请求
     std::lock_guard lock(pipe_mutex);
+    bool cancelled = false;
     for (auto &[ep, ch]: in_channels) {
         if (ch->cancel_pending(unlink_seqnum)) {
-            return true;
+            cancelled = true;
         }
     }
     for (auto &[ep, ch]: out_channels) {
         if (ch->cancel_pending(unlink_seqnum)) {
-            return true;
+            cancelled = true;
         }
     }
-    return false;
+    return cancelled;
 }
