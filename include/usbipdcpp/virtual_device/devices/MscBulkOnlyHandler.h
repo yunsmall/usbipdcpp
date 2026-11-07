@@ -130,16 +130,10 @@ private:
 public:
     // ========== 标准请求默认实现 ==========
     // 端点 feature/status 交给基类的 ENDPOINT_HALT 状态机（USB 2.0 §9.4.5
-    // 要求中断/批量端点必须实现 Halt）；接口级 feature 基类默认 STALL
-
-    std::uint8_t request_get_interface(std::uint32_t *p_status) override {
-        *p_status = 0;
-        return 0;
-    }
-
-    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override {
-        *p_status = 0;
-    }
+    // 要求中断/批量端点必须实现 Halt）；接口级 feature 基类默认 STALL；
+    // SET/GET_INTERFACE 用基类实现——MSC 接口只有 alt 0，基类会拒绝其他
+    // alt（USB 2.0 §9.4.10：不存在的 alternate setting 回 Request Error），
+    // 不能无条件回成功
 
     std::uint16_t request_get_status(std::uint32_t *p_status) override {
         *p_status = 0;

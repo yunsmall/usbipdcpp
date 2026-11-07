@@ -263,3 +263,16 @@ TEST(VirtualDeviceHandlers, HidInputReportQueueDropsOldestOverLimit) {
     ASSERT_EQ(env.stub.submits.size(), 1u);
     EXPECT_EQ(ret_submit_data(env.stub.submits[0]), (data_type{1, 0})); // 第 2 个报告
 }
+
+TEST(VirtualDeviceHandlers, HidSetInterfaceRejectsNonZeroAlt) {
+    // USB 2.0 §9.4.10：不存在的 alternate setting 回 Request Error。
+    // HID 接口只有 alt 0，不能无条件回成功（否则与 GET_INTERFACE 返回 0 矛盾）
+    HidTestEnv env;
+    std::uint32_t status = 0;
+    env.handler.request_set_interface(1, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    status = 1;
+    env.handler.request_set_interface(0, &status);
+    EXPECT_EQ(status, 0u);
+}

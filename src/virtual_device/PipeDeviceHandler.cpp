@@ -52,8 +52,8 @@ public:
         pipe->on_pipe_control_request(setup_packet, seqnum, transfer_buffer_length, std::move(transfer));
     }
 
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {
-        pipe->on_pipe_unlink(unlink_seqnum, cmd_seqnum);
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override {
+        return pipe->cancel_pipe_unlink(unlink_seqnum);
     }
 
     // ========== 标准请求回调（未设置的回调用基类默认：接口级 feature STALL、
@@ -360,30 +360,19 @@ void PipeDeviceHandler::on_pipe_control_request(const SetupPacket &setup, std::u
     out_cv.notify_all();
 }
 
-void PipeDeviceHandler::on_pipe_unlink(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    bool cancelled = false;
-    {
-        // 挂起请求分两处：IN 请求按端点分散在各通道里，OUT 请求同理，
-        // 逐个尝试取消
-        std::lock_guard lock(pipe_mutex);
-        for (auto &[ep, ch]: in_channels) {
-            if (ch.cancel_pending(unlink_seqnum)) {
-                cancelled = true;
-                break;
-            }
-        }
-        if (!cancelled) {
-            for (auto &[ep, ch]: out_channels) {
-                if (ch.cancel_pending(unlink_seqnum)) {
-                    cancelled = true;
-                    break;
-                }
-            }
+bool PipeDeviceHandler::cancel_pipe_unlink(std::uint32_t unlink_seqnum) {
+    // 挂起请求分两处：IN 请求按端点分散在各通道里，OUT 请求同理，
+    // 逐个尝试取消；应答由设备级汇总后统一提交
+    std::lock_guard lock(pipe_mutex);
+    for (auto &[ep, ch]: in_channels) {
+        if (ch.cancel_pending(unlink_seqnum)) {
+            return true;
         }
     }
-    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
-    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
-    // 与内核 stub_tx.c 及本项目 HID/CdcAcm 的 unlink 范本一致
-    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+    for (auto &[ep, ch]: out_channels) {
+        if (ch.cancel_pending(unlink_seqnum)) {
+            return true;
+        }
+    }
+    return false;
 }

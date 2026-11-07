@@ -67,16 +67,11 @@ void usbipdcpp::HidVirtualInterfaceHandler::on_disconnection(std::error_code &ec
 
 // ========== UNLINK 处理 ==========
 
-void usbipdcpp::HidVirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum,
-                                                                 std::uint32_t cmd_seqnum) {
-    bool cancelled = input_channel.cancel_pending(unlink_seqnum);
-    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
-    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
-    // 与内核 stub_tx.c（priv->unlinking 时 RET_UNLINK 带 urb->status=-ECONNRESET，
-    // 否则 0）及 usbipd-libusb 一致，也是本项目 LibusbDeviceHandler 的 unlink
-    // 范本（trxstat2error(CANCELLED)=-ECONNRESET、找不到回 0）
-    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+bool usbipdcpp::HidVirtualInterfaceHandler::cancel_pending_urb(std::uint32_t unlink_seqnum) {
+    // 只报告是否取消，应答由设备级汇总后统一提交（多接口设备不能各回一条
+    // RET_UNLINK，否则主机收到重复应答）。内核 vudc 也是命中才回
+    // -ECONNRESET、未命中回 0（vudc_rx.c v_recv_cmd_unlink）
+    return input_channel.cancel_pending(unlink_seqnum);
 }
 
 // ========== 控制请求处理 ==========

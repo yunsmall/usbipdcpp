@@ -30,6 +30,7 @@ public:
     using VirtualDeviceHandler::get_device_qualifier_descriptor;
     using VirtualDeviceHandler::get_string_descriptor;
     using VirtualDeviceHandler::request_clear_feature;
+    using VirtualDeviceHandler::request_get_configuration;
     using VirtualDeviceHandler::request_get_status;
     using VirtualDeviceHandler::request_set_descriptor;
     using VirtualDeviceHandler::request_set_feature;
@@ -475,4 +476,319 @@ TEST(VirtualDeviceStandard, ReservedRequestTypeStalls) {
 
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+// ==================== UNLINK 多接口汇总 ====================
+
+namespace {
+
+/// 记录设备级 UNLINK 是否查询到本接口的探测 handler
+class UnlinkProbeHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override {
+        (void) unlink_seqnum;
+        ++cancel_queries;
+        return cancel_result;
+    }
+
+    bool cancel_result = false;
+    int cancel_queries = 0;
+};
+
+/// 双接口设备：一条 UNLINK 只能回一条 RET_UNLINK
+struct UnlinkEnv {
+    StringPool pool;
+    std::shared_ptr<UsbDevice> device;
+    std::unique_ptr<ProbeDevice> handler;
+    CaptureResponder stub;
+    error_code ec;
+    UnlinkProbeHandler *first = nullptr;
+    UnlinkProbeHandler *second = nullptr;
+
+    UnlinkEnv() {
+        device = std::make_shared<UsbDevice>(UsbDevice{
+                .path = "/test/unlink",
+                .busid = "1-1",
+                .bus_num = 1,
+                .dev_num = 1,
+                .speed = static_cast<std::uint32_t>(UsbSpeed::Full),
+                .vendor_id = 0x1234,
+                .product_id = 0x5678,
+                .device_bcd = 0x0100,
+                .device_class = 0x00,
+                .device_subclass = 0x00,
+                .device_protocol = 0x00,
+                .configuration_value = 1,
+                .num_configurations = 1,
+                .interfaces =
+                        {
+                                UsbInterface{.interface_class = 0xFF,
+                                             .endpoints = {{UsbEndpoint{.address = 0x81,
+                                                                        .attributes = 0x02,
+                                                                        .max_packet_size = 64,
+                                                                        .interval = 0}}}},
+                                UsbInterface{.interface_class = 0xFF,
+                                             .endpoints = {{UsbEndpoint{.address = 0x82,
+                                                                        .attributes = 0x02,
+                                                                        .max_packet_size = 64,
+                                                                        .interval = 0}}}},
+                        },
+                .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
+                .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
+        });
+        handler = std::make_unique<ProbeDevice>(*device, pool);
+        first = device->interfaces[0].with_handler<UnlinkProbeHandler>(pool).get();
+        second = device->interfaces[1].with_handler<UnlinkProbeHandler>(pool).get();
+        handler->setup_interface_handlers();
+        handler->on_new_connection(stub, ec);
+    }
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, UnlinkOnMultiInterfaceDeviceRespondsOnce) {
+    // 对齐内核 vudc v_recv_cmd_unlink：一条 UNLINK 只回一条 RET_UNLINK。
+    // 多接口设备若每个接口各自应答，主机会收到重复应答
+    UnlinkEnv env;
+    ASSERT_FALSE(env.ec);
+    env.first->cancel_result = true;
+
+    env.handler->handle_unlink_seqnum(7, 9);
+
+    ASSERT_EQ(env.stub.unlinks.size(), 1u);
+    EXPECT_EQ(env.stub.unlinks[0].header.seqnum, 9u);
+    EXPECT_EQ(env.stub.unlinks[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET));
+    // 第一个接口命中后不再查询后续接口（seqnum 全局唯一，不可能被两个接口挂起）
+    EXPECT_EQ(env.first->cancel_queries, 1);
+    EXPECT_EQ(env.second->cancel_queries, 0);
+}
+
+TEST(VirtualDeviceStandard, UnlinkQueriesAllInterfacesOnMiss) {
+    // 目标不在任何接口：所有接口都查询一次，只回一条 RET_UNLINK(0)
+    UnlinkEnv env;
+    ASSERT_FALSE(env.ec);
+
+    env.handler->handle_unlink_seqnum(7, 9);
+
+    ASSERT_EQ(env.stub.unlinks.size(), 1u);
+    EXPECT_EQ(env.stub.unlinks[0].status, 0u);
+    EXPECT_EQ(env.first->cancel_queries, 1);
+    EXPECT_EQ(env.second->cancel_queries, 1);
+}
+
+TEST(VirtualDeviceStandard, UnlinkFindsLaterInterface) {
+    UnlinkEnv env;
+    ASSERT_FALSE(env.ec);
+    env.second->cancel_result = true;
+
+    env.handler->handle_unlink_seqnum(7, 9);
+
+    ASSERT_EQ(env.stub.unlinks.size(), 1u);
+    EXPECT_EQ(env.stub.unlinks[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET));
+    EXPECT_EQ(env.first->cancel_queries, 1);
+    EXPECT_EQ(env.second->cancel_queries, 1);
+}
+
+// ==================== SET_CONFIGURATION 状态 ====================
+
+TEST(VirtualDeviceStandard, SetConfigurationZeroUnconfiguresDevice) {
+    // USB 2.0 §9.4.7：SET_CONFIGURATION(0) 让设备回到 Address 状态；
+    // §9.4.2：未配置时 GET_CONFIGURATION 必须返回 0
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto device_handler = device->with_handler<ProbeDevice>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // 新连接 = 总线复位，设备未配置
+    std::uint32_t status = 1;
+    EXPECT_EQ(device_handler->request_get_configuration(&status), 0);
+
+    // SET_CONFIGURATION(1)
+    SetupPacket set{.request_type = 0x00, .request = 9, .value = 1, .index = 0, .length = 0};
+    send_control(*device_handler, op, 1, UsbIpDirection::Out, 0, set);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+
+    // GET_CONFIGURATION 走控制传输：返回 1
+    SetupPacket get{.request_type = 0x80, .request = 8, .value = 0, .index = 0, .length = 1};
+    send_control(*device_handler, op, 2, UsbIpDirection::In, 1, get);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    EXPECT_EQ(stub.submits[1].status, 0u);
+    EXPECT_EQ(ret_submit_data(stub.submits[1]), data_type{1});
+
+    // SET_CONFIGURATION(0) → 未配置，GET_CONFIGURATION 返回 0
+    SetupPacket unset{.request_type = 0x00, .request = 9, .value = 0, .index = 0, .length = 0};
+    send_control(*device_handler, op, 3, UsbIpDirection::Out, 0, unset);
+    ASSERT_EQ(stub.submits.size(), 3u);
+    EXPECT_EQ(stub.submits[2].status, 0u);
+
+    send_control(*device_handler, op, 4, UsbIpDirection::In, 1, get);
+    ASSERT_EQ(stub.submits.size(), 4u);
+    EXPECT_EQ(stub.submits[3].status, 0u);
+    EXPECT_EQ(ret_submit_data(stub.submits[3]), data_type{0});
+
+    device_handler->on_disconnection(ec);
+}
+
+namespace {
+
+/// 记录 SET_INTERFACE 收到的 alt
+class AltProbeHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override {
+        last_alt = alternate_setting;
+        VirtualInterfaceHandler::request_set_interface(alternate_setting, p_status);
+    }
+
+    int last_alt = -1;
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, SetConfigurationResetsAlternateSettings) {
+    // USB 2.0 §9.6.5：接口默认设置恒为 alt 0；§9.1.1.5：配置时受影响接口的
+    // 端点状态/配置值复位到默认值
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {
+            {{.address = 0x81,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+            {{.address = 0x82,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 64,
+              .interval = 0}},
+    };
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto alt_handler = device->interfaces[0].with_handler<AltProbeHandler>(pool);
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device_handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // 先切到 alt 1
+    SetupPacket set_intf{.request_type = 0x01, .request = 11, .value = 1, .index = 0, .length = 0};
+    send_control(*device_handler, op, 1, UsbIpDirection::Out, 0, set_intf);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+    EXPECT_EQ(device->interfaces[0].current_altsetting, 1);
+    EXPECT_EQ(alt_handler->last_alt, 1);
+
+    // SET_CONFIGURATION(1) 后接口回到 alt 0
+    SetupPacket set_cfg{.request_type = 0x00, .request = 9, .value = 1, .index = 0, .length = 0};
+    send_control(*device_handler, op, 2, UsbIpDirection::Out, 0, set_cfg);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    EXPECT_EQ(stub.submits[1].status, 0u);
+    EXPECT_EQ(device->interfaces[0].current_altsetting, 0);
+    EXPECT_EQ(alt_handler->last_alt, 0);
+
+    device_handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, EmptyEndpointInterfaceAcceptsAltZero) {
+    // USB 2.0 §9.6.5：bNumEndpoints=0 的接口只接受默认 alt 0
+    StringPool pool;
+    UsbInterface intf{};
+    ProbeInterface handler(intf, pool);
+
+    std::uint32_t status = 1;
+    handler.request_set_interface(0, &status);
+    EXPECT_EQ(status, 0u);
+
+    status = 0;
+    handler.request_set_interface(1, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+// ==================== GET_DESCRIPTOR / SYNCH_FRAME ====================
+
+TEST(VirtualDeviceStandard, UnknownDescriptorTypeStalls) {
+    // USB 2.0 §9.4.3：设备不支持请求的描述符时回 Request Error
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket get{.request_type = 0x80, .request = 6, .value = 0x9900, .index = 0, .length = 8};
+    send_control(*device_handler, op, 1, UsbIpDirection::In, 8, get);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_EQ(stub.submits[0].actual_length, 0u);
+}
+
+namespace {
+
+/// 返回固定帧号的 SYNCH_FRAME 探测 handler
+class SynchProbeHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    std::uint16_t request_endpoint_sync_frame(std::uint8_t ep_address, std::uint32_t *p_status) override {
+        (void) ep_address;
+        *p_status = 0;
+        return 0x1234;
+    }
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, SynchFrameReturnsFrameNumber) {
+    // USB 2.0 §9.4.11：数据阶段返回 2 字节帧号（小端）
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {{{.address = 0x81,
+                        .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous),
+                        .max_packet_size = 64,
+                        .interval = 1}}};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
+    device->interfaces[0].with_handler<SynchProbeHandler>(pool);
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device_handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    device_handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket sync{.request_type = 0x82, .request = 12, .value = 0, .index = 0x81, .length = 2};
+    send_control(*device_handler, op, 1, UsbIpDirection::In, 2, sync);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+    EXPECT_EQ(stub.submits[0].actual_length, 2u);
+    EXPECT_EQ(ret_submit_data(stub.submits[0]), (data_type{0x34, 0x12}));
+}
+
+TEST(VirtualDeviceStandard, LongStringDescriptorTruncatesTo255Bytes) {
+    // bLength 是单字节（USB 2.0 §9.5）：2 字节头 + 最多 126 个 UTF-16 字符 = 254
+    DeviceEnv env(UsbSpeed::High);
+    auto index = env.pool.new_string(std::wstring(200, L'A'));
+    ASSERT_NE(index, 0);
+
+    // 成功路径沿用调用方初始化的 0（与其它描述符函数一致，只在失败时改写）
+    std::uint32_t status = 0;
+    auto desc = env.handler->get_string_descriptor(0x0409, index, 255, &status);
+    EXPECT_EQ(status, 0u);
+    ASSERT_EQ(desc.size(), 254u);
+    EXPECT_EQ(desc[0], 254);
+    EXPECT_EQ(desc[1], static_cast<std::uint8_t>(DescriptorType::String));
 }

@@ -103,6 +103,12 @@ void VirtualDeviceHandler::setup_interface_handlers() {
 
 void VirtualDeviceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     AbstDeviceHandler::on_new_connection(current_session, ec);
+    // 新会话等价于总线复位：设备回到未配置状态（USB 2.0 §9.2.1 复位后
+    // 设备未配置），接口回到默认的 alternate setting 0（§9.6.5）
+    current_configuration = 0;
+    for (auto &intf: handle_device.interfaces) {
+        intf.current_altsetting = 0;
+    }
     // 先启动设备级传输调度器：ISO URB 入队后由它按帧节奏延迟响应
     // （对齐 vudc 的 v_start_timer）。仅启用调度器的设备启动线程
     if (use_transfer_scheduler) {
@@ -239,13 +245,22 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         }
                         case StandardRequest::SetConfiguration: {
                             SPDLOG_TRACE("设备SetConfiguration");
-                            // USB 2.0 §9.4.7：wValue 只有低字节是配置值，高字节保留
-                            request_set_configuration(setup_packet.value & 0x00FF, &status);
+                            // USB 2.0 §9.4.7：wValue 只有低字节是配置值，高字节保留；
+                            // 配置值为 0 表示让设备回到 Address 状态（未配置）
+                            auto config_value = static_cast<std::uint8_t>(setup_packet.value & 0x00FF);
+                            request_set_configuration(config_value, &status);
                             if (status == 0) {
-                                // USB 2.0 §9.4.5：SetConfiguration() 之后所有端点的
-                                // Halt 必须清零，即使配置与当前相同
+                                current_configuration = config_value;
                                 for (auto &intf: handle_device.interfaces) {
+                                    // USB 2.0 §9.6.5：接口的默认设置恒为 alt 0；
+                                    // §9.1.1.5：配置/切换 alternate setting 会把受影响
+                                    // 接口里端点的状态与配置值复位到默认值
+                                    intf.current_altsetting = 0;
                                     if (intf.handler) {
+                                        std::uint32_t alt_status = 0;
+                                        intf.handler->request_set_interface(0, &alt_status);
+                                        // USB 2.0 §9.4.5：SetConfiguration() 之后所有端点
+                                        // 的 Halt 必须清零，即使配置与当前相同
                                         intf.handler->reset_endpoint_halt_state();
                                     }
                                 }
@@ -488,7 +503,13 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                     }
                                     case StandardRequest::SynchFrame: {
                                         SPDLOG_TRACE("端点request_endpoint_sync_frame");
-                                        handler->request_endpoint_sync_frame(setup_packet.index, &status);
+                                        // USB 2.0 §9.4.11：数据阶段返回 2 字节帧号
+                                        // （控制传输数据阶段小端）
+                                        auto frame = handler->request_endpoint_sync_frame(
+                                                static_cast<std::uint8_t>(setup_packet.index), &status);
+                                        if (status == 0) {
+                                            vector_append_to_le(result, frame);
+                                        }
                                         break;
                                     }
                                     default: {
@@ -678,23 +699,33 @@ void VirtualDeviceHandler::handle_isochronous_transfer(std::uint32_t seqnum, con
 }
 
 void VirtualDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    // 等时 URB 驻留在调度器队列中，优先在那里取消（对齐 vudc_rx.c 的
-    // CMD_UNLINK：找到 → 应答 RET_UNLINK(-ECONNRESET) 且不再发 RET_SUBMIT；
-    // 找不到 → 应答 RET_UNLINK(0)，表示 URB 已完成或不存在）
-    if (use_transfer_scheduler && transfer_scheduler.cancel(unlink_seqnum)) {
-        responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-                cmd_seqnum, static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET)));
-        return;
+    // 一条 UNLINK 只应答一条 RET_UNLINK（对齐内核 vudc v_recv_cmd_unlink：
+    // 命中挂起的 URB → status=-ECONNRESET 且不再发 RET_SUBMIT；未命中
+    // （已完成/不存在）→ status=0）。多接口设备不能让每个接口 handler 各自
+    // 应答，否则主机收到多条同 cmd_seqnum 的应答。
+    // 等时 URB 先驻留在调度器队列里，优先在那里取消。
+    bool cancelled = false;
+    if (use_transfer_scheduler) {
+        cancelled = transfer_scheduler.cancel(unlink_seqnum);
     }
-    for (auto &interface: handle_device.interfaces) {
-        if (interface.handler) {
-            interface.handler->handle_unlink_seqnum(unlink_seqnum, cmd_seqnum);
+    if (!cancelled) {
+        for (auto &interface: handle_device.interfaces) {
+            if (interface.handler && interface.handler->cancel_pending_urb(unlink_seqnum)) {
+                cancelled = true;
+                break;
+            }
         }
     }
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
 }
 
 std::uint8_t VirtualDeviceHandler::request_get_configuration(std::uint32_t *p_status) {
-    return handle_device.configuration_value;
+    // USB 2.0 §9.4.2：未配置（Address 状态）返回 0，Configured 状态返回当前
+    // bConfigurationValue。不能返回 handle_device.configuration_value——那是
+    // 描述符里声明的配置值，SET_CONFIGURATION(0) 后设备实际处于未配置状态
+    *p_status = 0;
+    return current_configuration;
 }
 
 void VirtualDeviceHandler::request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
@@ -978,13 +1009,18 @@ data_type VirtualDeviceHandler::get_string_descriptor(std::uint16_t language_id,
 
     if (auto string_ret = string_pool.get_string(descriptor_index)) [[likely]] {
         auto &string = string_ret.value();
+        // bLength 是单字节（USB 2.0 §9.5），最大 255：2 字节描述符头 + 每字符
+        // 2 字节 UTF-16，最多 126 个字符。超长必须截断字符数据，否则 bLength
+        // 溢出回绕，主机按 bLength 读取会得到与数据长度不一致的描述符
+        constexpr std::size_t max_chars = (255 - 2) / 2;
+        auto chars = std::min(string.size(), max_chars);
         data_type desc = {
-                static_cast<std::uint8_t>((string.size() + 1) * 2),
+                static_cast<std::uint8_t>((chars + 1) * 2),
                 static_cast<std::uint8_t>(DescriptorType::String),
         };
-        for (auto &i: string) {
-            desc.push_back(static_cast<std::uint8_t>(i));
-            desc.push_back(static_cast<std::uint8_t>(i >> 8));
+        for (std::size_t i = 0; i < chars; ++i) {
+            desc.push_back(static_cast<std::uint8_t>(string[i]));
+            desc.push_back(static_cast<std::uint8_t>(string[i] >> 8));
         }
         if (descriptor_length < desc.size()) {
             desc.resize(descriptor_length);
@@ -1038,5 +1074,8 @@ std::optional<data_type> VirtualDeviceHandler::get_special_string_descriptor(std
 
 data_type VirtualDeviceHandler::get_custom_descriptor(std::uint8_t type, std::uint8_t language_id,
                                                       std::uint16_t descriptor_length, std::uint32_t *p_status) {
+    // USB 2.0 §9.4.3：设备不支持请求的描述符类型时必须回 Request Error（STALL），
+    // 不能留默认 StatusOK 回 0 长度成功应答
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
 }

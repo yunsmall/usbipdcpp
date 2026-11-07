@@ -50,6 +50,15 @@ void VirtualInterfaceHandler::handle_non_standard_request_type_control_urb_to_en
 
 // 标准请求回调的默认实现在头文件内联（都很简单，头文件即文档），cpp 只保留数据面
 
+void VirtualInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
+    bool cancelled = cancel_pending_urb(unlink_seqnum);
+    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
+    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0。
+    // 与内核 stub_tx.c 及本项目 LibusbDeviceHandler 的 unlink 范本一致
+    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
+            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+}
+
 // ========== 端点级标准请求（ENDPOINT_HALT 状态机） ==========
 //
 // 真实设备由 UDC 维护端点 halt：SET_FEATURE 置位后该端点的 URB 全部以

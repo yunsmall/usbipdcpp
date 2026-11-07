@@ -228,5 +228,10 @@ protected:
     std::uint16_t device_status = 0;
     /// 是否支持远程唤醒（见 set_remote_wakeup_support）
     bool remote_wakeup_supported = false;
+    /// 当前配置值（0 = Address 状态/未配置）。USB 2.0 §9.4.7：SET_CONFIGURATION(0)
+    /// 使设备回到 Address 状态；§9.4.2：未配置时 GET_CONFIGURATION 必须返回 0。
+    /// 不能直接返回 handle_device.configuration_value——那是描述符里声明的配置值，
+    /// 不代表设备当前是否已配置
+    std::uint8_t current_configuration = 0;
 };
 } // namespace usbipdcpp

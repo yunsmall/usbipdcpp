@@ -221,7 +221,7 @@ public:
 
     void on_disconnection(std::error_code &ec) override;
 
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
 
 protected:
     LineCoding line_coding_;
@@ -402,7 +402,7 @@ public:
 
     void on_new_connection(TransferResponder &current_session, std::error_code &ec) override;
     void on_disconnection(std::error_code &ec) override;
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
 
 protected:
     /**

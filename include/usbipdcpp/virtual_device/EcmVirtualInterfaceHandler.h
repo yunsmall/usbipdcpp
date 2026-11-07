@@ -107,7 +107,7 @@ public:
 
     void on_disconnection(std::error_code &ec) override;
 
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
 
 protected:
     std::uint16_t packet_filter_ = 0;
@@ -213,7 +213,7 @@ public:
 
     void on_disconnection(std::error_code &ec) override;
 
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
 
 protected:
     /// 发帧通道（消息模式）：一个 URB 恰好一帧，帧比请求短时发短包结束

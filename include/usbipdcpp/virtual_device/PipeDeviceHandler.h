@@ -139,7 +139,7 @@ private:
     void on_pipe_out_transfer(std::uint8_t ep_addr, std::uint32_t seqnum, TransferHandle transfer);
     void on_pipe_control_request(const SetupPacket &setup, std::uint32_t seqnum,
                                  std::uint32_t transfer_buffer_length, TransferHandle transfer);
-    void on_pipe_unlink(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum);
+    bool cancel_pipe_unlink(std::uint32_t unlink_seqnum);
 
     /// 获取端点 IN 通道（懒创建：首次访问时按 fifo_capacity 建通道并绑定会话）。
     /// 调用者必须已持有 pipe_mutex

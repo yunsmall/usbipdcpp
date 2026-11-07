@@ -654,3 +654,17 @@ TEST(TestMscHandler, UnsupportedCommandFails) {
 
     fixture.msc->on_disconnection(ec);
 }
+
+TEST(TestMscHandler, SetInterfaceRejectsNonZeroAlt) {
+    // USB 2.0 §9.4.10：MSC 接口只有 alt 0，不存在的 alt 回 Request Error
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    std::uint32_t status = 0;
+    fixture.msc->request_set_interface(1, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    status = 1;
+    fixture.msc->request_set_interface(0, &status);
+    EXPECT_EQ(status, 0u);
+}

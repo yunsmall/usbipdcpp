@@ -434,10 +434,10 @@ public:
     }
 
     // ===== UNLINK：主机取消挂起的传输 =====
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {
-        bool cancelled = echo_channel.cancel_pending(unlink_seqnum);
-        session->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-                cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+    // 只报告是否取消，RET_UNLINK 由设备级汇总后统一提交
+    // （多接口设备不能让每个接口各回一条，否则主机收到重复应答）
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override {
+        return echo_channel.cancel_pending(unlink_seqnum);
     }
 
 private:

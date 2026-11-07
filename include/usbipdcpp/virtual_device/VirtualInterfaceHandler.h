@@ -118,9 +118,11 @@ public:
     virtual void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
         // 只接受设备定义里存在的 alt（endpoints 外层下标即 alt 号）：请求不存在的
         // alt 回 EPIPE，否则 GET_INTERFACE 返回的值与端点集合不一致（假装成功
-        // 会让主机驱动读到矛盾的接口状态）。对齐内核 composite：接口无 set_alt/
+        // 会让主机驱动读到矛盾的接口状态）。alt 0 是接口的默认设置，恒存在
+        // （USB 2.0 §9.6.5）：无端点的接口（bNumEndpoints=0）endpoints 为空，
+        // 但 SET_INTERFACE(0) 仍必须成功。对齐内核 composite：接口无 set_alt/
         // get_alt 回调时只支持 alt 0，请求其他 alt 回 STALL
-        if (alternate_setting < handle_interface.endpoints.size()) {
+        if (alternate_setting == 0 || alternate_setting < handle_interface.endpoints.size()) {
             *p_status = 0;
         }
         else {
@@ -158,6 +160,30 @@ public:
     }
     virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
                                               std::uint32_t *p_status);
+
+    // ========== UNLINK ==========
+
+    /**
+     * @brief 尝试取消本接口挂起的 URB（不发应答）
+     * @param unlink_seqnum 要取消的 URB seqnum
+     * @return 是否真的取消了挂起的 URB（false 表示已完成或不在本接口）
+     * @note 设备级 UNLINK 遍历所有接口汇总结果后只提交一条 RET_UNLINK；
+     *       多接口设备（CDC/ECM/RNDIS 等）若每个接口各自应答，主机会收到
+     *       多条相同 cmd_seqnum 的 RET_UNLINK，协议错乱
+     */
+    virtual bool cancel_pending_urb(std::uint32_t unlink_seqnum) {
+        (void) unlink_seqnum;
+        return false;
+    }
+
+    /**
+     * @brief 取消挂起 URB 并提交 RET_UNLINK
+     * @param unlink_seqnum 要取消的 URB seqnum
+     * @param cmd_seqnum UNLINK 命令自身的 seqnum（应答里回填）
+     * @note 设备级路径用 cancel_pending_urb 汇总后统一应答；直接调用本函数
+     *       （单接口场景）时由接口自己应答
+     */
+    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
 
     /**
      * @brief Only use for isochronous transfer, so give a default empty implement.

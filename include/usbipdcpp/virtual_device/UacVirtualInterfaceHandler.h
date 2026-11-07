@@ -56,7 +56,7 @@ public:
                                    std::error_code &ec) override;
     void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
-    void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override;
+    bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
     void on_setup_interface_handlers() override;
 
     /// 当前静音状态（供 AS handler 查询）

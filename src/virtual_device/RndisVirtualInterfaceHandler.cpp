@@ -462,12 +462,10 @@ void RndisCommunicationInterfaceHandler::on_disconnection(std::error_code &ec) {
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
-void RndisCommunicationInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    bool cancelled = notification_channel.cancel_pending(unlink_seqnum);
-    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
-    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0
-    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+bool RndisCommunicationInterfaceHandler::cancel_pending_urb(std::uint32_t unlink_seqnum) {
+    // 只报告是否取消，应答由设备级汇总后统一提交（多接口设备不能各回一条
+    // RET_UNLINK，否则主机收到重复应答）
+    return notification_channel.cancel_pending(unlink_seqnum);
 }
 
 // ==================== RndisDataInterfaceHandler ====================
@@ -615,15 +613,12 @@ void RndisDataInterfaceHandler::on_disconnection(std::error_code &ec) {
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
-void RndisDataInterfaceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {
-    // 挂起请求分散在 IN/OUT 两通道里，逐个尝试取消
+bool RndisDataInterfaceHandler::cancel_pending_urb(std::uint32_t unlink_seqnum) {
+    // 挂起请求分散在 IN/OUT 两通道里，逐个尝试取消；应答由设备级统一提交
     bool cancelled = in_channel.cancel_pending(unlink_seqnum);
     if (!cancelled) {
         cancelled = out_channel.cancel_pending(unlink_seqnum);
     }
-    // 从队列中真的取消了待处理 URB → 回 -ECONNRESET（URB 被取消，且不再发
-    // RET_SUBMIT，请求已从队列移除）；找不到（URB 已完成/不存在）→ 回 0
-    responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink(
-            cmd_seqnum, cancelled ? static_cast<std::uint32_t>(UrbStatusType::StatusECONNRESET) : 0));
+    return cancelled;
 }
 } // namespace usbipdcpp
