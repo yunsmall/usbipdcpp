@@ -7,13 +7,19 @@
 #include <cstdint>
 #include <memory>
 
+#include "test_utils.h"
+
 #include "usbipdcpp/Interface.h"
+#include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 #include "usbipdcpp/virtual_device/audio_sinks/AudioSink.h"
+#include "usbipdcpp/virtual_device/audio_sources/AudioSource.h"
 
 using namespace usbipdcpp;
+using namespace usbipdcpp::test;
 
 namespace {
 
@@ -127,4 +133,147 @@ TEST(UacAudioStreamingSinkDesc, SampleRateSetFormatUpdatesSink) {
     EXPECT_EQ(desc[16], 0xBB);
     EXPECT_EQ(desc[17], 0x00);
     EXPECT_EQ(sink_ptr->written, 0u);
+}
+
+// ========== 采样率协商：支持列表为空 ==========
+
+namespace {
+
+/// 当前格式有效、但 supported_formats 返回空列表的汇（配置错误场景）
+struct EmptyFormatsSink : public AudioSink {
+    std::vector<AudioFormatInfo> supported_formats() const override {
+        return {};
+    }
+    AudioFormatInfo current_format() const override {
+        return {1, 16, 48000};
+    }
+    bool set_format(std::uint16_t, std::uint8_t, std::uint32_t) override {
+        return true;
+    }
+    void write_pcm(const std::uint8_t *, std::size_t) override {
+    }
+};
+
+/// 当前格式有效、但 supported_formats 返回空列表的源（配置错误场景）
+struct EmptyFormatsSource : public AudioSource {
+    std::vector<AudioFormatInfo> supported_formats() const override {
+        return {};
+    }
+    AudioFormatInfo current_format() const override {
+        return {1, 16, 48000};
+    }
+    bool set_format(std::uint16_t, std::uint8_t, std::uint32_t) override {
+        return true;
+    }
+    bool get_chunk(AudioChunk &) override {
+        return false;
+    }
+};
+
+/// 发采样率 GET_MIN/GET_MAX（端点 recipient，Linux 驱动的实际形态）
+void send_get_min_max(VirtualInterfaceHandler &handler, GenericTransferOperator &op, CaptureResponder &stub,
+                      std::uint8_t request, usbipdcpp::error_code &ec) {
+    const UsbEndpoint ep{.address = 0x01, .attributes = 0x05, .max_packet_size = 192, .interval = 1};
+    const SetupPacket setup{
+            .request_type = 0xA2, // Class | Endpoint | IN
+            .request = request,
+            .value = static_cast<std::uint16_t>(AS_SAMPLING_FREQ_CONTROL << 8),
+            .index = ep.address,
+            .length = 3,
+    };
+    stub.submits.clear();
+    handler.handle_non_standard_request_type_control_urb_to_endpoint(
+            1, ep, 0, 3, setup, make_cmd_submit(op, 1, ep.address, UsbIpDirection::In, 3, setup).transfer, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+} // namespace
+
+TEST(UacAudioStreamingControl, SinkGetMinMaxWithoutSupportedRatesStalls) {
+    // 采样率列表为空时 front()/back() 解引用空区间是 UB：GET_MIN/GET_MAX
+    // 必须回 EPIPE，让主机按"不支持"处理
+    StringPool pool;
+    GenericTransferOperator op;
+    UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
+    UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    handler.on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    send_get_min_max(handler, op, stub, GET_MIN, ec);
+    send_get_min_max(handler, op, stub, GET_MAX, ec);
+}
+
+TEST(UacAudioStreamingControl, SinkSetCurWithoutSupportedRatesStalls) {
+    // 列表为空时 min_element 返回 end()，解引用是 UB：SET_CUR 必须回 EPIPE
+    StringPool pool;
+    GenericTransferOperator op;
+    UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
+    UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    handler.on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    const UsbEndpoint ep{.address = 0x01, .attributes = 0x05, .max_packet_size = 192, .interval = 1};
+    const SetupPacket setup{
+            .request_type = 0x22, // Class | Endpoint | OUT
+            .request = SET_CUR,
+            .value = static_cast<std::uint16_t>(AS_SAMPLING_FREQ_CONTROL << 8),
+            .index = ep.address,
+            .length = 3,
+    };
+    const data_type rate = {0x80, 0xBB, 0x00}; // 48000 Hz 小端
+    handler.handle_non_standard_request_type_control_urb_to_endpoint(
+            1, ep, 0, 3, setup,
+            make_cmd_submit(op, 1, ep.address, UsbIpDirection::Out, 3, setup, rate).transfer, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+TEST(UacAudioStreamingControl, SourceGetMinMaxWithoutSupportedRatesStalls) {
+    // 源侧同一处空列表解引用（GET_MIN/GET_MAX）
+    StringPool pool;
+    GenericTransferOperator op;
+    UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
+    UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    handler.on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    send_get_min_max(handler, op, stub, GET_MIN, ec);
+    send_get_min_max(handler, op, stub, GET_MAX, ec);
+}
+
+TEST(UacAudioStreamingControl, SourceSetCurWithoutSupportedRatesStalls) {
+    // 源侧 SET_CUR：列表为空时不能解引用 min_element 的 end()
+    StringPool pool;
+    GenericTransferOperator op;
+    UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
+    UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    handler.on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    const UsbEndpoint ep{.address = 0x81, .attributes = 0x05, .max_packet_size = 192, .interval = 1};
+    const SetupPacket setup{
+            .request_type = 0x22, // Class | Endpoint | OUT
+            .request = SET_CUR,
+            .value = static_cast<std::uint16_t>(AS_SAMPLING_FREQ_CONTROL << 8),
+            .index = ep.address,
+            .length = 3,
+    };
+    const data_type rate = {0x80, 0xBB, 0x00};
+    handler.handle_non_standard_request_type_control_urb_to_endpoint(
+            1, ep, 0, 3, setup,
+            make_cmd_submit(op, 1, ep.address, UsbIpDirection::Out, 3, setup, rate).transfer, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }

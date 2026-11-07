@@ -486,6 +486,12 @@ bool UacAudioStreamingSourceHandler::handle_sampling_freq_control(std::uint32_t 
         case GET_MAX: {
             // 返回支持列表中的最小/最大采样率
             auto rates = supported_sample_rates(fmt);
+            // source 可能没在当前声道/位深下报任何采样率（supported_formats 为空
+            // 或组合不匹配），此时 front()/back() 是 UB，按不支持请求 STALL
+            if (rates.empty()) {
+                SPDLOG_WARN("采样率 GET_{}：当前格式没有支持的采样率", request == GET_MIN ? "MIN" : "MAX");
+                return false;
+            }
             auto rate = (request == GET_MIN) ? rates.front() : rates.back();
             trx->data = {static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
                          static_cast<std::uint8_t>((rate >> 16) & 0xFF)};
@@ -499,6 +505,11 @@ bool UacAudioStreamingSourceHandler::handle_sampling_freq_control(std::uint32_t 
             auto rate = static_cast<std::uint32_t>(trx->data[0] | (trx->data[1] << 8) | (trx->data[2] << 16));
             // UAC 1.0 §5.2.3.2.3.1: 离散采样率端点收到不支持的值时应四舍五入到最近的支持值
             auto rates = supported_sample_rates(fmt);
+            if (rates.empty()) {
+                // min_element 对空区间返回 end()，解引用是 UB
+                SPDLOG_WARN("采样率 SET_CUR {}：当前格式没有支持的采样率", rate);
+                return false;
+            }
             auto nearest = *std::min_element(rates.begin(), rates.end(), [rate](std::uint32_t a, std::uint32_t b) {
                 return std::abs(static_cast<std::int64_t>(a) - rate) <
                        std::abs(static_cast<std::int64_t>(b) - rate);
@@ -832,6 +843,18 @@ bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t se
                                                                 GenericTransfer *trx, TransferHandle &transfer,
                                                                 std::uint32_t transfer_buffer_length) {
     auto fmt = sink->current_format();
+    // 当前声道/位深下 sink 支持的采样率（去重升序），GET_MIN/GET_MAX/SET_CUR 共用
+    auto collect_rates = [&fmt, this]() {
+        std::vector<std::uint32_t> rates;
+        for (auto &f: sink->supported_formats()) {
+            if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
+                rates.push_back(f.sample_rate);
+            }
+        }
+        std::sort(rates.begin(), rates.end());
+        rates.erase(std::unique(rates.begin(), rates.end()), rates.end());
+        return rates;
+    };
     switch (request) {
         case GET_CUR: {
             auto rate = fmt.sample_rate;
@@ -843,13 +866,12 @@ bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t se
         case GET_MIN:
         case GET_MAX: {
             // 返回支持列表中的最小/最大采样率
-            std::vector<std::uint32_t> rates;
-            for (auto &f: sink->supported_formats()) {
-                if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
-                    rates.push_back(f.sample_rate);
-                }
+            auto rates = collect_rates();
+            // supported_formats 可能为空或当前组合无匹配项，front()/back() 会是 UB
+            if (rates.empty()) {
+                SPDLOG_WARN("采样率 GET_{}：当前格式没有支持的采样率", request == GET_MIN ? "MIN" : "MAX");
+                return false;
             }
-            std::sort(rates.begin(), rates.end());
             auto rate = (request == GET_MIN) ? rates.front() : rates.back();
             trx->data = {static_cast<std::uint8_t>(rate & 0xFF), static_cast<std::uint8_t>((rate >> 8) & 0xFF),
                          static_cast<std::uint8_t>((rate >> 16) & 0xFF)};
@@ -862,13 +884,12 @@ bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t se
             }
             auto rate = static_cast<std::uint32_t>(trx->data[0] | (trx->data[1] << 8) | (trx->data[2] << 16));
             // UAC 1.0 §5.2.3.2.3.1: 离散采样率端点收到不支持的值时应四舍五入到最近的支持值
-            std::vector<std::uint32_t> rates;
-            for (auto &f: sink->supported_formats()) {
-                if (f.channels == fmt.channels && f.bits_per_sample == fmt.bits_per_sample) {
-                    rates.push_back(f.sample_rate);
-                }
+            auto rates = collect_rates();
+            if (rates.empty()) {
+                // min_element 对空区间返回 end()，解引用是 UB
+                SPDLOG_WARN("采样率 SET_CUR {}：当前格式没有支持的采样率", rate);
+                return false;
             }
-            std::sort(rates.begin(), rates.end());
             auto nearest = *std::min_element(rates.begin(), rates.end(), [rate](std::uint32_t a, std::uint32_t b) {
                 return std::abs(static_cast<std::int64_t>(a) - rate) <
                        std::abs(static_cast<std::int64_t>(b) - rate);
