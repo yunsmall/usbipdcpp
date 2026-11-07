@@ -144,6 +144,14 @@ public:
                             NetworkBackend *backend = nullptr);
 
     /**
+     * @brief 析构时清除后端发帧回调
+     *
+     * backend 由外部传入，生命周期可能比 handler 长；不清回调会留下捕获
+     * 已销毁 this 的 std::function（后端线程再发帧即 use-after-free）
+     */
+    ~EcmDataInterfaceHandler() override;
+
+    /**
      * @brief 创建 ECM 数据接口（描述符模板，未绑定 handler）
      *
      * 接口定义：CDC Data 类（0A/00/00），alt0 无端点 / alt1 两个 Bulk 端点

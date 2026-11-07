@@ -1,10 +1,48 @@
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
+
+#include <algorithm>
+
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
-
 using namespace usbipdcpp;
+
+namespace {
+
+/**
+ * @brief 把配置描述符里的端点 wMaxPacketSize 从高速值改成全速值
+ *
+ * USB 2.0 §9.6.4 / Table 9-11：other_speed_configuration 描述设备在另一速度
+ * 下的配置，端点包长必须是那个速度下的值。本实现只在高速设备上提供该描述符，
+ * 另一速度即全速：全速 ISO 最大 1023，Bulk/Interrupt/Control 最大 64
+ * （USB 2.0 §5.7/§5.8），且全速端点没有 bits12..11 的每微帧多事务编码。
+ * @param desc 配置描述符（原地修改，bDescriptorType 已改成 OtherSpeedConfiguration）
+ */
+void convert_endpoints_to_full_speed(usbipdcpp::data_type &desc) {
+    std::size_t pos = 0;
+    while (pos + 2 <= desc.size()) {
+        auto length = desc[pos];
+        // 描述符链由 bLength 串起来，长度非法就不能继续往后走（避免死循环/越界）
+        if (length < 2 || pos + length > desc.size()) {
+            break;
+        }
+        if (desc[pos + 1] == static_cast<std::uint8_t>(usbipdcpp::DescriptorType::Endpoint) &&
+            length == sizeof(usbipdcpp::EndpointDesc)) {
+            auto *ep = reinterpret_cast<usbipdcpp::EndpointDesc *>(&desc[pos]);
+            // 线格式是小端：htole 双向对称，读取时同样用于转成主机序
+            auto value = static_cast<std::uint16_t>(usbipdcpp::htole(ep->wMaxPacketSize) & 0x07FF);
+            auto is_iso = (ep->bmAttributes & 0x03) ==
+                          static_cast<std::uint8_t>(usbipdcpp::EndpointAttributes::Isochronous);
+            auto max_size = static_cast<std::uint16_t>(is_iso ? 1023 : 64);
+            ep->wMaxPacketSize = usbipdcpp::htole(static_cast<std::uint16_t>(std::min(value, max_size)));
+        }
+        pos += length;
+    }
+}
+
+} // namespace
 
 void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_control_urb(
         std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
@@ -47,10 +85,12 @@ usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_desc
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return {};
     }
-    // 内容与配置描述符相同，仅 bDescriptorType 改为 0x07
+    // 结构与配置描述符相同，但描述的是另一速度（高速设备的另一速度 = 全速）：
+    // bDescriptorType 改 0x07，端点 wMaxPacketSize 换成全速值
     auto desc = get_configuration_descriptor(language_id, descriptor_length, p_status);
     if (!desc.empty() && desc.size() >= 2) {
         desc[1] = static_cast<std::uint8_t>(DescriptorType::OtherSpeedConfiguration);
+        convert_endpoints_to_full_speed(desc);
     }
     return desc;
 }

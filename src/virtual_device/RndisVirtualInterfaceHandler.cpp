@@ -483,6 +483,12 @@ RndisDataInterfaceHandler::RndisDataInterfaceHandler(UsbInterface &handle_interf
     }
 }
 
+RndisDataInterfaceHandler::~RndisDataInterfaceHandler() {
+    if (backend_) {
+        backend_->set_send_to_host({});
+    }
+}
+
 UsbInterface RndisDataInterfaceHandler::make_interface(std::uint8_t in_ep, std::uint8_t out_ep) {
     // 对齐内核 f_rndis.c 的 rndis_data_intf：只有 alt0（无 NOP altsetting，
     // 这是 RNDIS 相对 ECM 的优势——RNDIS 用 OID 包过滤器控制收发，不需要

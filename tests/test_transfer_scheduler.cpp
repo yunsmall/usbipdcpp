@@ -377,6 +377,21 @@ TEST(TransferSchedulerTest, StopDropsPendingUrbs) {
     EXPECT_EQ(fx.scheduler.response_count(), 0);
 }
 
+TEST(TransferSchedulerTest, StopDropsDirectCompletionUrbs) {
+    // stop 之后到达的控制请求 / 无等时包 iso 也不得向已断开的 session 提交
+    // （直接完成分支与入队路径一样要检查 started）
+    TestFixture fx;
+    fx.start();
+    fx.scheduler.stop();
+
+    fx.scheduler.submit(fx.responder, 0x00, EndpointAttributes::Control, 0us, 0,
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(20, 10));
+    submit_iso(fx.scheduler, fx.responder, 0x81, 20ms, 0, 21);
+    submit_iso(fx.scheduler, fx.responder, 0x81, 20ms, -1, 22);
+
+    EXPECT_EQ(fx.scheduler.response_count(), 0);
+}
+
 TEST(TransferSchedulerTest, RestartAfterStopWorks) {
     // 重连：stop 后 start 再次可用，状态干净
     TestFixture fx;

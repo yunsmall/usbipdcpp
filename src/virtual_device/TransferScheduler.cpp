@@ -56,6 +56,12 @@ void TransferScheduler::submit(TransferResponder &responder, const UsbEndpoint &
                                TransferHandle transfer, UrbProcessCallback processor) {
     // 防御：控制请求不走处理器版（handler 无此调用场景），立即通知处理
     if (type == EndpointAttributes::Control) {
+        // stop 之后迟到的 URB 同样丢弃，不向已断开的 session 投递
+        {
+            std::lock_guard lock(mutex);
+            if (!started)
+                return;
+        }
         processor(responder, ep, seqnum, std::move(transfer));
         return;
     }
@@ -94,6 +100,12 @@ void TransferScheduler::submit(TransferResponder &responder, std::uint8_t ep_add
     // 控制请求与无等时包的 iso URB：不占调度窗口，立即响应
     //（控制端点必须快速，对齐 vudc 的 ep0 无延迟处理）
     if (type == EndpointAttributes::Control || (type == EndpointAttributes::Isochronous && num_iso_packets <= 0)) {
+        // stop 之后迟到的 URB 不能向已断开的 session 提交（与入队路径一致）
+        {
+            std::lock_guard lock(mutex);
+            if (!started)
+                return;
+        }
         on_urb_completed(responder, std::move(submit));
         return;
     }

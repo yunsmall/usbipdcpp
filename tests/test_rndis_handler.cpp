@@ -551,3 +551,32 @@ TEST(TestRndisHandler, DisconnectResetsStateAndChannels) {
     auto resp = get_response(env, 5);
     ASSERT_EQ(resp.size(), 52u); // 第一条就是 INIT_C，无残留
 }
+
+namespace {
+
+/// 可从"网络侧"主动发帧的测试后端（send_to_host 是 protected，派生类暴露）
+struct ProbeBackend : NetworkBackend {
+    void send_frame(const std::uint8_t *, std::size_t) override {}
+    void push_from_network(const std::uint8_t *data, std::size_t size) {
+        send_to_host(data, size);
+    }
+};
+
+} // namespace
+
+TEST(TestRndisDataHandler, DestructorClearsBackendCallback) {
+    // backend 生命周期可能比 handler 长：handler 析构必须清除回调，否则
+    // 后端再发帧会调用捕获已销毁 this 的 std::function（use-after-free）
+    StringPool pool;
+    ProbeBackend backend;
+    UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
+    {
+        RndisDataInterfaceHandler handler(intf, pool, &backend, nullptr);
+        const std::uint8_t frame[] = {1, 2, 3};
+        backend.push_from_network(frame, sizeof(frame));
+        EXPECT_EQ(backend.tx_frames(), 1u);
+    }
+    const std::uint8_t frame[] = {4, 5, 6};
+    backend.push_from_network(frame, sizeof(frame));
+    EXPECT_EQ(backend.tx_frames(), 1u); // 回调已清除，不再调用 handler
+}

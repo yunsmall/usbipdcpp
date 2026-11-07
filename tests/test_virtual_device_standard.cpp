@@ -13,6 +13,7 @@
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
+#include "usbipdcpp/virtual_device/UsbClassConstants.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -28,6 +29,7 @@ public:
     using VirtualDeviceHandler::get_configuration_descriptor;
     using VirtualDeviceHandler::get_device_descriptor;
     using VirtualDeviceHandler::get_device_qualifier_descriptor;
+    using VirtualDeviceHandler::get_other_speed_descriptor;
     using VirtualDeviceHandler::get_string_descriptor;
     using VirtualDeviceHandler::request_clear_feature;
     using VirtualDeviceHandler::request_get_configuration;
@@ -776,6 +778,53 @@ TEST(VirtualDeviceStandard, SynchFrameReturnsFrameNumber) {
     EXPECT_EQ(stub.submits[0].status, 0u);
     EXPECT_EQ(stub.submits[0].actual_length, 2u);
     EXPECT_EQ(ret_submit_data(stub.submits[0]), (data_type{0x34, 0x12}));
+}
+
+TEST(VirtualDeviceStandard, OtherSpeedConfigurationUsesFullSpeedPacketSizes) {
+    // USB 2.0 §9.6.4 / Table 9-11：other_speed_configuration 描述设备在另一
+    // 速度下的配置，端点包长必须是那个速度的值（高速设备的另一速度 = 全速：
+    // bulk/interrupt 最大 64，ISO 最大 1023，且没有每微帧多事务编码）
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {{
+            {.address = 0x81,
+             .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+             .max_packet_size = 512,
+             .interval = 0},
+            {.address = 0x82,
+             .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+             .max_packet_size = 512,
+             .interval = 10},
+            {.address = 0x83,
+             .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous),
+             .max_packet_size = 1024,
+             .interval = 1},
+    }};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
+    auto handler = device->with_handler<ProbeDevice>(pool);
+
+    std::uint32_t status = 0;
+    auto desc = handler->get_other_speed_descriptor(0, 1024, &status);
+    ASSERT_EQ(status, 0u);
+    ASSERT_GE(desc.size(), 2u);
+    EXPECT_EQ(desc[1], static_cast<std::uint8_t>(DescriptorType::OtherSpeedConfiguration));
+
+    std::vector<std::uint16_t> sizes;
+    for (std::size_t pos = 0; pos + 2 <= desc.size();) {
+        auto length = desc[pos];
+        ASSERT_GE(length, 2);
+        ASSERT_LE(pos + length, desc.size());
+        if (desc[pos + 1] == static_cast<std::uint8_t>(DescriptorType::Endpoint)) {
+            ASSERT_EQ(length, sizeof(EndpointDesc));
+            auto *ep = reinterpret_cast<const EndpointDesc *>(&desc[pos]);
+            sizes.push_back(htole(ep->wMaxPacketSize));
+        }
+        pos += length;
+    }
+    ASSERT_EQ(sizes.size(), 3u);
+    EXPECT_EQ(sizes[0], 64u);   // Bulk 512 → 64
+    EXPECT_EQ(sizes[1], 64u);   // Interrupt 512 → 64
+    EXPECT_EQ(sizes[2], 1023u); // ISO 1024 → 1023
 }
 
 TEST(VirtualDeviceStandard, LongStringDescriptorTruncatesTo255Bytes) {

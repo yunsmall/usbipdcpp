@@ -197,6 +197,12 @@ EcmDataInterfaceHandler::EcmDataInterfaceHandler(UsbInterface &handle_interface,
     }
 }
 
+EcmDataInterfaceHandler::~EcmDataInterfaceHandler() {
+    if (backend_) {
+        backend_->set_send_to_host({});
+    }
+}
+
 UsbInterface EcmDataInterfaceHandler::make_interface(std::uint8_t in_ep, std::uint8_t out_ep) {
     // alt0 无端点 / alt1 两个 bulk：endpoints 外层下标即 alternate setting 号
     UsbInterface i{
