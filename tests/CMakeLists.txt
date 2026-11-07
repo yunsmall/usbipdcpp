@@ -119,6 +119,11 @@ if (TARGET usbipdcpp_virtual_device)
     # WavFileSink（库内音频汇）WAV 文件写入测试
     add_test_file(test_wav_file_sink)
     target_link_libraries(test_wav_file_sink PRIVATE usbipdcpp_virtual_device)
+
+    # 标准请求/描述符语义：端点 halt、设备 remote wakeup、BOS 与
+    # Device_Qualifier 的存在条件、SuperSpeed 的 EP0 编码
+    add_test_file(test_virtual_device_standard)
+    target_link_libraries(test_virtual_device_standard PRIVATE usbipdcpp_virtual_device)
 endif ()
 
 # libusb 后端的控制传输方向专项：libusb_fill_control_transfer 把控制传输的

@@ -108,8 +108,8 @@ TEST(TransferSchedulerTest, EndpointIntervalHighSpeed) {
 TEST(TransferSchedulerTest, EndpointIntervalOtherSpeeds) {
     // 全速/低速：bInterval × 1ms
     EXPECT_EQ(TransferScheduler::endpoint_interval(UsbEndpoint{.address = 0x81, .interval = 4}, UsbSpeed::Full), 4ms);
-    // Super：bInterval × 125µs
-    EXPECT_EQ(TransferScheduler::endpoint_interval(UsbEndpoint{.address = 0x81, .interval = 4}, UsbSpeed::Super), 500us);
+    // SuperSpeed 与高速一样是指数：2^(bInterval-1) × 125µs（USB 3.0 §9.6.6）
+    EXPECT_EQ(TransferScheduler::endpoint_interval(UsbEndpoint{.address = 0x81, .interval = 4}, UsbSpeed::Super), 1000us);
     // bInterval=0 防御：按 1 处理
     EXPECT_EQ(TransferScheduler::endpoint_interval(UsbEndpoint{.address = 0x81, .interval = 0}, UsbSpeed::High), 125us);
 }

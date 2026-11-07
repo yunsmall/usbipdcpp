@@ -165,6 +165,25 @@ struct BosUsb20ExtCapDesc {
     }
 };
 static_assert(sizeof(BosUsb20ExtCapDesc) == 7, "USB 2.0 Extension 能力描述符固定 7 字节");
+
+/// SuperSpeed 设备能力描述符（USB 3.0 Table 9-13，固定 10 字节）
+/// 仅 SuperSpeed 设备的 BOS 需要；USB 2.x 设备不得返回
+struct BosSsCapDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bDevCapabilityType;
+    std::uint8_t bmAttributes;
+    std::uint16_t wSpeedsSupported;
+    std::uint8_t bFunctionalitySupport;
+    std::uint8_t bU1DevExitLat;
+    std::uint16_t wU2DevExitLat;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bDevCapabilityType, bmAttributes, wSpeedsSupported,
+                            bFunctionalitySupport, bU1DevExitLat, wU2DevExitLat);
+    }
+};
+static_assert(sizeof(BosSsCapDesc) == 10, "SuperSpeed 能力描述符固定 10 字节");
 #pragma pack(pop)
 
 } // namespace usbipdcpp

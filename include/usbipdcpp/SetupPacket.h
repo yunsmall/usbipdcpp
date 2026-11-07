@@ -67,6 +67,8 @@ struct SetupPacket {
     [[nodiscard]] std::string to_string() const;
 
     static constexpr std::uint8_t USB_ENDPOINT_HALT = 0u;
+    static constexpr std::uint8_t USB_DEVICE_REMOTE_WAKEUP = 1u;
+    static constexpr std::uint8_t USB_DEVICE_TEST_MODE = 2u;
 
     static constexpr std::uint8_t USB_TYPE_MASK = 0b01100000u;
     static constexpr std::uint8_t USB_RECIP_MASK = 0b00011111u;

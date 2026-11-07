@@ -182,8 +182,10 @@ std::chrono::microseconds TransferScheduler::endpoint_interval(const UsbEndpoint
             return std::chrono::microseconds(125) * (std::uint64_t{1} << (interval - 1));
         case UsbSpeed::Super:
         case UsbSpeed::SuperPlus:
-            // SuperSpeed：bInterval × 125µs
-            return std::chrono::microseconds(125) * interval;
+            // USB 3.0 §9.6.6：中断/等时端点的 bInterval 同样是指数编码，
+            // 周期 = 2^(bInterval-1) × 125µs（bInterval 上限 16）
+            interval = std::min(interval, static_cast<std::uint8_t>(16));
+            return std::chrono::microseconds(125) * (std::uint64_t{1} << (interval - 1));
         default:
             // 全速/低速：bInterval 个帧，每帧 1ms
             return std::chrono::milliseconds(1) * interval;

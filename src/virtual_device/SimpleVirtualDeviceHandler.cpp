@@ -15,16 +15,6 @@ void usbipdcpp::SimpleVirtualDeviceHandler::handle_non_standard_request_type_con
 }
 
 
-void usbipdcpp::SimpleVirtualDeviceHandler::request_clear_feature(std::uint16_t feature_selector,
-                                                                  std::uint32_t *p_status) {
-    SPDLOG_WARN("Unimplement request_clear_feature to simple device");
-}
-
-std::uint16_t usbipdcpp::SimpleVirtualDeviceHandler::request_get_status(std::uint32_t *p_status) {
-    SPDLOG_WARN("Unimplement request_get_status to simple device");
-    return 0x00000000u;
-}
-
 void usbipdcpp::SimpleVirtualDeviceHandler::request_set_address(std::uint16_t address, std::uint32_t *status) {
     SPDLOG_WARN("Unimplement request_set_address to simple device");
 }
@@ -43,17 +33,20 @@ void usbipdcpp::SimpleVirtualDeviceHandler::request_set_descriptor(std::uint8_t 
                                                                    const data_type &descriptor,
                                                                    std::uint32_t *p_status) {
     SPDLOG_WARN("Unimplement request_set_descriptor to simple device");
-}
-
-void usbipdcpp::SimpleVirtualDeviceHandler::request_set_feature(std::uint16_t feature_selector,
-                                                                std::uint32_t *p_status) {
-    SPDLOG_WARN("Unimplement request_set_feature to simple device");
+    // 设备不支持 SET_DESCRIPTOR（USB 2.0 §9.4.8 该请求可选），按规范回 STALL，
+    // 不能留默认 OK 让主机误以为设置成功
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 usbipdcpp::data_type usbipdcpp::SimpleVirtualDeviceHandler::get_other_speed_descriptor(std::uint8_t language_id,
                                                                                        std::uint16_t descriptor_length,
                                                                                        std::uint32_t *p_status) {
-    // USB 2.0 §9.6.4: 高速设备必须返回 other_speed_configuration
+    // USB 2.0 §9.6.4: other_speed_configuration 与 Device_Qualifier 一样只由
+    // 高速能力设备提供；全速/低速设备收到该请求按规范回 STALL
+    if (static_cast<UsbSpeed>(handle_device.speed) != UsbSpeed::High) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {};
+    }
     // 内容与配置描述符相同，仅 bDescriptorType 改为 0x07
     auto desc = get_configuration_descriptor(language_id, descriptor_length, p_status);
     if (!desc.empty() && desc.size() >= 2) {

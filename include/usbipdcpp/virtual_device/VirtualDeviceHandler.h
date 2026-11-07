@@ -50,6 +50,17 @@ public:
     }
 
     /**
+     * @brief 声明设备是否支持远程唤醒（USB 2.0 §9.6.3 bmAttributes bit5）
+     *
+     * 配置描述符的 bmAttributes 与 DEVICE_REMOTE_WAKEUP 的 SET/CLEAR_FEATURE
+     * 必须一致：声明支持才接受该请求并维护 GET_STATUS bit1，否则按规范 STALL。
+     * 必须在设备导出前调用（配置描述符构造时读取）
+     */
+    void set_remote_wakeup_support(bool support) {
+        remote_wakeup_supported = support;
+    }
+
+    /**
      * @brief 设置所有接口 handler 的 device_handler 指针
      * @note 应在创建完 UsbDevice 并设置好所有接口 handler 之后调用。
      * 设为 virtual：子类重写后能自定义初始化 interface_handlers 的流程
@@ -84,18 +95,18 @@ protected:
                                                               const SetupPacket &setup_packet, TransferHandle transfer,
                                                               std::error_code &ec) = 0;
 
-    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
+    virtual void request_clear_feature(std::uint16_t feature_selector, std::uint32_t *p_status);
 
     virtual std::uint8_t request_get_configuration(std::uint32_t *p_status);
 
-    virtual std::uint16_t request_get_status(std::uint32_t *p_status) = 0;
+    virtual std::uint16_t request_get_status(std::uint32_t *p_status);
     virtual void request_set_address(std::uint16_t address, std::uint32_t *status) = 0;
     virtual void request_set_configuration(std::uint16_t configuration_value, std::uint32_t *p_status) = 0;
     virtual void request_set_descriptor(std::uint8_t desc_type, std::uint8_t desc_index, std::uint16_t language_id,
                                         std::uint16_t descriptor_length, const data_type &descriptor,
                                         std::uint32_t *p_status) = 0;
 
-    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) = 0;
+    virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status);
 
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
                                      std::uint32_t *p_status);
@@ -200,5 +211,12 @@ protected:
     TransferScheduler transfer_scheduler;
     /// 是否启用 transfer_scheduler（默认关，见 set_use_transfer_scheduler）
     bool use_transfer_scheduler = false;
+
+    /// 设备 GET_STATUS 状态字（bit0 self-powered、bit1 remote wakeup，
+    /// USB 2.0 §9.4.5）。标准请求在会话接收线程处理，描述符构造在连接前，
+    /// 不需要额外同步
+    std::uint16_t device_status = 0;
+    /// 是否支持远程唤醒（见 set_remote_wakeup_support）
+    bool remote_wakeup_supported = false;
 };
 } // namespace usbipdcpp

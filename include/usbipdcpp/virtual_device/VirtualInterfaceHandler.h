@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -56,6 +58,10 @@ public:
      */
     void on_new_connection(TransferResponder &current_session, error_code &ec) override {
         responder = &current_session;
+        // 新连接等价重新枚举：端点 halt 状态清零（USB 2.0 §9.4.5，
+        // 复位/重新配置后端点回到未 halt 状态）
+        for (auto &halted: endpoint_halted)
+            halted.store(false, std::memory_order_relaxed);
     }
 
     /**
@@ -100,9 +106,7 @@ public:
         *p_status = 0;
     }
     virtual void request_endpoint_clear_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                                std::uint32_t *p_status) {
-        *p_status = 0;
-    }
+                                                std::uint32_t *p_status);
 
     virtual std::uint8_t request_get_interface(std::uint32_t *p_status) {
         // 返回当前 alternate setting（设备级在 SET_INTERFACE 成功时已更新）。
@@ -130,10 +134,7 @@ public:
         *p_status = 0;
         return 0;
     }
-    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status) {
-        *p_status = 0;
-        return 0;
-    }
+    virtual std::uint16_t request_endpoint_get_status(std::uint8_t ep_address, std::uint32_t *p_status);
 
     /**
      * @brief this function is not necessary for all device,
@@ -154,9 +155,7 @@ public:
         *p_status = 0;
     }
     virtual void request_endpoint_set_feature(std::uint16_t feature_selector, std::uint8_t ep_address,
-                                              std::uint32_t *p_status) {
-        *p_status = 0;
-    }
+                                              std::uint32_t *p_status);
 
     /**
      * @brief Only use for isochronous transfer, so give a default empty implement.
@@ -193,6 +192,17 @@ public:
         return transfer_op_.get();
     }
 
+    /**
+     * @brief 查询端点是否处于 HALT 状态
+     *
+     * 数据面（VirtualDeviceHandler::dispatch_urb）据此回 STALL：真实设备上
+     * halt 端点的 URB 直接以 -EPIPE 完成，不再由设备处理（USB 2.0 §9.4.5）
+     * @param ep_address 端点地址（含方向位）
+     */
+    [[nodiscard]] bool is_endpoint_halted(std::uint8_t ep_address) const {
+        return endpoint_halted[ep_address].load(std::memory_order_relaxed);
+    }
+
     void set_transfer_operator(std::unique_ptr<TransferOperator> op) {
         // 注意：HID 等基于 GenericTransfer 的类（handle_control_urb、
         // handle_interrupt_transfer、send_input_report 里的
@@ -227,6 +237,11 @@ protected:
     TransferResponder *responder = nullptr;
     VirtualDeviceHandler *device_handler = nullptr;
     std::unique_ptr<TransferOperator> transfer_op_;
+
+    /// 端点 halt 状态（下标 = 端点地址含方向位）。数据面在会话接收线程读、
+    /// 标准请求在同一线程写，但调度线程也可能路径经过 dispatch 之外的检查，
+    /// 用 atomic 避免数据竞争
+    std::array<std::atomic_bool, 256> endpoint_halted{};
 
     std::uint8_t string_interface;
 
