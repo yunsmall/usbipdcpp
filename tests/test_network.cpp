@@ -76,6 +76,15 @@ TEST(TestNetwork, vector_append) {
     ));
 }
 
+TEST(TestNetwork, CalculateTotalSizeHelpers) {
+    // 两个 size 辅助函数是公开 API，实例化本身即验证：
+    // calculate_data_total_size_with_array 曾有自递归错误（调用自己而不是
+    // calculate_total_size_with_array），实例化会无限递归
+    static_assert(calculate_total_size_with_array<std::uint32_t, std::uint16_t, array_data_type<5>>() == 11);
+    static_assert(calculate_data_total_size_with_array(std::uint32_t{}, std::uint16_t{}, array_data_type<5>{}) == 11);
+    SUCCEED();
+}
+
 TEST(TestNetwork, to_network) {
     auto array = to_network_array(static_cast<std::uint32_t>(0x01030405u),
                                   static_cast<std::uint16_t>(0x1517),

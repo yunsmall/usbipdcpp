@@ -97,7 +97,7 @@ template<typename... Args>
     requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
              ...)
 constexpr std::size_t calculate_data_total_size_with_array(const Args &...args) {
-    return calculate_data_total_size_with_array<Args...>();
+    return calculate_total_size_with_array<Args...>();
 }
 
 /**
