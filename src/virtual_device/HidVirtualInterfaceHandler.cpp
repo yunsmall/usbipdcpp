@@ -89,8 +89,14 @@ void usbipdcpp::HidVirtualInterfaceHandler::handle_non_standard_request_type_con
                 data_type result;
                 switch (request) {
                     case HIDRequest::GetIdle: {
-                        result = request_get_idle(setup_packet.value >> 8, setup_packet.value, setup_packet.length,
-                                                  &status);
+                        // HID 1.11 §7.2.3：GET_IDLE 的 wValue 高字节必须为 0，
+                        // 低字节才是 Report ID（与 GET_REPORT 的"高字节=Report
+                        // Type、低字节=Report ID"不同，别把这里的映射改成
+                        // 高字节当 Report ID）。第一个参数只为与 GET_REPORT
+                        // 的调用形式保持一致，恒为 0
+                        result = request_get_idle(static_cast<std::uint8_t>(setup_packet.value >> 8),
+                                                  static_cast<std::uint8_t>(setup_packet.value & 0x00FF),
+                                                  setup_packet.length, &status);
                         if (setup_packet.length < result.size()) {
                             result.resize(setup_packet.length);
                         }

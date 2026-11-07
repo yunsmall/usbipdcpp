@@ -246,11 +246,9 @@ void KeyboardHandler::request_set_report(std::uint8_t type, std::uint8_t report_
 
 data_type KeyboardHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                             std::uint32_t *p_status) {
-    data_type result;
-    // idle rate 是 16 位，控制传输数据阶段必须小端（此前用大端是 bug：
-    // 主机按小端解读，非 0 的 idle 值会读错）
-    vector_append_to_le(result, static_cast<std::uint16_t>(idle_speed_.load()));
-    return result;
+    // HID 1.11 §7.2.3：GET_IDLE 的 wLength 为 1，数据就是 idle rate 一个字节
+    // （0 = 无限）。多返回的字节会被主机按 wLength 截掉，只有低字节有效
+    return {static_cast<std::uint8_t>(idle_speed_.load() & 0xFF)};
 }
 
 void KeyboardHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {

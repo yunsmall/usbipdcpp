@@ -135,9 +135,14 @@ data_type LibevdevMouseInterfaceHandler::request_get_report(std::uint8_t type, s
 data_type LibevdevMouseInterfaceHandler::request_get_idle(std::uint8_t type, std::uint8_t report_id,
                                                           std::uint16_t length,
                                                           std::uint32_t *p_status) {
-    data_type result;
-    vector_append_to_net(result, (std::uint16_t) idle_speed);
-    return result;
+    (void) type;
+    (void) report_id;
+    (void) length;
+    // HID 1.11 §7.2.3：GET_IDLE 的 wLength 为 1，数据就是 idle rate 一个字节
+    // （0 = 无限）。原来返回 2 字节大端，主机截到 1 字节后拿到的是高字节 0，
+    // idle 值永远读成 0
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+    return {static_cast<std::uint8_t>(idle_speed.load() & 0xFF)};
 }
 
 void LibevdevMouseInterfaceHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
