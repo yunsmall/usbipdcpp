@@ -291,6 +291,16 @@ data_type KeyboardHandler::request_get_report(std::uint8_t type, std::uint8_t re
         }
         return result;
     }
+    if (static_cast<HIDReportType>(type) == HIDReportType::Output) {
+        // HID 1.11 §7.2.1：GET_REPORT 是强制请求；键盘定义了 Output 报告
+        // （LED，Report ID 1）时必须返回当前值，没定义 Output 报告的 ID 才 STALL
+        if (report_id == REPORT_ID_KEYBOARD) {
+            *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+            return {led_status_.load()};
+        }
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {};
+    }
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
     return {};
 }

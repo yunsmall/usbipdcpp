@@ -67,6 +67,28 @@ TEST(TestKeyboardHandler, SetReportNonOutputLeavesLedUntouched) {
     EXPECT_EQ(env.handler.get_led_status(), 0x01);
 }
 
+// HID 1.11 §7.2.1：GET_REPORT 强制支持，Output 报告（LED）必须返回当前值
+TEST(TestKeyboardHandler, GetReportOutputReturnsLedState) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0xFFFFFFFF;
+    env.handler.request_set_report(static_cast<std::uint8_t>(HIDReportType::Output), 1, 2, {0x01, 0x02}, &status);
+    ASSERT_EQ(status, 0u);
+
+    status = 0xFFFFFFFF;
+    auto report = env.handler.request_get_report(static_cast<std::uint8_t>(HIDReportType::Output), 1, 1, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(report, (data_type{0x02}));
+}
+
+// 没有定义 Output 报告的 Report ID 要 STALL，不能返回伪造数据
+TEST(TestKeyboardHandler, GetReportOutputUnknownIdStalls) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0;
+    auto report = env.handler.request_get_report(static_cast<std::uint8_t>(HIDReportType::Output), 2, 1, &status);
+    EXPECT_NE(status, 0u);
+    EXPECT_TRUE(report.empty());
+}
+
 // HID 1.11 §7.1.1：接口级 GET_DESCRIPTOR(HID, 0x21) 必须返回 9 字节
 // HID 类描述符，其中 wDescriptorLength 是报告描述符长度
 TEST(TestKeyboardHandler, GetDescriptorHidReturnsClassDescriptor) {
