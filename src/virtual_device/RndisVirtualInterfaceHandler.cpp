@@ -38,6 +38,8 @@ data_type make_indicate(RndisStatus status) {
 
 // 包 RNDIS_MSG_PACKET 头（44B）：MessageType=1、MessageLength=44+size、
 // DataOffset=36（数据从字节 44 起）、DataLength=size、其余 0。
+// [MS-RNDIS] §2.2.14：固定头 44 字节（10 个 4 字节字段 + 8 字节 Reserved），
+// DataOffset 从 DataOffset 字段本身起算（消息偏移 8），8+36=44。
 // 总长是 maxpacket(64) 倍数时补 1 字节防 ZLP（对齐内核 u_ether.c：RNDIS
 // 不允许 ZLP；MessageLength 不含填充，主机按消息长度拆包后尾字节被 trim）
 data_type wrap_rndis_packet(const std::uint8_t *data, std::size_t size) {

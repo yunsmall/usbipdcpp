@@ -43,6 +43,8 @@ int main(int argc, char **argv) {
                     }}},
             },
             // Interface 1: VideoStreaming（alt 0 空端点，alt 1 ISO IN 端点）
+            // UVC 1.5 §3.10.1.1：VS 等时端点的同步类型 D3..2 必须为
+            // Asynchronous（01），不能标成 Adaptive/Synchronous
             UsbInterface{
                     .interface_class = CC_VIDEO,
                     .interface_subclass = SC_VIDEOSTREAMING,

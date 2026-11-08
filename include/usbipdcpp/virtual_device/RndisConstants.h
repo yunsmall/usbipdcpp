@@ -249,6 +249,8 @@ static_assert(sizeof(RndisIndicateStatusMsg) == 20, "RNDIS_MSG_INDICATE 固定 2
 /// 数据起始 = data_offset 字段位置 + data_offset 值（两方向一致）：
 /// 设备→主机发 36 → 数据从字节 44 起；主机→设备发 16 → 数据从字节 24 起
 /// （数据起始算法见 data_start_offset，对齐内核 rndis_add_hdr/rm_hdr）。
+/// [MS-RNDIS] §2.2.14：DataOffset 是"从本消息 DataOffset 字段起算"的偏移
+/// （即消息偏移 8），不是从消息起始，所以数据起始 = 8 + DataOffset。
 /// OOB/PerPacket 字段内核实现全为 0（不做 TCP 校验和卸载），设备容忍非 0 即可。
 /// 主机方向只发前 24 字节（对齐 rndis_host.h 的 RNDIS_HEADER，其余字段不发）：
 /// 解析主机消息时按指针只读 MessageLength/DataOffset/DataLength（前 16 字节），
