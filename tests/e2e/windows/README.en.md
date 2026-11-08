@@ -17,10 +17,10 @@ sure data actually flows and the content is correct.
 
 ```powershell
 # all
-powershell -NoProfile -File tests\e2e_win\run_all.ps1
+powershell -NoProfile -File tests\e2e\windows\run_all.ps1
 
 # single test
-powershell -NoProfile -File tests\e2e_win\test_uac_speaker.ps1
+powershell -NoProfile -File tests\e2e\windows\test_uac_speaker.ps1
 ```
 
 Optional parameters: `-Port <port>`, `-BusId <busid>`, `-BuildDir <build dir>`.

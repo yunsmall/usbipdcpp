@@ -26,7 +26,7 @@ assert "TCP echo 5000 回显（$TCP_REPLY）" [ "$TCP_REPLY" = "hello" ]
 # 多段持续传输：8KB 数据会被切成多个 TCP 段，验证逐段回显与序列号推进
 # （上面的 5 字节只覆盖单段路径）
 if command -v python3 > /dev/null 2>&1; then
-    BIG=$(timeout 20 python3 "$E2E_DIR/net_echo.py" 192.168.53.1 5000 8192 2>&1 || true)
+    BIG=$(timeout 20 python3 "$SHARED_DIR/net_echo.py" 192.168.53.1 5000 8192 2>&1 || true)
     assert "8KB TCP 回显（$(tail -1 <<<"$BIG")）" grep -q "ECHO_OK" <<<"$BIG"
 fi
 

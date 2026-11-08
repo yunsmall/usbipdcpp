@@ -30,7 +30,7 @@ for RATE in 48000 44100 48000; do
     sleep 1 # 等推流收尾
     assert "${RATE}Hz 录音文件非空" [ -s "$REC" ]
     if [ -s "$REC" ] && command -v python3 > /dev/null 2>&1; then
-        TONE=$(timeout 15 python3 "$E2E_DIR/tone_check.py" "$REC" 440 2>&1 || true)
+        TONE=$(timeout 15 python3 "$SHARED_DIR/tone_check.py" "$REC" 440 2>&1 || true)
         assert "${RATE}Hz 录音音调为 440Hz（$(tail -2 <<<"$TONE" | head -1)）" \
             grep -q "MATCH" <<<"$TONE"
     fi

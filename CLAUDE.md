@@ -35,7 +35,8 @@ AbstInterfaceHandler::on_new_connection：
 修改文档时必须把中英文两个版本同步修改，不要只改一种语言：
 
 - `README.md` ↔ `README.zh.md`
-- `tests/e2e/README.en.md` ↔ `tests/e2e/README.md`
+- `tests/e2e/linux/README.en.md` ↔ `tests/e2e/linux/README.md`
+- `tests/e2e/windows/README.en.md` ↔ `tests/e2e/windows/README.md`
 - 新增文档如果只有一种语言，要同时补另一种语言的版本
 
 ## spdlog 日志级别被编译期裁剪时的调试手法
@@ -57,7 +58,6 @@ Release/RelWithDebInfo 构建下 SPDLOG_ACTIVE_LEVEL 编译期定为 INFO，TRAC
 
 这个项目的开源协议是lgpl，别搞混了
 
-别主动提交git，我叫你提交再提交
 
 成员变量末尾不要加"_"
 

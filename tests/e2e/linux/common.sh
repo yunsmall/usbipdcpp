@@ -5,7 +5,9 @@ set -u
 
 # 构建目录（可被 BUILD_DIR 环境变量覆盖；默认 WSL2 构建）
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$E2E_DIR/../.." && pwd)"
+# 平台无关的辅助脚本（net_echo.py 等）放在 tests/e2e/ 顶层，两平台共用
+SHARED_DIR="$(cd "$E2E_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$E2E_DIR/../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build_wsl2}"
 
 PORT="${PORT:-53240}"

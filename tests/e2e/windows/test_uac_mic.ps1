@@ -29,7 +29,9 @@ try {
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & ffmpeg -hide_banner -loglevel warning -f dshow -i "audio=$deviceName" `
+        # -sample_rate 是 dshow 输入参数：按设备原生 48kHz 打开，避免 Windows
+        # 音频引擎以 44.1kHz 重采样（重采样时钟偏差会让 440Hz 估频偏出容差）
+        & ffmpeg -hide_banner -loglevel warning -f dshow -sample_rate 48000 -i "audio=$deviceName" `
             -t 2 -y $wav 2>&1 | Out-Null
         $ffmpegExit = $LASTEXITCODE
     }
@@ -43,7 +45,24 @@ try {
     if ($size -lt 10000) {
         throw "录音数据过小：$size 字节（uaudio 没收到等时数据）"
     }
-    Write-Host "[PASS] UAC 麦克风枚举为 $deviceName，录音 $size 字节"
+
+    # 内容级校验用 FFT 主峰（与 speaker 测试同一分析器）；过零率法会被
+    # Windows 音频栈引入的少量毛刺/直流偏置带偏，实测 FFT 主峰为 440.2Hz
+    $analyzer = Join-Path $PSScriptRoot 'analyze_wav.py'
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $analysis = & python $analyzer $wav 2>&1 | Out-String
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    $json = $analysis | ConvertFrom-Json
+    $peak = [double]$json.peak_hz
+    if ([math]::Abs($peak - 440.0) / 440.0 -gt 0.02) {
+        throw "录音主频不符（期望 440Hz）：$analysis"
+    }
+    Write-Host "[PASS] UAC 麦克风枚举为 $deviceName，录音 $size 字节，主频 $($peak.ToString('F1'))Hz"
 }
 finally {
     if ($null -ne $portNum) {

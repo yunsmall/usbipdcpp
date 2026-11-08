@@ -169,6 +169,6 @@ function Resolve-BuildDir {
     if ($BuildDir) {
         return (Resolve-Path $BuildDir).Path
     }
-    $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
     return (Join-Path $root 'build')
 }

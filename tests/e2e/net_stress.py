@@ -19,10 +19,18 @@ deadline = time.time() + duration
 ok = 0
 fail = 0
 total = 0
+sock = None
+
+
+def connect():
+    s = socket.create_connection((host, port), timeout=3)
+    s.settimeout(3)
+    return s
+
+
+sock = connect()
 while time.time() < deadline:
     try:
-        sock = socket.create_connection((host, port), timeout=3)
-        sock.settimeout(3)
         sock.sendall(payload)
         got = b""
         while len(got) < size:
@@ -30,14 +38,25 @@ while time.time() < deadline:
             if not chunk:
                 break
             got += chunk
-        sock.close()
         if got == payload:
             ok += 1
             total += size
         else:
+            # 数据不完整：连接状态不可信，关掉重连后继续计时
             fail += 1
+            sock.close()
+            sock = connect()
     except OSError:
         fail += 1
+        try:
+            sock.close()
+        except OSError:
+            pass
+        try:
+            sock = connect()
+        except OSError:
+            break
+sock.close()
 
 print(f"rounds={ok + fail} ok={ok} fail={fail} bytes={total}")
 if ok > 0 and fail == 0:

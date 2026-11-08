@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# 绝对坐标鼠标：attach 后主机出现鼠标输入设备，通过示例的命令管道发送移动
-# 命令，evtest 捕获到绝对坐标事件（EV_ABS/ABS_X/ABS_Y）。验证 absolute_mouse
-# 的坐标映射链路（现有 HID 测试只覆盖相对鼠标）。
+# 绝对坐标鼠标：attach 后主机出现鼠标输入设备。
+# 默认只验证枚举，不发送移动命令；设 HID_EVENTS=1 才通过示例的命令管道
+# 发送移动并用 evtest 捕获 EV_ABS（会移动宿主机光标）。
 #
 # absolute_mouse 从 stdin 读命令，stdin EOF 会直接退出；start_server 把 stdin
 # 接到 /dev/null 无法使用，这里自己起进程并用 FIFO 保持命令通道。
 set -e
 source "$(dirname "$0")/common.sh"
+
+HID_EVENTS="${HID_EVENTS:-0}"
 
 setup_workdir absolute_mouse
 FIFO="$WORK_DIR/cmd.fifo"
@@ -44,21 +46,25 @@ assert "绝对坐标鼠标设备出现（$MOUSE）" [ -n "$MOUSE" ]
     exit 1
 }
 
-# 后台捕获 4 秒事件，期间通过命令通道发两次移动
-timeout 4 sudo evtest "$MOUSE" > "$WORK_DIR/ev.log" 2>&1 &
-EV_PID=$!
-sleep 1
-echo "pos 500 400" >&9
-sleep 0.5
-echo "pos 100 200" >&9
-wait "$EV_PID" || true
+if [ "$HID_EVENTS" = "1" ]; then
+    # 后台捕获 4 秒事件，期间通过命令通道发两次移动
+    timeout 4 sudo evtest "$MOUSE" > "$WORK_DIR/ev.log" 2>&1 &
+    EV_PID=$!
+    sleep 1
+    echo "pos 500 400" >&9
+    sleep 0.5
+    echo "pos 100 200" >&9
+    wait "$EV_PID" || true
 
-EV_ABS=$(grep -c "EV_ABS" "$WORK_DIR/ev.log" 2>/dev/null || true)
-ABS_X=$(grep -c "ABS_X" "$WORK_DIR/ev.log" 2>/dev/null || true)
-ABS_Y=$(grep -c "ABS_Y" "$WORK_DIR/ev.log" 2>/dev/null || true)
-assert "捕获到绝对坐标事件（$EV_ABS 条）" [ "$EV_ABS" -ge 1 ]
-assert "捕获到 ABS_X（$ABS_X 条）" [ "$ABS_X" -ge 1 ]
-assert "捕获到 ABS_Y（$ABS_Y 条）" [ "$ABS_Y" -ge 1 ]
+    EV_ABS=$(grep -c "EV_ABS" "$WORK_DIR/ev.log" 2>/dev/null || true)
+    ABS_X=$(grep -c "ABS_X" "$WORK_DIR/ev.log" 2>/dev/null || true)
+    ABS_Y=$(grep -c "ABS_Y" "$WORK_DIR/ev.log" 2>/dev/null || true)
+    assert "捕获到绝对坐标事件（$EV_ABS 条）" [ "$EV_ABS" -ge 1 ]
+    assert "捕获到 ABS_X（$ABS_X 条）" [ "$ABS_X" -ge 1 ]
+    assert "捕获到 ABS_Y（$ABS_Y 条）" [ "$ABS_Y" -ge 1 ]
+else
+    echo "  [SKIP] HID_EVENTS=0：不发送移动命令（只验证枚举；设 HID_EVENTS=1 开启）"
+fi
 
 # 优雅退出：发 q 后关闭写端
 echo "q" >&9 || true

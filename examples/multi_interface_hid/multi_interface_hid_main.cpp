@@ -12,9 +12,13 @@ using namespace usbipdcpp;
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("multi_interface_hid", "USB/IP composite device: relative mouse + keyboard");
+    // e2e 默认只验证枚举：示例启动后会持续移动鼠标/敲键盘，自动化测试里
+    // 不能向宿主机注入输入
+    opts.add_options()("no-demo", "Do not inject mouse/keyboard input, just enumerate");
     auto result = parse_example_args(opts, argc, argv);
     auto port = result["port"].as<std::uint16_t>();
     auto busid = result["busid"].as<std::string>();
+    bool demo = result.count("no-demo") == 0;
 
     spdlog::set_level(spdlog::level::trace);
 
@@ -55,46 +59,56 @@ int main(int argc, char **argv) {
 
     std::atomic<bool> running{true};
 
-    // 鼠标线程：画正方形（右 → 下 → 左 → 上）
-    std::thread mouse_thread([&]() {
-        constexpr std::int8_t speed = 5;
-        constexpr int side_steps = 40; // 每边 40 步
-        int dir = 0; // 0=右, 1=下, 2=左, 3=上
-        int step = 0;
-        while (running) {
-            switch (dir) {
-            case 0: mouse.move(speed, 0); break;
-            case 1: mouse.move(0, speed); break;
-            case 2: mouse.move(-speed, 0); break;
-            case 3: mouse.move(0, -speed); break;
+    // 鼠标线程：画正方形（右 → 下 → 左 → 上）；--no-demo 时不启动
+    std::thread mouse_thread;
+    if (demo) {
+        mouse_thread = std::thread([&]() {
+            constexpr std::int8_t speed = 5;
+            constexpr int side_steps = 40; // 每边 40 步
+            int dir = 0; // 0=右, 1=下, 2=左, 3=上
+            int step = 0;
+            while (running) {
+                switch (dir) {
+                case 0: mouse.move(speed, 0); break;
+                case 1: mouse.move(0, speed); break;
+                case 2: mouse.move(-speed, 0); break;
+                case 3: mouse.move(0, -speed); break;
+                }
+                if (++step >= side_steps) {
+                    step = 0;
+                    dir = (dir + 1) % 4;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-            if (++step >= side_steps) {
-                step = 0;
-                dir = (dir + 1) % 4;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-    });
+        });
+    }
 
-    // 键盘线程：a → z 每秒一个
-    std::thread keyboard_thread([&]() {
-        constexpr std::uint8_t HID_A = 0x04;
-        while (running) {
-            for (int i = 0; i < 26 && running; ++i) {
-                auto keycode = static_cast<std::uint8_t>(HID_A + i);
-                keyboard.press_key(keycode);
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                keyboard.release_key(keycode);
-                std::this_thread::sleep_for(std::chrono::milliseconds(950));
+    // 键盘线程：a → z 每秒一个；--no-demo 时不启动
+    std::thread keyboard_thread;
+    if (demo) {
+        keyboard_thread = std::thread([&]() {
+            constexpr std::uint8_t HID_A = 0x04;
+            while (running) {
+                for (int i = 0; i < 26 && running; ++i) {
+                    auto keycode = static_cast<std::uint8_t>(HID_A + i);
+                    keyboard.press_key(keycode);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    keyboard.release_key(keycode);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(950));
+                }
             }
-        }
-    });
+        });
+    }
 
     wait_for_exit();
 
     running = false;
-    mouse_thread.join();
-    keyboard_thread.join();
+    if (mouse_thread.joinable()) {
+        mouse_thread.join();
+    }
+    if (keyboard_thread.joinable()) {
+        keyboard_thread.join();
+    }
     server.stop();
 
     return 0;

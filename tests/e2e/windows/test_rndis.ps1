@@ -70,7 +70,22 @@ try {
     if ($reply -ne 'hello') {
         throw "TCP echo 不匹配：期望 hello，实际 [$reply]"
     }
-    Write-Host "[PASS] RNDIS 网卡 $adapterName ping 通，TCP echo 正确"
+
+    # 多段持续传输：共享 net_echo.py 发 8KB（上面 5 字节只覆盖单段）
+    $echoScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'net_echo.py'
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $big = & python $echoScript 192.168.53.1 5000 8192 2>&1 | Out-String
+        $bigExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    if ($bigExit -ne 0 -or $big -notmatch 'ECHO_OK') {
+        throw "8KB TCP echo 失败：$big"
+    }
+    Write-Host "[PASS] RNDIS 网卡 $adapterName ping 通，TCP echo 正确（5B + 8KB）"
 }
 finally {
     if ($null -ne $adapterName) {

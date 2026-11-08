@@ -23,7 +23,7 @@ assert "ping 通" ping -c 2 -W 1 192.168.53.1
 SERVER_PID=$(sudo ss -tlnp "sport = :$PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)
 RSS_BEFORE=$(awk '/VmRSS/{print $2}' "/proc/$SERVER_PID/status" 2>/dev/null || echo 0)
 
-RESULT=$(timeout $((DURATION + 30)) python3 "$E2E_DIR/net_stress.py" 192.168.53.1 5000 8192 "$DURATION" 2>&1 || true)
+RESULT=$(timeout $((DURATION + 30)) python3 "$SHARED_DIR/net_stress.py" 192.168.53.1 5000 8192 "$DURATION" 2>&1 || true)
 SUM=$(tail -2 <<<"$RESULT" | head -1)
 assert "持续传输无失败（$SUM）" grep -q "STRESS_OK" <<<"$RESULT"
 
@@ -33,7 +33,7 @@ assert "服务器进程仍在运行" kill -0 "$SERVER_PID"
 assert "内存增长 < 50MB（${GROWTH}KB）" [ "$GROWTH" -lt 51200 ]
 
 # 压测后设备仍正常工作（不是"能跑但收尾坏了"）
-AFTER=$(timeout 20 python3 "$E2E_DIR/net_echo.py" 192.168.53.1 5000 8192 2>&1 || true)
+AFTER=$(timeout 20 python3 "$SHARED_DIR/net_echo.py" 192.168.53.1 5000 8192 2>&1 || true)
 assert "压测后仍能正常回显" grep -q "ECHO_OK" <<<"$AFTER"
 
 sudo ip addr flush dev "$NETDEV" 2>/dev/null || true

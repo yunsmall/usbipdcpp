@@ -16,10 +16,10 @@
 
 ```powershell
 # 全部
-powershell -NoProfile -File tests\e2e_win\run_all.ps1
+powershell -NoProfile -File tests\e2e\windows\run_all.ps1
 
 # 单个
-powershell -NoProfile -File tests\e2e_win\test_uac_speaker.ps1
+powershell -NoProfile -File tests\e2e\windows\test_uac_speaker.ps1
 ```
 
 可选参数：`-Port <端口>`、`-BusId <busid>`、`-BuildDir <编译目录>`。
