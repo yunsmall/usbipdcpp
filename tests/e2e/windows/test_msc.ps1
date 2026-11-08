@@ -27,7 +27,7 @@ try {
     $disk = $null
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline -and $null -eq $disk) {
-        $disk = Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.SerialNumber -like 'SBIPDCPSN*' } |
+        $disk = Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.SerialNumber -like 'USBIPDCPSN*' } |
             Select-Object -First 1
         if ($null -eq $disk) { Start-Sleep -Milliseconds 500 }
     }
