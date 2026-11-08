@@ -121,6 +121,7 @@ void *MscBulkOnlyHandler::prepare_out_buffer(std::size_t length, StorageIoTransf
                     write_mmap_base_ = nullptr;
                     write_accumulated_ = 0;
                     command_failed_ = true;
+                    set_sense(0x05, 0x24, 0x00); // ILLEGAL REQUEST / INVALID FIELD IN CDB
                     state_ = BotState::Status;
                     trx->direct_io = false;
                     return nullptr;
@@ -184,19 +185,34 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
             bool is_data_in = (current_cbw_.bmCBWFlags & 0x80) != 0;
             auto transfer_len = current_cbw_.dCBWDataTransferLength;
 
+            // 新的 SCSI 命令开始，清除上一条命令的 sense；REQUEST SENSE 例外，
+            // 它必须读到上一条失败命令留下的原因（SPC-5 sense 数据生命周期）
+            if (cmd != ScsiCmd::RequestSense) {
+                set_sense(0, 0, 0);
+            }
+
             SPDLOG_DEBUG("CBW cmd=0x{:02X} dir={} len={}", cmd, is_data_in ? "IN" : "OUT", transfer_len);
 
             switch (cmd) {
                 case ScsiCmd::TestUnitReady:
                     command_failed_ = !(backend_ != nullptr);
+                    if (command_failed_) {
+                        // SPC-5：无介质时 TEST UNIT READY 回 NOT READY / MEDIUM NOT PRESENT
+                        set_sense(0x02, 0x3A, 0x00);
+                    }
                     state_ = BotState::Status;
                     break;
 
                 case ScsiCmd::RequestSense: {
-                    // REQUEST SENSE：固定格式，无错误时为 0x70 + 附加长度 10
+                    // REQUEST SENSE：固定格式，返回最近一次失败命令的 sense
                     SenseData sense{};
                     sense.valid_response_code = 0x70;
+                    sense.sense_key = sense_key_;
+                    sense.asc = sense_asc_;
+                    sense.ascq = sense_ascq_;
                     sense.additional_length = 10;
+                    // sense 一旦被取走就清除，避免同一错误重复报告
+                    set_sense(0, 0, 0);
                     auto len = std::min(transfer_len, std::uint32_t(sizeof(SenseData)));
                     staging_offset_ = 0;
                     staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&sense),
@@ -393,6 +409,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     if (static_cast<std::uint64_t>(lba) + count > (backend_ ? backend_->block_count() : 0)) {
                         SPDLOG_WARN("SCSI cmd 0x{:02X} LBA={} count={} 超出范围", cmd, lba, count);
                         command_failed_ = true;
+                        set_sense(0x05, 0x21, 0x00); // ILLEGAL REQUEST / LBA OUT OF RANGE
                         state_ = BotState::Status;
                         break;
                     }
@@ -417,6 +434,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                                              read_total_size_, read_bytes);
                                 staging_data_.clear();
                                 command_failed_ = true;
+                                set_sense(0x03, 0x11, 0x00); // MEDIUM ERROR / UNRECOVERED READ ERROR
                                 state_ = BotState::Status;
                                 break;
                             }
@@ -425,6 +443,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     }
                     else if (read_only_) {
                         command_failed_ = true;
+                        set_sense(0x07, 0x27, 0x00); // DATA PROTECT / WRITE PROTECTED
                         state_ = BotState::Status;
                     }
                     else {
@@ -489,6 +508,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     if (lba >= blocks) {
                         SPDLOG_WARN("WRITE SAME LBA={} 超出范围", lba);
                         command_failed_ = true;
+                        set_sense(0x05, 0x21, 0x00); // ILLEGAL REQUEST / LBA OUT OF RANGE
                         state_ = BotState::Status;
                         break;
                     }
@@ -497,6 +517,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     if (read_only_ || cnt > blocks - lba) {
                         SPDLOG_WARN("WRITE SAME LBA={} cnt={} 超出范围或只读", lba, cnt);
                         command_failed_ = true;
+                        set_sense(read_only_ ? 0x07 : 0x05, read_only_ ? 0x27 : 0x21, 0x00);
                         state_ = BotState::Status;
                         break;
                     }
@@ -519,6 +540,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 }
                 case ScsiCmd::AtaPassThrough:
                     command_failed_ = true;
+                    set_sense(0x05, 0x20, 0x00); // ILLEGAL REQUEST / INVALID COMMAND
                     state_ = BotState::Status;
                     break;
                 case ScsiCmd::Unmap: {
@@ -527,6 +549,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     SPDLOG_DEBUG("UNMAP CBW tag=0x{:08X} dataLen={}", current_cbw_.dCBWTag, data_len);
                     if (read_only_ || !backend_) {
                         command_failed_ = true;
+                        set_sense(read_only_ ? 0x07 : 0x02, read_only_ ? 0x27 : 0x3A, 0x00);
                         state_ = BotState::Status;
                         break;
                     }
@@ -544,6 +567,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 default:
                     SPDLOG_WARN("不支持的 SCSI 命令: 0x{:02X}", cmd);
                     command_failed_ = true;
+                    set_sense(0x05, 0x20, 0x00); // ILLEGAL REQUEST / INVALID COMMAND
                     state_ = BotState::Status;
                     break;
             }
@@ -581,6 +605,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     }
                     else {
                         command_failed_ = true;
+                        set_sense(0x05, 0x21, 0x00); // ILLEGAL REQUEST / LBA OUT OF RANGE
                     }
                     staging_data_.clear();
                     data_out_unmap_ = false;
@@ -602,6 +627,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                         if (written < bs) {
                             SPDLOG_ERROR("WRITE SAME LBA={} 短写：期望{}字节，实际{}字节", lba, bs, written);
                             command_failed_ = true;
+                            set_sense(0x03, 0x0C, 0x00); // MEDIUM ERROR / WRITE ERROR
                             break;
                         }
                         lba += 1;
@@ -635,6 +661,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                             SPDLOG_ERROR("WRITE10 LBA={} count={} 短写：期望{}字节，实际{}字节", write_lba_,
                                          write_count_, expected, written);
                             command_failed_ = true;
+                            set_sense(0x03, 0x0C, 0x00); // MEDIUM ERROR / WRITE ERROR
                         }
                         staging_data_.clear();
                         data_residue_ = 0;

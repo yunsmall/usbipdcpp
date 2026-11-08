@@ -105,6 +105,12 @@ private:
     /** CBW 解析阶段设为 true，Status 发 CSW 后清除 */
     bool command_failed_ = false;
 
+    /** 最近一次失败命令的 sense（REQUEST SENSE 返回；新命令开始时清零）。
+     *  SBC/SPC 要求 CHECK CONDITION 后主机能通过 REQUEST SENSE 拿到原因 */
+    std::uint8_t sense_key_ = 0;
+    std::uint8_t sense_asc_ = 0;
+    std::uint8_t sense_ascq_ = 0;
+
     /** WRITE 命令的目标 LBA 和块数（10 字节 CDB，LBA 为 32 位） */
     std::uint64_t write_lba_ = 0;
     std::uint16_t write_count_ = 0;
@@ -126,6 +132,13 @@ private:
     std::size_t write_accumulated_ = 0;
 
     void send_stall(std::uint32_t seqnum);
+
+    /** 记录失败命令的 sense，REQUEST SENSE 原样返回 */
+    void set_sense(std::uint8_t key, std::uint8_t asc, std::uint8_t ascq = 0) {
+        sense_key_ = key;
+        sense_asc_ = asc;
+        sense_ascq_ = ascq;
+    }
 
 public:
     // ========== 标准请求默认实现 ==========

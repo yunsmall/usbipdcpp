@@ -431,6 +431,53 @@ TEST(TestMscHandler, RequestSenseReturnsSenseData) {
     fixture.msc->on_disconnection(ec);
 }
 
+TEST(TestMscHandler, RequestSenseReportsLastCommandFailure) {
+    // 不支持的 SCSI 命令 → CSW failed，随后 REQUEST SENSE 必须返回
+    // ILLEGAL REQUEST / INVALID COMMAND；sense 取走后再次查询回 NO SENSE
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = 0x7F; // 未实现的命令
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x3334, 0x00, cdb, 0));
+    deliver_in_request(*fixture.msc, 2, 13, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(csw_from_submit(stub.submits[0]).bCSWStatus, 1u); // failed
+
+    auto request_sense = [&](std::uint32_t seq, std::uint32_t tag) {
+        std::array<std::uint8_t, 16> sense_cdb{};
+        sense_cdb[0] = ScsiCmd::RequestSense;
+        sense_cdb[7] = 18;
+        deliver_out_data(*fixture.msc, seq, make_cbw(tag, 0x80, sense_cdb, 18));
+        auto before = stub.submits.size();
+        deliver_in_request(*fixture.msc, seq + 1, 18, fixture.ep_in, ec);
+        EXPECT_EQ(stub.submits.size(), before + 1);
+        return data_from_submit(stub.submits.back());
+    };
+
+    auto sense = request_sense(3, 0x3335);
+    ASSERT_EQ(sense.size(), 18u);
+    EXPECT_EQ(sense[0], 0x70);
+    EXPECT_EQ(sense[2], 0x05);  // ILLEGAL REQUEST
+    EXPECT_EQ(sense[12], 0x20); // INVALID COMMAND OPERATION CODE
+
+    // sense 已被取走：第二次查询应回到 NO SENSE
+    deliver_in_request(*fixture.msc, 5, 13, fixture.ep_in, ec); // 第一条 REQUEST SENSE 的 CSW
+    ASSERT_FALSE(ec);
+    auto sense2 = request_sense(6, 0x3337);
+    ASSERT_EQ(sense2.size(), 18u);
+    EXPECT_EQ(sense2[2], 0x00);
+    EXPECT_EQ(sense2[12], 0x00);
+
+    fixture.msc->on_disconnection(ec);
+}
+
 // ========== MSC 边缘情况 ==========
 
 TEST(TestMscHandler, InquiryStandardReturnsIdentifiers) {
