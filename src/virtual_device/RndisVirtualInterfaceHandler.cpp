@@ -534,6 +534,10 @@ void RndisDataInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const
         // 逐帧交给网络侧消费并立即应答；否则先给子类当场消费机会（true=已
         // 处理），都不行挂起入通道（NAK 背压），子类之后用 take_frame() 取出
         // 数据并应答（挂起的是原始消息，不做剥头）
+        //
+        // 不检查 OID_GEN_CURRENT_PACKET_FILTER（RNDIS 数据初始化）状态：内核
+        // gadget 的 rndis_rm_hdr 同样不看 state，主机在 INIT 前发数据帧属异常
+        // 行为，照常处理与参考实现一致
         auto *trx = GenericTransfer::from_handle(transfer.get());
         auto received_size = static_cast<std::uint32_t>(trx->data.size());
         SPDLOG_TRACE("[RNDIS] OUT raw={} bytes", received_size);
