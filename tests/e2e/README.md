@@ -19,6 +19,8 @@ attach → 验证虚拟设备行为（网络/串口/块设备/HID/音频/视频�
 | python3 + pyusb（`python3-usb` 包） | cdc_acm / pipe 数据面测试 | 没有则这两个脚本失败 |
 | alsa-utils（aplay/arecord） | audio / speaker 测试 | 缺失时对应脚本 SKIP 或失败 |
 | ffmpeg | uvc 取流测试 | 缺失时 SKIP |
+| v4l2-ctl（v4l-utils） | uvc 格式枚举测试 | 缺失时 test_uvc_formats 跳过枚举（仍用 ffmpeg 验证取流） |
+| mkfs.ext4（e2fsprogs） | msc 挂载测试 | 缺失时 test_msc_mount 整体 SKIP |
 | evtest | HID（键盘/鼠标/手柄）测试 | 事件流捕获 |
 | iproute2 / util-linux / coreutils | ss、lsblk、blockdev、truncate、cmp 等 | WSL 默认自带 |
 
@@ -101,8 +103,17 @@ bash tests/e2e/run_all.sh
 | test_cdc_throttle.sh | 串口（节流） | ttyACM 计数上报 |
 | test_pipe.sh | vendor 管道 | pyusb bulk OUT→IN 回显 + 周期发送日志 |
 | test_audio.sh | UAC 麦克风 | arecord 实际录音 2 秒 |
+| test_audio_rates.sh | UAC 采样率切换 | 48k/44.1k 来回切换录音，音调校验 440Hz |
 | test_speaker.sh | UAC 扬声器 | aplay 播 440Hz 正弦波，收流 WAV 频率/峰谷数内容级比对 |
 | test_uvc.sh | UVC 摄像头 | ffmpeg 实际拉 5 帧 |
+| test_uvc_formats.sh | UVC 640x480 | v4l2-ctl 枚举格式/分辨率 + 指定分辨率拉流、关闭后重新打开 |
+| test_webcam.sh | 复合摄像头+麦克风 | ffmpeg 拉帧 + arecord 录音同时验证 |
+| test_rndis.sh | 虚拟 RNDIS 网卡 | enx 网卡 + ping + 5B/8KB TCP echo |
+| test_reconnect.sh | 串口重连 | detach→attach、停服→重启→attach，每次回显验证 |
+| test_msc_mount.sh | U 盘文件系统 | mkfs.ext4 + mount + 写文本/1MiB 文件读回 + 重挂载校验 |
+| test_multi_devices.sh | 多设备服务器 | list 三台、同时 attach、逐台 detach 互不影响 |
+| test_multi_interface_hid.sh | 复合 HID | 键盘/鼠标节点并存、并发事件、互不串扰 |
 
 python 辅助脚本：`cdc_acm_test.py`（串口读写）、`pipe_test.py`（libusb 传输）、
-`speaker_verify.py`（音频内容比对）。
+`speaker_verify.py`（音频内容比对）、`tone_check.py`（单文件音调校验）、
+`net_echo.py`（TCP 大包回显校验）。

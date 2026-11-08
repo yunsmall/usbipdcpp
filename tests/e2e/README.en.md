@@ -21,6 +21,8 @@ attach with the local usbip client → verify the virtual device's behavior
 | python3 + pyusb (`python3-usb` package) | cdc_acm / pipe data-plane tests | These two scripts fail without it |
 | alsa-utils (aplay/arecord) | audio / speaker tests | Scripts SKIP or fail if missing |
 | ffmpeg | uvc capture test | SKIP if missing |
+| v4l2-ctl (v4l-utils) | uvc format enumeration test | test_uvc_formats skips enumeration if missing (still verifies capture with ffmpeg) |
+| mkfs.ext4 (e2fsprogs) | msc mount test | test_msc_mount SKIPs entirely if missing |
 | evtest | HID (keyboard/mouse/gamepad) tests | Event stream capture |
 | iproute2 / util-linux / coreutils | ss, lsblk, blockdev, truncate, cmp, etc. | Present by default in WSL |
 
@@ -130,9 +132,18 @@ bash tests/e2e/run_all.sh
 | test_cdc_throttle.sh | Serial (throttled) | ttyACM count report |
 | test_pipe.sh | vendor pipe | pyusb bulk OUT→IN echo + periodic-send logs |
 | test_audio.sh | UAC microphone | arecord actually records for 2 s |
+| test_audio_rates.sh | UAC sample-rate switching | Records at 48k/44.1k back and forth, verifies 440 Hz tone |
 | test_speaker.sh | UAC speaker | aplay plays a 440 Hz sine; received WAV compared at content level (frequency / extrema count) |
 | test_uvc.sh | UVC camera | ffmpeg actually captures 5 frames |
+| test_uvc_formats.sh | UVC 640x480 | v4l2-ctl format/resolution enumeration + capture at the requested size, reopen after close |
+| test_webcam.sh | Composite camera + microphone | ffmpeg capture and arecord recording verified together |
+| test_rndis.sh | Virtual RNDIS NIC | enx interface + ping + 5 B / 8 KB TCP echo |
+| test_reconnect.sh | Serial reconnect | detach→attach, stop server→restart→attach, echo verified each time |
+| test_msc_mount.sh | USB drive filesystem | mkfs.ext4 + mount + write text/1 MiB file and read back + remount check |
+| test_multi_devices.sh | Multi-device server | all three listed, attached together, detaching one leaves the others intact |
+| test_multi_interface_hid.sh | Composite HID | keyboard/mouse nodes coexist, concurrent events, no crosstalk |
 
 Python helper scripts: `cdc_acm_test.py` (serial read/write),
 `pipe_test.py` (libusb transfer), `speaker_verify.py` (audio content
-comparison).
+comparison), `tone_check.py` (single-file tone verification),
+`net_echo.py` (large-payload TCP echo verification).

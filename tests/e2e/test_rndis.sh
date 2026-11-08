@@ -23,6 +23,13 @@ assert "ping 192.168.53.1 通" ping -c 3 -W 1 192.168.53.1
 TCP_REPLY=$(timeout 5 bash -c 'exec 3<>/dev/tcp/192.168.53.1/5000; printf "hello" >&3; IFS= read -r -N 5 -t 3 reply <&3; printf "%s" "$reply"' 2>/dev/null || true)
 assert "TCP echo 5000 回显（$TCP_REPLY）" [ "$TCP_REPLY" = "hello" ]
 
+# 多段持续传输：8KB 数据会被切成多个 TCP 段，验证逐段回显与序列号推进
+# （上面的 5 字节只覆盖单段路径）
+if command -v python3 > /dev/null 2>&1; then
+    BIG=$(timeout 20 python3 "$E2E_DIR/net_echo.py" 192.168.53.1 5000 8192 2>&1 || true)
+    assert "8KB TCP 回显（$(tail -1 <<<"$BIG")）" grep -q "ECHO_OK" <<<"$BIG"
+fi
+
 # 清理：恢复网卡 IP（避免影响下次测试的 enx 状态）
 sudo ip addr flush dev "$NETDEV" 2>/dev/null || true
 stop_server
