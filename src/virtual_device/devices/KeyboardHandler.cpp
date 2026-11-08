@@ -82,6 +82,40 @@ KeyboardHandler::KeyboardHandler(UsbInterface &handle_interface, StringPool &str
             // Input (Data,Var,Abs) — 按键码
             0x81,
             0x00,
+            // Usage Page (LEDs)
+            0x05,
+            0x08,
+            // Usage Minimum (1 = Num Lock)
+            0x19,
+            0x01,
+            // Usage Maximum (5 = Kana)
+            0x29,
+            0x05,
+            // Logical Minimum (0)
+            0x15,
+            0x00,
+            // Logical Maximum (1)
+            0x25,
+            0x01,
+            // Report Count (5)
+            0x95,
+            0x05,
+            // Report Size (1)
+            0x75,
+            0x01,
+            // Output (Data,Var,Abs) — LED 状态位：主机用 SET_REPORT 下发，
+            // 内核 usbhid 据此创建 capslock/numlock 等 LED class 设备
+            0x91,
+            0x02,
+            // Report Count (1)
+            0x95,
+            0x01,
+            // Report Size (3)
+            0x75,
+            0x03,
+            // Output (Const) — 补齐到一个字节（HID 1.11 键盘 LED 报告）
+            0x91,
+            0x01,
             // End Collection (Keyboard)
             0xC0,
             // ===== Report ID 2: Consumer Control =====

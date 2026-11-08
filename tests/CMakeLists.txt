@@ -50,6 +50,10 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_hid_handler)
     target_link_libraries(test_hid_handler PRIVATE usbipdcpp_virtual_device)
 
+    # 键盘 LED 输出报告：描述符声明 LED Output + SET_REPORT 更新 LED 状态
+    add_test_file(test_keyboard_handler)
+    target_link_libraries(test_keyboard_handler PRIVATE usbipdcpp_virtual_device)
+
     add_test_file(test_cdc_acm_handler)
     target_link_libraries(test_cdc_acm_handler PRIVATE usbipdcpp_virtual_device)
 

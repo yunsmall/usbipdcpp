@@ -59,11 +59,26 @@ int main(int argc, char **argv) {
         });
     }
 
+    // 主机下发的 LED 状态（Caps Lock 等）变化时打日志：e2e 写
+    // /sys/class/leds/*capslock/brightness 后靠这条日志验证 SET_REPORT 链路
+    std::thread led_thread([&]() {
+        auto last_led = kb.get_led_status();
+        while (running) {
+            auto led = kb.get_led_status();
+            if (led != last_led) {
+                SPDLOG_INFO("LED status changed: 0x{:02x}", led);
+                last_led = led;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
     wait_for_exit();
     running = false;
     if (key_thread.joinable()) {
         key_thread.join();
     }
+    led_thread.join();
     server.stop();
 
     return 0;

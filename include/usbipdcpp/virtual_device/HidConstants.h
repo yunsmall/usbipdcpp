@@ -12,9 +12,11 @@ enum class HIDRequest {
     SetProtocol = 0x0B,
 };
 
+// HID 1.11 §7.2.2 Table 7-3：Report Type 的编码是 1=Input、2=Output、3=Feature
+// （USB 控制请求 SET_REPORT/GET_REPORT 的 wValue 高字节同此编码），不能对调
 enum class HIDReportType {
-    Output = 0x01,
-    Input = 0x02,
+    Input = 0x01,
+    Output = 0x02,
     Feature = 0x03,
 };
 
