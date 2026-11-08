@@ -9,7 +9,10 @@
 
 #include "test_utils.h"
 
+#include "usbipdcpp/Device.h"
+#include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Interface.h"
+#include "usbipdcpp/protocol.h"
 #include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/UvcVirtualInterfaceHandler.h"
@@ -411,4 +414,37 @@ TEST(TestUvcHandler, ShortProbeCommitTolerated) {
         EXPECT_EQ(env.stub.submits[0].status, 0u);
         env.stub.submits.clear();
     }
+}
+
+namespace {
+
+/// 非 VirtualDeviceHandler 的设备处理器：验证 UVC helper 的类型检查
+class ForeignDeviceHandler : public AbstDeviceHandler {
+public:
+    using AbstDeviceHandler::AbstDeviceHandler;
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit, UsbEndpoint, std::optional<UsbInterface>,
+                     usbipdcpp::error_code &) override {
+    }
+    void handle_unlink_seqnum(std::uint32_t, std::uint32_t) override {
+    }
+};
+
+} // namespace
+
+TEST(TestUvcHandler, SetupRejectsForeignDeviceHandler) {
+    // 设备已绑定其它类型的 handler 时，UVC 装配必须报参数错误，不能
+    // dynamic_pointer_cast 得到空指针后直接解引用
+    StringPool pool;
+    std::vector<UsbInterface> interfaces = {
+            {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOCONTROL, .interface_protocol = 0x00},
+            {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOSTREAMING, .interface_protocol = 0x00},
+    };
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, std::move(interfaces));
+    device->assign_interface_numbers();
+    device->handler = std::make_shared<ForeignDeviceHandler>(*device);
+
+    auto err = UvcDeviceHelper::setup(device, 0, pool, std::make_unique<StubSource>());
+    EXPECT_EQ(err, make_error_code(ErrorType::INVALID_ARG));
+    EXPECT_EQ(device->interfaces[0].handler, nullptr);
+    EXPECT_EQ(device->interfaces[1].handler, nullptr);
 }

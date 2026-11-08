@@ -118,7 +118,14 @@ void VirtualDeviceHandler::on_new_connection(TransferResponder &current_session,
         if (intf.handler) {
             intf.handler->on_new_connection(current_session, ec);
             if (ec) {
-                // 子接口连接建立失败：先回滚前面已成功建连的接口（它们可能已启动
+                // 先停调度线程再回滚接口：调度线程可能正在执行前面接口提交的
+                // processor（如 UAC 的 process_iso_in/out），先让接口
+                // on_disconnection 清状态会让它们读到半清理状态（正常断连路径
+                // 也是这个顺序，见 on_disconnection）
+                if (use_transfer_scheduler) {
+                    transfer_scheduler.stop();
+                }
+                // 子接口连接建立失败：回滚前面已成功建连的接口（它们可能已启动
                 // 发送线程，不通知断开会留下运行中的线程，析构时 join 卡死），
                 // 再撤销基类已注册的 session 指针，防止残留指向即将析构的
                 // Session（use-after-free，见 AbstDeviceHandler::register_session 注释）
@@ -128,10 +135,6 @@ void VirtualDeviceHandler::on_new_connection(TransferResponder &current_session,
                         break;
                     if (done.handler)
                         done.handler->on_disconnection(rollback_ec);
-                }
-                // 回滚：撤销已启动的调度线程
-                if (use_transfer_scheduler) {
-                    transfer_scheduler.stop();
                 }
                 remove_responder();
                 break;

@@ -971,6 +971,11 @@ std::error_code UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, std::u
     if (!found[0] || !found[1]) {
         return make_error_code(ErrorType::INVALID_ARG);
     }
+    // 处理器类型不符时不能装配 UVC：后续要把 handler 当 VirtualDeviceHandler
+    // 用，dynamic_pointer_cast 会得到空指针
+    if (device->handler && !std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
     auto *vc_interface = found[0];
     auto *vs_interface = found[1];
 
