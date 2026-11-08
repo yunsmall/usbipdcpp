@@ -15,6 +15,106 @@
 
 using namespace usbipdcpp;
 
+namespace {
+
+/// 设备配置的额定电流（mA）。USB 2.0 与 USB 3.0 的 bMaxPower 单位不同，
+/// 但描述的是同一个额定功率，换速度只换单位
+constexpr std::uint16_t DEVICE_MAX_POWER_MA = 500;
+/// USB 2.0 §9.6.3 Table 9-10：bMaxPower 以 2mA 为单位
+constexpr std::uint16_t USB2_MAX_POWER_UNIT_MA = 2;
+/// USB 3.0 §9.6.3 Table 9-15：SuperSpeed 下 bMaxPower 以 8mA 为单位
+constexpr std::uint16_t USB3_MAX_POWER_UNIT_MA = 8;
+
+/// GET_STATUS(Device) 状态位（USB 3.0 §9.4.5 Figure 9-5）
+constexpr std::uint16_t DEVICE_STATUS_REMOTE_WAKEUP = 0x0002;
+constexpr std::uint16_t DEVICE_STATUS_U1_ENABLE = 0x0004;
+constexpr std::uint16_t DEVICE_STATUS_U2_ENABLE = 0x0008;
+
+/**
+ * @brief 设备是否工作在 SuperSpeed（含 SuperSpeedPlus）
+ * @param speed 设备速度
+ * @return SuperSpeed 返回 true
+ */
+constexpr bool is_superspeed(UsbSpeed speed) {
+    return speed == UsbSpeed::Super || speed == UsbSpeed::SuperPlus;
+}
+
+/**
+ * @brief 设备描述符应上报的 bcdUSB
+ * @param speed 设备速度
+ * @param version 构造时配置的 USB 版本
+ * @return BCD 版本；USB 3.0 §9.6.1 规定 SuperSpeed 能力设备的 bcdUSB 必须为 0300H
+ */
+std::uint16_t effective_bcd_usb(UsbSpeed speed, const Version &version) {
+    auto bcd = static_cast<std::uint16_t>(version);
+    if (is_superspeed(speed) && bcd < 0x0300) {
+        return 0x0300;
+    }
+    return bcd;
+}
+
+/**
+ * @brief 把额定电流编码成 bMaxPower 字段
+ * @param milliamps 额定电流（mA）
+ * @param unit_ma bMaxPower 的单位（mA/LSB，按速度取 2 或 8）
+ * @return bMaxPower；向上取整，避免低报电流
+ */
+constexpr std::uint8_t encode_max_power(std::uint16_t milliamps, std::uint16_t unit_ma) {
+    return static_cast<std::uint8_t>((milliamps + unit_ma - 1) / unit_ma);
+}
+
+/**
+ * @brief SuperSpeed 下端点描述符的 wMaxPacketSize
+ * @param endpoint 端点
+ * @return USB 3.0 §9.6.6 Table 9-18 规定的合法值：Bulk 固定 1024；
+ *         Interrupt/Isochronous 在 bMaxBurst 大于 0 时固定 1024，
+ *         否则沿用声明值（上限 1024）；Control 固定 512
+ */
+std::uint16_t superspeed_max_packet_size(const UsbEndpoint &endpoint) {
+    switch (static_cast<EndpointAttributes>(endpoint.attributes & 0x03)) {
+        case EndpointAttributes::Bulk:
+            return 1024;
+        case EndpointAttributes::Interrupt:
+        case EndpointAttributes::Isochronous:
+            if (endpoint.max_burst > 0) {
+                return 1024;
+            }
+            return std::min<std::uint16_t>(endpoint.max_packet_size, 1024);
+        case EndpointAttributes::Control:
+            return 512;
+    }
+    return endpoint.max_packet_size;
+}
+
+/**
+ * @brief 构造端点的 SuperSpeed Endpoint Companion 描述符（USB 3.0 §9.6.7 Table 9-20）
+ * @param endpoint 端点
+ * @param max_packet_size 该端点最终上报的 wMaxPacketSize
+ * @return 6 字节伴随描述符
+ */
+SsEndpointCompanionDesc make_ss_endpoint_companion(const UsbEndpoint &endpoint, std::uint16_t max_packet_size) {
+    const auto type = static_cast<EndpointAttributes>(endpoint.attributes & 0x03);
+    // Control 端点的 bMaxBurst 必须为 0；其他端点合法范围 0..15，超范围按上限处理
+    std::uint8_t max_burst = 0;
+    if (type != EndpointAttributes::Control) {
+        max_burst = std::min<std::uint8_t>(endpoint.max_burst, 15);
+    }
+    // bmAttributes：Bulk 是 MaxStreams（本库不支持 stream，恒 0）、Isochronous
+    // 是 Mult（每个服务间隔额外的包数，恒 0）、Control/Interrupt 全部保留为 0
+    constexpr std::uint8_t companion_attributes = 0;
+    // wBytesPerInterval 只对周期性端点有效：上限是 (bMaxBurst+1) 个包，
+    // Mult 恒 0 时即 (bMaxBurst+1)*wMaxPacketSize；Bulk 必须为 0
+    std::uint16_t bytes_per_interval = 0;
+    if (type == EndpointAttributes::Interrupt || type == EndpointAttributes::Isochronous) {
+        bytes_per_interval = static_cast<std::uint16_t>((static_cast<std::uint32_t>(max_burst) + 1) *
+                                                        max_packet_size);
+    }
+    return SsEndpointCompanionDesc{0x06, static_cast<std::uint8_t>(DescriptorType::SsEndpointCompanion), max_burst,
+                                   companion_attributes, bytes_per_interval};
+}
+
+} // namespace
+
 void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep,
                                        std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) {
     auto seqnum = cmd.header.seqnum;
@@ -284,6 +384,22 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         case StandardRequest::SetFeature: {
                             SPDLOG_TRACE("设备SetFeature");
                             request_set_feature(setup_packet.value, &status);
+                            break;
+                        }
+                        case StandardRequest::SetSel: {
+                            SPDLOG_TRACE("设备SetSel");
+                            // USB 3.0 §9.4.12：数据阶段 6 字节退出时延。与
+                            // SET_DESCRIPTOR 一样，主机可能只发短包，按实际收到的
+                            // 字节数截取，不能按声明的 wLength 越界构造
+                            const auto copy_len =
+                                    std::min<std::size_t>(transfer_buffer_length, trx->data.size());
+                            data_type out_data(trx->data.begin(), trx->data.begin() + copy_len);
+                            request_set_sel(out_data, setup_packet.value, setup_packet.index, &status);
+                            break;
+                        }
+                        case StandardRequest::SetIsochDelay: {
+                            SPDLOG_TRACE("设备SetIsochDelay");
+                            request_set_isoch_delay(setup_packet.value, &status);
                             break;
                         }
                         default: {
@@ -739,28 +855,83 @@ void VirtualDeviceHandler::request_clear_feature(std::uint16_t feature_selector,
     // DEVICE_REMOTE_WAKEUP 只在配置描述符声明支持（bmAttributes bit5）时存在；
     // 清除运行时状态位。不声明支持时按规范回 STALL
     if (feature_selector == SetupPacket::USB_DEVICE_REMOTE_WAKEUP && remote_wakeup_supported) {
-        device_status &= ~std::uint16_t{0x0002};
+        device_status &= ~DEVICE_STATUS_REMOTE_WAKEUP;
         *p_status = 0;
         return;
+    }
+    // USB 3.0 §9.4.9 Note：U1_Enable/U2_Enable 只有 Configured 状态才处理；
+    // 其他状态按 Request Error 处理。LTM 未在 BOS 里声明能力（bmAttributes
+    // bit1 = 0），SET/CLEAR_FEATURE(LTM_ENABLE) 一律 STALL
+    if (feature_selector == SetupPacket::USB_DEVICE_U1_ENABLE ||
+        feature_selector == SetupPacket::USB_DEVICE_U2_ENABLE) {
+        if (is_superspeed(get_speed()) && current_configuration != 0) {
+            auto bit = feature_selector == SetupPacket::USB_DEVICE_U1_ENABLE ? DEVICE_STATUS_U1_ENABLE
+                                                                             : DEVICE_STATUS_U2_ENABLE;
+            device_status &= static_cast<std::uint16_t>(~bit);
+            *p_status = 0;
+            return;
+        }
     }
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
 }
 
 std::uint16_t VirtualDeviceHandler::request_get_status(std::uint32_t *p_status) {
-    // USB 2.0 §9.4.5：bit0 self-powered、bit1 remote wakeup，其余保留为 0
+    // USB 3.0 §9.4.5 Figure 9-5：bit0 self-powered、bit1 remote wakeup、
+    // bit2 U1 Enable、bit3 U2 Enable、bit4 LTM Enable，其余保留为 0
     *p_status = 0;
     return device_status;
 }
 
 void VirtualDeviceHandler::request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status) {
     if (feature_selector == SetupPacket::USB_DEVICE_REMOTE_WAKEUP && remote_wakeup_supported) {
-        device_status |= std::uint16_t{0x0002};
+        device_status |= DEVICE_STATUS_REMOTE_WAKEUP;
         *p_status = 0;
         return;
     }
+    // USB 3.0 §9.4.9：Configured 状态下主机可以打开 U1/U2；Address 状态下
+    // 收到 SetFeature(U1/U2 Enable) 必须回 Request Error
+    if (feature_selector == SetupPacket::USB_DEVICE_U1_ENABLE ||
+        feature_selector == SetupPacket::USB_DEVICE_U2_ENABLE) {
+        if (is_superspeed(get_speed()) && current_configuration != 0) {
+            auto bit = feature_selector == SetupPacket::USB_DEVICE_U1_ENABLE ? DEVICE_STATUS_U1_ENABLE
+                                                                             : DEVICE_STATUS_U2_ENABLE;
+            device_status |= bit;
+            *p_status = 0;
+            return;
+        }
+    }
     // TEST_MODE 等设备级特性虚拟设备不实现（TEST_MODE 需要主机配合进入
-    // 对应测试模式，虚拟设备无物理层可测），按规范回 STALL
+    // 对应测试模式，虚拟设备无物理层可测），按规范回 STALL；LTM_ENABLE
+    // 同理，BOS 的 SuperSpeed 能力描述符没有声明 LTM 能力
     *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+}
+
+void VirtualDeviceHandler::request_set_sel(const data_type &exit_latencies, std::uint16_t w_value,
+                                           std::uint16_t w_index, std::uint32_t *p_status) {
+    // USB 3.0 §9.4.12：SET_SEL 是 SuperSpeed 才有的标准请求，USB 2.0 设备
+    // 收到按 Request Error 处理（§9.2.7）；wValue/wIndex 必须为 0，wLength 必须为 6
+    if (!is_superspeed(get_speed()) || w_value != 0 || w_index != 0 || exit_latencies.size() != 6) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return;
+    }
+    // 数据阶段按 USB 线格式小端：U1SEL/U1PEL 各 1 字节，U2SEL/U2PEL 各 2 字节
+    u1_system_exit_latency = exit_latencies[0];
+    u1_device_to_host_latency = exit_latencies[1];
+    u2_system_exit_latency = static_cast<std::uint16_t>(exit_latencies[2] |
+                                                       (static_cast<std::uint16_t>(exit_latencies[3]) << 8));
+    u2_device_to_host_latency = static_cast<std::uint16_t>(exit_latencies[4] |
+                                                          (static_cast<std::uint16_t>(exit_latencies[5]) << 8));
+    *p_status = 0;
+}
+
+void VirtualDeviceHandler::request_set_isoch_delay(std::uint16_t delay_ns, std::uint32_t *p_status) {
+    // USB 3.0 §9.4.11：SET_ISOCH_DELAY 是 SuperSpeed 才有的标准请求
+    if (!is_superspeed(get_speed())) {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return;
+    }
+    isoch_delay_ns = delay_ns;
+    *p_status = 0;
 }
 
 data_type VirtualDeviceHandler::request_get_descriptor(std::uint8_t type, std::uint8_t language_id,
@@ -850,11 +1021,11 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
                                     ? std::uint8_t{9}
                                     : static_cast<std::uint8_t>(handle_device.ep0_in.max_packet_size);
     DeviceDesc{0x12, static_cast<std::uint8_t>(DescriptorType::Device),
-               usb_version, // bcdUSB
+               effective_bcd_usb(speed, usb_version), // bcdUSB
                handle_device.device_class, handle_device.device_subclass, handle_device.device_protocol,
                max_packet_size0, // bMaxPacketSize0
                handle_device.vendor_id, handle_device.product_id,
-               static_cast<std::uint16_t>(handle_device.device_bcd.minor | (handle_device.device_bcd.major << 8)),
+               static_cast<std::uint16_t>(handle_device.device_bcd), // bcdDevice：整个 BCD 值按小端序列化
                string_manufacturer_value, string_product_value, string_serial_value, handle_device.num_configurations}
             .append_to(desc);
 
@@ -867,14 +1038,14 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
 data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                    std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
-    // USB 3.0 §9.2.6：bcdUSB >= 0x0210 的设备才要求支持 BOS。更低版本设备
+    // USB 3.0 §9.2.6.6：bcdUSB >= 0x0210 的设备才要求支持 BOS。更低版本设备
     // 收到 GET_DESCRIPTOR(BOS) 属于对设备不存在的描述符请求，按规范回 STALL
-    if (static_cast<std::uint16_t>(usb_version) < 0x0210) {
+    auto speed = static_cast<UsbSpeed>(handle_device.speed);
+    if (effective_bcd_usb(speed, usb_version) < 0x0210) {
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
         return {};
     }
-    auto speed = static_cast<UsbSpeed>(handle_device.speed);
-    bool superspeed = speed == UsbSpeed::Super || speed == UsbSpeed::SuperPlus;
+    bool superspeed = is_superspeed(speed);
     // BOS 头 (5) + USB 2.0 Extension (7)，SuperSpeed 再加设备能力 (10)
     data_type desc;
     BosHeaderDesc{0x05, static_cast<std::uint8_t>(DescriptorType::BOS),
@@ -884,20 +1055,24 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
     BosUsb20ExtCapDesc{0x07,
                        0x10, // bDescriptorType: DEVICE CAPABILITY
                        0x02, // bDevCapabilityType: USB 2.0 EXTENSION
-                       0x00} // bmAttributes: no LPM
+                       // USB 3.0 §9.6.2.1：SuperSpeed 设备的 USB 2.0 Extension
+                       // 描述符必须把 bmAttributes bit1（LPM）置 1
+                       static_cast<std::uint32_t>(superspeed ? 0x00000002 : 0x00000000)}
             .append_to(desc);
     if (superspeed) {
         // wSpeedsSupported: bit1 Full + bit2 High + bit3 Super（SuperSpeed
         // 设备必须同时支持至少一种 USB 2.0 速度）；bFunctionalitySupport = 3
-        // 表示在 SuperSpeed 下功能完整
+        // 表示在 SuperSpeed 下功能完整。退出时延按 Table 9-13 取最小非零值
+        // （01H / 0001H = 小于 1μs）：0 表示“零时延”，实际链路不可能为零，
+        // Linux 在 bU1DevExitLat 与 wU2DevExitLat 同时为 0 时会关闭 LPM
         BosSsCapDesc{0x0A,
                      0x10,     // bDescriptorType: DEVICE CAPABILITY
                      0x03,     // bDevCapabilityType: SUPERSPEED
                      0x00,     // bmAttributes: LTM 关闭
                      0x000E,   // wSpeedsSupported
                      0x03,     // bFunctionalitySupport: SuperSpeed
-                     0x00,     // bU1DevExitLat
-                     0x0000}   // wU2DevExitLat
+                     0x01,     // bU1DevExitLat: 小于 1μs
+                     0x0001}   // wU2DevExitLat: 小于 1μs
                 .append_to(desc);
     }
 
@@ -910,6 +1085,11 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
 data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                              std::uint32_t *p_status) {
     std::shared_lock lock(data_mutex);
+    const auto speed = static_cast<UsbSpeed>(handle_device.speed);
+    const bool superspeed = is_superspeed(speed);
+    // USB 3.0 §9.6.3 Table 9-15：SuperSpeed 下 bMaxPower 以 8mA 为单位，
+    // USB 2.0 以 2mA 为单位（§9.6.3 Table 9-13），同一个额定电流编码不同
+    const auto max_power_unit_ma = superspeed ? USB3_MAX_POWER_UNIT_MA : USB2_MAX_POWER_UNIT_MA;
     data_type desc;
     ConfigHeaderDesc{0x09, static_cast<std::uint8_t>(DescriptorType::Configuration),
                      0x00, // wTotalLength: 循环拼接完成后回填
@@ -919,7 +1099,7 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                      // bit7 保留恒 1；bit5 = remote wakeup 能力，必须与
                      // DEVICE_REMOTE_WAKEUP 的 SET_FEATURE 行为一致
                      static_cast<std::uint8_t>(0x80 | (remote_wakeup_supported ? 0x20 : 0x00)),
-                     0xFA} // bMaxPower 500mA
+                     encode_max_power(DEVICE_MAX_POWER_MA, max_power_unit_ma)} // bMaxPower
             .append_to(desc);
     // IAD（接口关联描述符）：多接口功能（RNDIS/UVC 等）在 Windows 上要识别
     // 为复合设备必须有 IAD（对齐内核 gadget 各功能的 *_iad_descriptor）。
@@ -966,9 +1146,19 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
                 intf_desc.insert(intf_desc.end(), class_specific_descriptor.begin(), class_specific_descriptor.end());
             }
             for (auto &endpoint: alt_endpoints) {
+                // USB 3.0 §9.6.6 Table 9-18：SuperSpeed 下 Bulk 的 wMaxPacketSize
+                // 固定 1024，Interrupt/Isochronous 在 bMaxBurst 大于 0 时也固定 1024
+                auto max_packet_size = superspeed ? superspeed_max_packet_size(endpoint) : endpoint.max_packet_size;
                 EndpointDesc{0x07, static_cast<std::uint8_t>(DescriptorType::Endpoint),
-                             endpoint.address, endpoint.attributes, endpoint.max_packet_size, endpoint.interval}
+                             endpoint.address, endpoint.attributes, max_packet_size, endpoint.interval}
                         .append_to(intf_desc);
+
+                // USB 3.0 §9.6.5/§9.6.7：SuperSpeed 下每个非 EP0 端点的描述符
+                // 后必须紧跟其 Endpoint Companion 描述符，且位于类特定端点
+                // 描述符之前（伴随描述符紧跟所属端点描述符）
+                if (superspeed && !endpoint.is_ep0()) {
+                    make_ss_endpoint_companion(endpoint, max_packet_size).append_to(intf_desc);
+                }
 
                 // 端点级类特定描述符由接口 handler 按自己的类规则生成，
                 // 设备级基类只负责拼接（不再特判 UAC/UVC）

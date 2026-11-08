@@ -215,6 +215,14 @@ TEST(DescriptorStruct, StdEndpoint) {
     EXPECT_EQ(d, (data_type{0x07, 0x05, 0x81, 0x05, 0xC0, 0x00, 0x01}));
 }
 
+TEST(DescriptorStruct, SsEndpointCompanion) {
+    // USB 3.0 §9.6.7 Table 9-20：bMaxBurst=2、bmAttributes=0、
+    // wBytesPerInterval=3072（小端 00 0C）
+    data_type d;
+    SsEndpointCompanionDesc{0x06, 0x30, 2, 0, 3072}.append_to(d);
+    EXPECT_EQ(d, (data_type{0x06, 0x30, 0x02, 0x00, 0x00, 0x0C}));
+}
+
 TEST(DescriptorStruct, StdBos) {
     data_type d;
     BosHeaderDesc{0x05, 0x0F, 12, 1}.append_to(d);

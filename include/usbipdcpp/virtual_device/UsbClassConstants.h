@@ -140,7 +140,22 @@ struct EndpointDesc {
 };
 static_assert(sizeof(EndpointDesc) == 7, "端点描述符固定 7 字节");
 
-/// BOS 描述符头（USB 3.0 Table 9-14 兼容 USB 2.0 设备，固定 5 字节）
+/// SuperSpeed Endpoint Companion 描述符（USB 3.0 §9.6.7 Table 9-20，固定 6 字节）。
+/// 紧跟在所属端点描述符之后、类特定端点描述符之前，仅 SuperSpeed 配置使用
+struct SsEndpointCompanionDesc {
+    std::uint8_t bLength;
+    std::uint8_t bDescriptorType;
+    std::uint8_t bMaxBurst;
+    std::uint8_t bmAttributes; // bit1-0 = Mult（仅等时端点），其余保留
+    std::uint16_t wBytesPerInterval;
+
+    void append_to(data_type &d) const {
+        vector_append_to_le(d, bLength, bDescriptorType, bMaxBurst, bmAttributes, wBytesPerInterval);
+    }
+};
+static_assert(sizeof(SsEndpointCompanionDesc) == 6, "SuperSpeed 端点伴随描述符固定 6 字节");
+
+/// BOS 描述符头（USB 3.0 §9.6.2 Table 9-9，固定 5 字节）
 struct BosHeaderDesc {
     std::uint8_t bLength;
     std::uint8_t bDescriptorType;

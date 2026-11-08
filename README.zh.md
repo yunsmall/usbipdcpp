@@ -737,24 +737,33 @@ AbstDeviceHandler
 
 #### USB 3.0（SuperSpeed）支持范围
 
-描述符层支持 SuperSpeed：`UsbSpeed::Super`/`SuperPlus` 时 `bMaxPacketSize0` 用指数编码（9），
-返回带 SuperSpeed capability 的 BOS 描述符，不返回 Device_Qualifier/OtherSpeedConfiguration，
-中断/等时间隔使用 SuperSpeed 的 `2^(bInterval-1) × 125µs` 规则。
+以 `UsbSpeed::Super`/`SuperPlus` 导出的虚拟设备可以在 Linux `vhci_hcd` 的
+SuperSpeed 根集线器上枚举（用 `mock_msc --super` 做过端到端验证：设备速率
+5000 Mb/s，MSC 读写正常）。
 
-设备框架语义按 USB 2.0 实现，这是有意的：
+设备侧按 USB 3.0 实现了设备必须满足的部分：
 
-- Linux `vudc` 是 USB/IP 设备控制器的参考实现，最高只到 High Speed
-  （`udc->gadget.max_speed = USB_SPEED_HIGH`）。`vudc_transfer.c` 里的
-  `USB_SPEED_SUPER` 分支是从 dummy_hcd 继承来的，实际不可达。
-- USB/IP 协议不携带 SuperSpeed 的 endpoint companion / burst / stream 信息，
-  没有真实客户端会使用 SuperSpeed 设备语义。
-- 只实现一半 USB 3.0 设备框架（`U1_ENABLE`/`U2_ENABLE`/`LTM_ENABLE`、
-  `FUNCTION_SUSPEND`、`SET_SEL`）而没有真正的 U1/U2 状态机和退出延迟处理，
-  在严格的 SuperSpeed 主机上比直接 STALL 更容易导致枚举失败。
+- 设备描述符：SuperSpeed 下 `bcdUSB` 至少为 0x0300，`bMaxPacketSize0` 用指数
+  编码 9（512 字节）。
+- 配置描述符：每个非 EP0 端点描述符后跟 SuperSpeed Endpoint Companion
+  描述符（§9.6.7）；Bulk 的 `wMaxPacketSize` 固定 1024，`bMaxBurst > 0` 的
+  中断/等时端点也报 1024；`wBytesPerInterval` 覆盖 `(bMaxBurst+1)` 个包；
+  `bMaxPower` 改用 8mA 单位而不是 2mA。
+- BOS：USB 2.0 Extension 描述符置 LPM 位（§9.6.2.1），SuperSpeed capability
+  报告非零的 U1/U2 退出时延（全零会让 Linux 关闭 LPM）。
+- `SET_SEL`（§9.4.12）和 `SET_ISOCH_DELAY`（§9.4.11）接受并保存；
+  `SET/CLEAR_FEATURE(U1_ENABLE/U2_ENABLE)` 在 Configured 状态生效，并反映到
+  GET_STATUS(Device) 的 bit2/bit3。
+- 不返回 Device_Qualifier 和 OtherSpeedConfiguration（§9.4.3）。
 
-具体表现：接口级标准 SET/CLEAR_FEATURE 回 STALL（USB 2.0 没有接口级 feature
-selector），设备级 GET_STATUS 使用 USB 2.0 的位定义，`SET_SEL`/`SET_ISOCH_DELAY`
-不处理。如果以后虚拟设备需要作为真正的 SuperSpeed 设备运行，这里列的就是要补的工作。
+仍不支持的部分：
+
+- Bulk stream（`MaxStreams`）和等时 `Mult`：伴随描述符里固定报 0。
+- `LTM_ENABLE` 和 `FUNCTION_SUSPEND` 仍然回 STALL：BOS 没声明 LTM 能力，
+  也没有功能挂起状态机。
+- 不生成 SuperSpeedPlus（USB 3.1）BOS capability 描述符，参考规范只有
+  USB 3.0。
+- burst/stream 参数不经过 USB/IP 传输，只影响主机侧调度。
 
 ## 平台说明
 

@@ -69,6 +69,12 @@ struct SetupPacket {
     static constexpr std::uint8_t USB_ENDPOINT_HALT = 0u;
     static constexpr std::uint8_t USB_DEVICE_REMOTE_WAKEUP = 1u;
     static constexpr std::uint8_t USB_DEVICE_TEST_MODE = 2u;
+    // USB 3.0 Table 9-6：SuperSpeed 新增的设备级特性选择子
+    static constexpr std::uint8_t USB_DEVICE_U1_ENABLE = 48u;
+    static constexpr std::uint8_t USB_DEVICE_U2_ENABLE = 49u;
+    static constexpr std::uint8_t USB_DEVICE_LTM_ENABLE = 50u;
+    // USB 3.0 Table 9-6：接口级特性选择子（Suspend Options 在 wIndex 高字节）
+    static constexpr std::uint8_t USB_INTERFACE_FUNCTION_SUSPEND = 0u;
 
     static constexpr std::uint8_t USB_TYPE_MASK = 0b01100000u;
     static constexpr std::uint8_t USB_RECIP_MASK = 0b00011111u;

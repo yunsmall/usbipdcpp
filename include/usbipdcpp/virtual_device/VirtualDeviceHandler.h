@@ -119,6 +119,23 @@ protected:
 
     virtual void request_set_feature(std::uint16_t feature_selector, std::uint32_t *p_status);
 
+    /**
+     * @brief 处理 SET_SEL（USB 3.0 §9.4.12），保存主机给出的 U1/U2 退出时延
+     * @param exit_latencies 数据阶段的 6 字节（U1SEL、U1PEL、U2SEL、U2PEL，单位 μs）
+     * @param w_value Setup 包的 wValue，规范要求必须为 0
+     * @param w_index Setup 包的 wIndex，规范要求必须为 0
+     * @param p_status 输出状态；非 SuperSpeed、参数非法或长度不是 6 时置 EPIPE
+     */
+    virtual void request_set_sel(const data_type &exit_latencies, std::uint16_t w_value, std::uint16_t w_index,
+                                 std::uint32_t *p_status);
+
+    /**
+     * @brief 处理 SET_ISOCH_DELAY（USB 3.0 §9.4.11）
+     * @param delay_ns 主机到设备的单向传输时延（ns，0..65535）
+     * @param p_status 输出状态；非 SuperSpeed 时置 EPIPE
+     */
+    virtual void request_set_isoch_delay(std::uint16_t delay_ns, std::uint32_t *p_status);
+
     data_type request_get_descriptor(std::uint8_t type, std::uint8_t language_id, std::uint16_t descriptor_length,
                                      std::uint32_t *p_status);
 
@@ -177,6 +194,46 @@ protected:
     virtual void set_descriptor(std::uint16_t configuration_value) = 0;
 
 public:
+    /**
+     * @brief 取 SET_ISOCH_DELAY 最近一次设置的值（USB 3.0 §9.4.11）
+     * @return 时延（ns）
+     */
+    [[nodiscard]] std::uint16_t get_isoch_delay_ns() const {
+        return isoch_delay_ns;
+    }
+
+    /**
+     * @brief 取 SET_SEL 最近一次设置的 U1 系统退出时延（USB 3.0 §9.4.12）
+     * @return 时延（μs）
+     */
+    [[nodiscard]] std::uint8_t get_u1_system_exit_latency() const {
+        return u1_system_exit_latency;
+    }
+
+    /**
+     * @brief 取 SET_SEL 最近一次设置的 U1 设备到主机退出时延（USB 3.0 §9.4.12）
+     * @return 时延（μs）
+     */
+    [[nodiscard]] std::uint8_t get_u1_device_to_host_latency() const {
+        return u1_device_to_host_latency;
+    }
+
+    /**
+     * @brief 取 SET_SEL 最近一次设置的 U2 系统退出时延（USB 3.0 §9.4.12）
+     * @return 时延（μs）
+     */
+    [[nodiscard]] std::uint16_t get_u2_system_exit_latency() const {
+        return u2_system_exit_latency;
+    }
+
+    /**
+     * @brief 取 SET_SEL 最近一次设置的 U2 设备到主机退出时延（USB 3.0 §9.4.12）
+     * @return 时延（μs）
+     */
+    [[nodiscard]] std::uint16_t get_u2_device_to_host_latency() const {
+        return u2_device_to_host_latency;
+    }
+
     void change_string_configuration(const std::wstring &new_str) {
         // 首次设置（索引 0 未分配）时先分配有效索引，避免 change_string(0) 抛异常；
         // 已分配则直接更新。四个 change_string_* 统一此健壮性处理
@@ -245,12 +302,21 @@ protected:
     /// 是否启用 transfer_scheduler（默认关，见 set_use_transfer_scheduler）
     bool use_transfer_scheduler = false;
 
-    /// 设备 GET_STATUS 状态字（bit0 self-powered、bit1 remote wakeup，
-    /// USB 2.0 §9.4.5）。标准请求在会话接收线程处理，描述符构造在连接前，
+    /// 设备 GET_STATUS 状态字（bit0 self-powered、bit1 remote wakeup、
+    /// bit2 U1 Enable、bit3 U2 Enable、bit4 LTM Enable，USB 3.0 §9.4.5
+    /// Figure 9-5）。标准请求在会话接收线程处理，描述符构造在连接前，
     /// 不需要额外同步
     std::uint16_t device_status = 0;
     /// 是否支持远程唤醒（见 set_remote_wakeup_support）
     bool remote_wakeup_supported = false;
+    /// SET_ISOCH_DELAY 设置的时延（ns，USB 3.0 §9.4.11）
+    std::uint16_t isoch_delay_ns = 0;
+    /// SET_SEL 设置的退出时延（μs，USB 3.0 §9.4.12）：U1 的系统/设备到主机时延
+    std::uint8_t u1_system_exit_latency = 0;
+    std::uint8_t u1_device_to_host_latency = 0;
+    /// SET_SEL 设置的退出时延（μs，USB 3.0 §9.4.12）：U2 的系统/设备到主机时延
+    std::uint16_t u2_system_exit_latency = 0;
+    std::uint16_t u2_device_to_host_latency = 0;
     /// 当前配置值（0 = Address 状态/未配置）。USB 2.0 §9.4.7：SET_CONFIGURATION(0)
     /// 使设备回到 Address 状态；§9.4.2：未配置时 GET_CONFIGURATION 必须返回 0。
     /// 不能直接返回 handle_device.configuration_value——那是描述符里声明的配置值，

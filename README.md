@@ -759,27 +759,37 @@ Virtual devices need to simulate this "store URBs in order" behavior, so request
 
 #### USB 3.0 (SuperSpeed) support scope
 
-The descriptor layer supports SuperSpeed: `UsbSpeed::Super`/`SuperPlus` encode
-`bMaxPacketSize0` in exponent form (9), return a BOS descriptor with the SuperSpeed
-capability, suppress Device_Qualifier/OtherSpeedConfiguration, and use the
-SuperSpeed `2^(bInterval-1) x 125us` scheduling interval.
+A virtual device exported as `UsbSpeed::Super`/`SuperPlus` enumerates on the
+Linux `vhci_hcd` SuperSpeed roothub (verified end to end with `mock_msc
+--super`: the device reports 5000 Mb/s and MSC reads/writes work).
 
-The device-framework semantics are implemented to USB 2.0. This is deliberate:
+The device framework implements the USB 3.0 requirements a device must satisfy:
 
-- Linux `vudc`, the reference USB/IP device controller, caps at High Speed
-  (`udc->gadget.max_speed = USB_SPEED_HIGH`). Its `USB_SPEED_SUPER` branch in
-  `vudc_transfer.c` is inherited from dummy_hcd and unreachable.
-- The USB/IP protocol carries no SuperSpeed endpoint companion / burst / stream
-  information, so no real client exercises SuperSpeed device semantics.
-- Implementing only part of the USB 3.0 device framework (`U1_ENABLE`/`U2_ENABLE`/
-  `LTM_ENABLE`, `FUNCTION_SUSPEND`, `SET_SEL`) without a real U1/U2 state machine
-  and exit-latency handling is more likely to break enumeration on a strict
-  SuperSpeed host than STALLing those requests.
+- Device descriptor: `bcdUSB` is at least 0x0300 and `bMaxPacketSize0` is the
+  exponent 9 (512 bytes) whenever the device operates at SuperSpeed.
+- Configuration descriptor: a SuperSpeed Endpoint Companion descriptor (§9.6.7)
+  follows every non-EP0 endpoint; bulk `wMaxPacketSize` is 1024 and
+  interrupt/isochronous endpoints with `bMaxBurst > 0` also report 1024;
+  `wBytesPerInterval` covers `(bMaxBurst+1)` packets; `bMaxPower` uses 8-mA
+  units instead of 2-mA.
+- BOS: the USB 2.0 Extension descriptor sets the LPM bit (§9.6.2.1), and the
+  SuperSpeed capability reports non-zero U1/U2 exit latencies (all-zero makes
+  Linux disable LPM).
+- `SET_SEL` (§9.4.12) and `SET_ISOCH_DELAY` (§9.4.11) are accepted and stored;
+  `SET/CLEAR_FEATURE(U1_ENABLE/U2_ENABLE)` are honored in the Configured state
+  and reflected in GET_STATUS(Device) bits 2/3.
+- Device_Qualifier and OtherSpeedConfiguration are not returned (§9.4.3).
 
-Consequences: interface-level standard SET/CLEAR_FEATURE return STALL (USB 2.0 has
-no interface feature selector), device-level GET_STATUS uses the USB 2.0 bit
-layout, and `SET_SEL`/`SET_ISOCH_DELAY` are not handled. If a virtual device ever
-has to behave as a real SuperSpeed device, this list is the work to do.
+Remaining limits:
+
+- Bulk streams (`MaxStreams`) and isochronous `Mult` are not supported, so the
+  companion descriptor always reports 0 for them.
+- `LTM_ENABLE` and `FUNCTION_SUSPEND` still STALL: the BOS capability does not
+  advertise LTM, and there is no function-suspend state machine.
+- SuperSpeedPlus (USB 3.1) BOS capability descriptors are not emitted; the USB
+  3.0 specification is the only reference used.
+- Burst/stream parameters are not carried by USB/IP; they only affect how the
+  host schedules transfers.
 
 ## Platform Notes
 

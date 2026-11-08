@@ -65,6 +65,9 @@ struct UsbEndpoint {
     std::uint8_t attributes = 0;
     std::uint16_t max_packet_size = 0;
     std::uint8_t interval = 0;
+    /// SuperSpeed Endpoint Companion 的 bMaxBurst（0 = 每个 burst 1 个包）；
+    /// USB 2.0 设备忽略该字段（USB 3.0 §9.6.7 Table 9-20）
+    std::uint8_t max_burst = 0;
 
 
     [[nodiscard]] Direction direction() const {

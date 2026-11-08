@@ -71,6 +71,9 @@ enum class StandardRequest {
     GetInterface = 10,
     SetInterface = 11,
     SynchFrame = 12,
+    // USB 3.0 §9.4.11/§9.4.12：SuperSpeed 新增的标准请求
+    SetSel = 0x30,
+    SetIsochDelay = 0x31,
 };
 
 enum class RequestRecipient { Device = 0, Interface, Endpoint, Other };
@@ -88,6 +91,8 @@ enum class DescriptorType {
     Debug = 0xA,
     InterfaceAssociation = 0xB,
     BOS = 0xF,
+    /// 只出现在配置描述符里，不是 GET_DESCRIPTOR 可请求的类型
+    SsEndpointCompanion = 0x30,
 };
 
 enum class PortFeat {

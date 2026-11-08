@@ -36,6 +36,8 @@ public:
     using VirtualDeviceHandler::request_get_status;
     using VirtualDeviceHandler::request_set_descriptor;
     using VirtualDeviceHandler::request_set_feature;
+    using VirtualDeviceHandler::request_set_isoch_delay;
+    using VirtualDeviceHandler::request_set_sel;
 };
 
 struct DeviceEnv {
@@ -112,7 +114,8 @@ TEST(VirtualDeviceStandard, SuperSpeedBosContainsSsCapability) {
     EXPECT_EQ(desc[3], 0);
     EXPECT_EQ(desc[4], 2); // USB 2.0 Extension + SuperSpeed
 
-    const data_type expect_ss = {0x0A, 0x10, 0x03, 0x00, 0x0E, 0x00, 0x03, 0x00, 0x00, 0x00};
+    // 退出时延取最小非零值（01H / 0001H，小于 1μs）：0 在 Linux 里会关闭 LPM
+    const data_type expect_ss = {0x0A, 0x10, 0x03, 0x00, 0x0E, 0x00, 0x03, 0x01, 0x01, 0x00};
     const data_type actual_ss(desc.begin() + 12, desc.end());
     EXPECT_EQ(actual_ss, expect_ss);
 }
@@ -1005,4 +1008,310 @@ TEST(VirtualDeviceStandard, LongStringDescriptorTruncatesTo255Bytes) {
     ASSERT_EQ(desc.size(), 254u);
     EXPECT_EQ(desc[0], 254);
     EXPECT_EQ(desc[1], static_cast<std::uint8_t>(DescriptorType::String));
+}
+
+// ==================== SuperSpeed（USB 3.0 §9.6） ====================
+
+namespace {
+
+/// 按 bLength 把描述符链切成 (bDescriptorType, 描述符字节)
+std::vector<std::pair<std::uint8_t, data_type>> split_descriptors(const data_type &desc) {
+    std::vector<std::pair<std::uint8_t, data_type>> parts;
+    for (std::size_t pos = 0; pos + 2 <= desc.size();) {
+        auto length = desc[pos];
+        // 长度非法就停止，避免越界/死循环
+        if (length < 2 || pos + length > desc.size()) {
+            break;
+        }
+        parts.emplace_back(desc[pos + 1], data_type(desc.begin() + pos, desc.begin() + pos + length));
+        pos += length;
+    }
+    return parts;
+}
+
+/// 构造一个单接口、端点由参数决定的设备并绑定 ProbeDevice
+std::shared_ptr<UsbDevice> make_device_with_endpoints(StringPool &pool, UsbSpeed speed,
+                                                      std::vector<UsbEndpoint> endpoints,
+                                                      std::unique_ptr<ProbeDevice> &handler) {
+    UsbInterface intf{};
+    intf.endpoints = {std::move(endpoints)};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, speed);
+    handler = std::make_unique<ProbeDevice>(*device, pool);
+    return device;
+}
+
+} // namespace
+
+TEST(VirtualDeviceStandard, SuperSpeedDeviceDescriptorReportsBcdUsb30) {
+    // USB 3.0 §9.6.1：SuperSpeed 能力设备的设备描述符 bcdUSB 必须是 0300H；
+    // 并且 §9.2.6.6 要求 >= 0210H 的设备支持 GET_DESCRIPTOR(BOS)
+    DeviceEnv env(UsbSpeed::Super, {2, 0, 0});
+    std::uint32_t status = 0;
+    auto desc = env.handler->get_device_descriptor(0, 18, &status);
+    ASSERT_EQ(desc.size(), 18u);
+    EXPECT_EQ(desc[2] | (desc[3] << 8), 0x0300);
+
+    auto bos = env.handler->get_bos_descriptor(0, 64, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_FALSE(bos.empty());
+}
+
+TEST(VirtualDeviceStandard, BcdDeviceIsFullBcdValue) {
+    // bcdDevice 是完整 BCD（USB 2.0 Table 9-8），不是只拼 major/minor 两字节：
+    // 2.3.4 → 0x0234，小端线上字节 34 02
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full, Version{2, 3, 4});
+    auto handler = std::make_unique<ProbeDevice>(*device, pool);
+    std::uint32_t status = 0;
+    auto desc = handler->get_device_descriptor(0, 18, &status);
+    ASSERT_EQ(desc.size(), 18u);
+    EXPECT_EQ(desc[12], 0x34);
+    EXPECT_EQ(desc[13], 0x02);
+}
+
+TEST(VirtualDeviceStandard, SuperSpeedBosUsb20ExtensionSetsLpmBit) {
+    // USB 3.0 §9.6.2.1：SuperSpeed 设备的 USB 2.0 Extension 描述符
+    // bmAttributes bit1（LPM）必须置 1
+    DeviceEnv env(UsbSpeed::Super, {3, 0, 0});
+    std::uint32_t status = 0;
+    auto desc = env.handler->get_bos_descriptor(0, 64, &status);
+    ASSERT_EQ(desc.size(), 22u);
+    // USB 2.0 Extension 描述符从偏移 5 开始，bmAttributes 在偏移 8..11（小端）
+    EXPECT_EQ(desc[8], 0x02);
+    EXPECT_EQ(desc[9], 0x00);
+    EXPECT_EQ(desc[10], 0x00);
+    EXPECT_EQ(desc[11], 0x00);
+}
+
+TEST(VirtualDeviceStandard, SuperSpeedConfigurationInsertsBulkCompanion) {
+    // USB 3.0 §9.6.5/§9.6.7：每个非 EP0 端点描述符后紧跟 Endpoint Companion，
+    // §9.6.6：SuperSpeed 下 Bulk 的 wMaxPacketSize 固定 1024；
+    // §9.6.3：bMaxPower 以 8mA 为单位（500mA → 63）
+    StringPool pool;
+    std::unique_ptr<ProbeDevice> handler;
+    auto device = make_device_with_endpoints(
+            pool, UsbSpeed::Super,
+            {
+                    {.address = 0x81,
+                     .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                     .max_packet_size = 512,
+                     .interval = 0,
+                     .max_burst = 3},
+                    {.address = 0x02,
+                     .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                     .max_packet_size = 512,
+                     .interval = 0},
+            },
+            handler);
+    (void) device;
+
+    std::uint32_t status = 0xFFFFFFFF; // 成功的描述符函数不改写状态
+    auto desc = handler->get_configuration_descriptor(0, 4096, &status);
+    ASSERT_GE(desc.size(), 9u);
+    EXPECT_EQ(desc[8], 63); // 500mA / 8mA，向上取整
+    EXPECT_EQ(desc[2] | (desc[3] << 8), desc.size());
+    EXPECT_EQ(desc.size(), 9u + 9u + 2u * (7u + 6u));
+
+    auto parts = split_descriptors(desc);
+    ASSERT_EQ(parts.size(), 6u);
+    EXPECT_EQ(parts[0].first, static_cast<std::uint8_t>(DescriptorType::Configuration));
+    EXPECT_EQ(parts[1].first, static_cast<std::uint8_t>(DescriptorType::Interface));
+
+    EXPECT_EQ(parts[2].first, static_cast<std::uint8_t>(DescriptorType::Endpoint));
+    ASSERT_EQ(parts[2].second.size(), 7u);
+    EXPECT_EQ(parts[2].second[4] | (parts[2].second[5] << 8), 1024);
+    EXPECT_EQ(parts[3].first, static_cast<std::uint8_t>(DescriptorType::SsEndpointCompanion));
+    EXPECT_EQ(parts[3].second, (data_type{0x06, 0x30, 0x03, 0x00, 0x00, 0x00}));
+
+    EXPECT_EQ(parts[4].first, static_cast<std::uint8_t>(DescriptorType::Endpoint));
+    ASSERT_EQ(parts[4].second.size(), 7u);
+    EXPECT_EQ(parts[4].second[4] | (parts[4].second[5] << 8), 1024);
+}
+
+TEST(VirtualDeviceStandard, SuperSpeedInterruptCompanionReservesServiceIntervalBytes) {
+    // USB 3.0 §9.6.6：Interrupt 端点 bMaxBurst 大于 0 时 wMaxPacketSize 固定 1024；
+    // §9.6.7 Table 9-20：wBytesPerInterval 是每个服务间隔的总字节数，
+    // 即 (bMaxBurst+1) * wMaxPacketSize；bMaxBurst 为 0 时就是 wMaxPacketSize
+    StringPool pool;
+    std::unique_ptr<ProbeDevice> handler;
+    auto device = make_device_with_endpoints(
+            pool, UsbSpeed::Super,
+            {
+                    {.address = 0x81,
+                     .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                     .max_packet_size = 16,
+                     .interval = 1,
+                     .max_burst = 1},
+                    {.address = 0x82,
+                     .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
+                     .max_packet_size = 16,
+                     .interval = 1},
+            },
+            handler);
+    (void) device;
+
+    std::uint32_t status = 0;
+    auto desc = handler->get_configuration_descriptor(0, 4096, &status);
+    ASSERT_EQ(status, 0u);
+    auto parts = split_descriptors(desc);
+    ASSERT_EQ(parts.size(), 6u); // 配置 + 接口 + (端点+伴随) ×2
+    EXPECT_EQ(parts[2].second[4] | (parts[2].second[5] << 8), 1024);
+    EXPECT_EQ(parts[3].second, (data_type{0x06, 0x30, 0x01, 0x00, 0x00, 0x08}));
+
+    // 第二个端点：bMaxBurst=0 → 沿用声明的 16 字节包，wBytesPerInterval 16
+    EXPECT_EQ(parts[4].second[4] | (parts[4].second[5] << 8), 16);
+    EXPECT_EQ(parts[5].second, (data_type{0x06, 0x30, 0x00, 0x00, 0x10, 0x00}));
+}
+
+TEST(VirtualDeviceStandard, HighSpeedConfigurationHasNoCompanion) {
+    // SuperSpeed Endpoint Companion 只出现在 SuperSpeed 配置里
+    StringPool pool;
+    std::unique_ptr<ProbeDevice> handler;
+    auto device = make_device_with_endpoints(
+            pool, UsbSpeed::High,
+            {{.address = 0x81,
+              .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+              .max_packet_size = 512,
+              .interval = 0}},
+            handler);
+    (void) device;
+
+    std::uint32_t status = 0;
+    auto desc = handler->get_configuration_descriptor(0, 4096, &status);
+    EXPECT_EQ(desc[8], 0xFA); // 500mA / 2mA，与 USB 2.0 的 2mA 单位一致
+    auto parts = split_descriptors(desc);
+    ASSERT_EQ(parts.size(), 3u); // 配置 + 接口 + 端点，没有伴随描述符
+    EXPECT_EQ(parts[2].first, static_cast<std::uint8_t>(DescriptorType::Endpoint));
+    EXPECT_EQ(parts[2].second[4] | (parts[2].second[5] << 8), 512);
+}
+
+TEST(VirtualDeviceStandard, SuperSpeedHasNoDeviceQualifierOrOtherSpeed) {
+    // USB 3.0 §9.4.3：SuperSpeed 模式下的设备通过 BOS 报告其他速度，
+    // 不支持 device_qualifier 和 other_speed_configuration
+    DeviceEnv env(UsbSpeed::Super, {3, 0, 0});
+    std::uint32_t status = 0;
+    auto qualifier = env.handler->get_device_qualifier_descriptor(0, 64, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_TRUE(qualifier.empty());
+
+    status = 0;
+    auto other = env.handler->get_other_speed_descriptor(0, 64, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_TRUE(other.empty());
+}
+
+TEST(VirtualDeviceStandard, SetSelStoresExitLatencies) {
+    // USB 3.0 §9.4.12：wValue/wIndex 为 0、wLength 为 6；
+    // 数据阶段 U1SEL/U1PEL 各 1 字节、U2SEL/U2PEL 各 2 字节（小端）
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Super, Version{3, 0, 0});
+    auto handler = device->with_handler<ProbeDevice>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket sel{
+            .request_type = 0x00, .request = 0x30, .value = 0, .index = 0, .length = 6};
+    auto cmd = make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 6, sel,
+                               data_type{0x0A, 0x14, 0x34, 0x12, 0x78, 0x56});
+    handler->receive_urb(std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Super), std::nullopt, ec);
+    ASSERT_FALSE(ec);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+    EXPECT_EQ(handler->get_u1_system_exit_latency(), 0x0A);
+    EXPECT_EQ(handler->get_u1_device_to_host_latency(), 0x14);
+    EXPECT_EQ(handler->get_u2_system_exit_latency(), 0x1234);
+    EXPECT_EQ(handler->get_u2_device_to_host_latency(), 0x5678);
+
+    handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, SetSelRejectsInvalidParameters) {
+    // USB 3.0 §9.4.12：wValue/wIndex 必须为 0、wLength 必须为 6；
+    // 该请求只对 SuperSpeed 设备有效
+    DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
+    std::uint32_t status = 0;
+    ss.handler->request_set_sel(data_type(6, 0), 1, 0, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    status = 0;
+    ss.handler->request_set_sel(data_type(6, 0), 0, 2, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    status = 0;
+    ss.handler->request_set_sel(data_type(5, 0), 0, 0, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    DeviceEnv hs(UsbSpeed::High, {2, 0, 0});
+    status = 0;
+    hs.handler->request_set_sel(data_type(6, 0), 0, 0, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+TEST(VirtualDeviceStandard, SetIsochDelayStoresValue) {
+    // USB 3.0 §9.4.11：wValue 是 0..65535 ns 的单向时延
+    DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
+    std::uint32_t status = 0;
+    ss.handler->request_set_isoch_delay(1200, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(ss.handler->get_isoch_delay_ns(), 1200);
+
+    DeviceEnv hs(UsbSpeed::High, {2, 0, 0});
+    status = 0;
+    hs.handler->request_set_isoch_delay(1200, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+}
+
+TEST(VirtualDeviceStandard, U1U2EnableOnlyInConfiguredSuperSpeedState) {
+    // USB 3.0 §9.4.9：U1_Enable/U2_Enable 只在 Configured 状态处理；
+    // GET_STATUS(Device) 的 bit2/bit3 反映启用状态（§9.4.5 Figure 9-5）
+    DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    ss.handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // Address 状态（未配置）收到 U1_Enable 必须回 Request Error
+    std::uint32_t status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // 进入 Configured 状态
+    SetupPacket set_cfg{.request_type = 0x00, .request = 9, .value = 1, .index = 0, .length = 0};
+    send_control(*ss.handler, op, 1, UsbIpDirection::Out, 0, set_cfg);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, 0u);
+
+    status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    EXPECT_EQ(status, 0u);
+    status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U2_ENABLE, &status);
+    EXPECT_EQ(status, 0u);
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0x000C);
+    EXPECT_EQ(status, 0u);
+
+    status = 0;
+    ss.handler->request_clear_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    EXPECT_EQ(status, 0u);
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0x0008);
+
+    // LTM 没有在 BOS 里声明能力，SET_FEATURE(LTM_ENABLE) 必须 STALL
+    status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_LTM_ENABLE, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // USB 2.0 设备不认这三个特性选择子
+    DeviceEnv hs(UsbSpeed::High, {2, 0, 0});
+    status = 0;
+    hs.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    ss.handler->on_disconnection(ec);
 }
