@@ -1229,8 +1229,62 @@ TEST(VirtualDeviceStandard, SetSelStoresExitLatencies) {
     handler->on_disconnection(ec);
 }
 
-TEST(VirtualDeviceStandard, SetSelRejectsInvalidParameters) {
-    // USB 3.0 §9.4.12：wValue/wIndex 必须为 0、wLength 必须为 6；
+TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
+    // USB 3.0 §9.4.11/§9.4.12 规定各 Setup 字段的合法值；非法请求按
+    // Request Error 处理，不能当作成功
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Super, Version{3, 0, 0});
+    auto handler = device->with_handler<ProbeDevice>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    const auto ep0 = UsbEndpoint::get_ep0_out(UsbSpeed::Super);
+    const auto set_sel = static_cast<std::uint8_t>(StandardRequest::SetSel);
+    const auto set_isoch = static_cast<std::uint8_t>(StandardRequest::SetIsochDelay);
+
+    // SET_SEL 的 wLength 必须是 6
+    SetupPacket sel_len{
+            .request_type = 0x00, .request = set_sel, .value = 0, .index = 0, .length = 8};
+    auto sel_len_cmd = make_cmd_submit(op, 1, 0, UsbIpDirection::Out, 8, sel_len, data_type(8, 0));
+    handler->receive_urb(std::move(sel_len_cmd), ep0, std::nullopt, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // SET_SEL 的 wValue 必须是 0
+    SetupPacket sel_value{
+            .request_type = 0x00, .request = set_sel, .value = 1, .index = 0, .length = 6};
+    auto sel_value_cmd = make_cmd_submit(op, 2, 0, UsbIpDirection::Out, 6, sel_value, data_type(6, 0));
+    handler->receive_urb(std::move(sel_value_cmd), ep0, std::nullopt, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    EXPECT_EQ(stub.submits[1].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // SET_ISOCH_DELAY 的 wIndex 必须是 0
+    SetupPacket isoch_index{
+            .request_type = 0x00, .request = set_isoch, .value = 100, .index = 1, .length = 0};
+    auto isoch_index_cmd = make_cmd_submit(op, 3, 0, UsbIpDirection::Out, 0, isoch_index);
+    handler->receive_urb(std::move(isoch_index_cmd), ep0, std::nullopt, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 3u);
+    EXPECT_EQ(stub.submits[2].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // SET_ISOCH_DELAY 的 wLength 必须是 0
+    SetupPacket isoch_len{
+            .request_type = 0x00, .request = set_isoch, .value = 100, .index = 0, .length = 2};
+    auto isoch_len_cmd = make_cmd_submit(op, 4, 0, UsbIpDirection::Out, 2, isoch_len, data_type{0x00, 0x00});
+    handler->receive_urb(std::move(isoch_len_cmd), ep0, std::nullopt, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 4u);
+    EXPECT_EQ(stub.submits[3].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, SetSelRejectsInvalidParameters) {    // USB 3.0 §9.4.12：wValue/wIndex 必须为 0、wLength 必须为 6；
     // 该请求只对 SuperSpeed 设备有效
     DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
     std::uint32_t status = 0;

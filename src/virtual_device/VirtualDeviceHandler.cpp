@@ -67,8 +67,10 @@ constexpr std::uint8_t encode_max_power(std::uint16_t milliamps, std::uint16_t u
  * @brief SuperSpeed 下端点描述符的 wMaxPacketSize
  * @param endpoint 端点
  * @return USB 3.0 §9.6.6 Table 9-18 规定的合法值：Bulk 固定 1024；
- *         Interrupt/Isochronous 在 bMaxBurst 大于 0 时固定 1024，
- *         否则沿用声明值（上限 1024）；Control 固定 512
+ *         Interrupt/Isochronous 在 bMaxBurst 大于 0 时固定 1024（规范原文
+ *         "shall be set to 1024 if this endpoint defines a value in the
+ *         bMaxBurst field greater than zero"，不是可选项），bMaxBurst 为 0
+ *         时沿用声明值（上限 1024）；Control 固定 512
  */
 std::uint16_t superspeed_max_packet_size(const UsbEndpoint &endpoint) {
     switch (static_cast<EndpointAttributes>(endpoint.attributes & 0x03)) {
@@ -103,7 +105,9 @@ SsEndpointCompanionDesc make_ss_endpoint_companion(const UsbEndpoint &endpoint, 
     // 是 Mult（每个服务间隔额外的包数，恒 0）、Control/Interrupt 全部保留为 0
     constexpr std::uint8_t companion_attributes = 0;
     // wBytesPerInterval 只对周期性端点有效：上限是 (bMaxBurst+1) 个包，
-    // Mult 恒 0 时即 (bMaxBurst+1)*wMaxPacketSize；Bulk 必须为 0
+    // Mult 恒 0 时即 (bMaxBurst+1)*wMaxPacketSize；Bulk 必须为 0。
+    // USB 3.0 §9.6.7 Table 9-20 只把它定义为每个服务间隔的总字节数，
+    // 没有额外的 3072 上限（Linux usb_parse_endpoint 用的也是同一公式）
     std::uint16_t bytes_per_interval = 0;
     if (type == EndpointAttributes::Interrupt || type == EndpointAttributes::Isochronous) {
         bytes_per_interval = static_cast<std::uint16_t>((static_cast<std::uint32_t>(max_burst) + 1) *
@@ -388,18 +392,32 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         }
                         case StandardRequest::SetSel: {
                             SPDLOG_TRACE("设备SetSel");
-                            // USB 3.0 §9.4.12：数据阶段 6 字节退出时延。与
-                            // SET_DESCRIPTOR 一样，主机可能只发短包，按实际收到的
-                            // 字节数截取，不能按声明的 wLength 越界构造
+                            // USB 3.0 §9.4.12：wValue/wIndex 必须为 0、wLength 必须为 6，
+                            // 不满足按 Request Error 处理。与 SET_DESCRIPTOR 一样，主机
+                            // 可能只发短包，按实际收到的字节数截取，不能按声明的
+                            // wLength 越界构造
                             const auto copy_len =
                                     std::min<std::size_t>(transfer_buffer_length, trx->data.size());
                             data_type out_data(trx->data.begin(), trx->data.begin() + copy_len);
-                            request_set_sel(out_data, setup_packet.value, setup_packet.index, &status);
+                            if (setup_packet.value != 0 || setup_packet.index != 0 || setup_packet.length != 6) {
+                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+                            }
+                            else {
+                                request_set_sel(out_data, setup_packet.value, setup_packet.index, &status);
+                            }
                             break;
                         }
                         case StandardRequest::SetIsochDelay: {
                             SPDLOG_TRACE("设备SetIsochDelay");
-                            request_set_isoch_delay(setup_packet.value, &status);
+                            // USB 3.0 §9.4.11：wIndex 与 wLength 必须为 0（非零时
+                            // 设备行为未定义，这里按 Request Error 处理，避免把
+                            // 非法请求当成功）
+                            if (setup_packet.index != 0 || setup_packet.length != 0) {
+                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+                            }
+                            else {
+                                request_set_isoch_delay(setup_packet.value, &status);
+                            }
                             break;
                         }
                         default: {
