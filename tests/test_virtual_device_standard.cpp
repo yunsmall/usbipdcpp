@@ -1675,3 +1675,32 @@ TEST(VirtualDeviceStandard, NewConnectionResetsDeviceRuntimeState) {
 
     ss.handler->on_disconnection(ec);
 }
+
+TEST(VirtualDeviceStandard, NonControlUrbWithoutInterfaceIsFatal) {
+    // receive_urb 的约定：非控制传输必须带目标接口。违反约定属于内部错误，
+    // 用 ec 交给 Session 结束会话（连接关闭使主机 URB 完成），
+    // 而不是提交一条可恢复的 EPIPE 应答
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {{UsbEndpoint{.address = 0x81,
+                                   .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                                   .max_packet_size = 64,
+                                   .interval = 0}}};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    auto ep = device->interfaces[0].endpoints[0][0];
+    auto cmd = make_cmd_submit(op, 1, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
+    error_code urb_ec;
+    handler->receive_urb(std::move(cmd), ep, std::nullopt, urb_ec);
+
+    EXPECT_TRUE(urb_ec);
+    EXPECT_TRUE(stub.submits.empty());
+
+    handler->on_disconnection(ec);
+}

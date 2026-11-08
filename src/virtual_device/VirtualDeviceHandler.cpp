@@ -174,11 +174,17 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                         std::move(cmd.transfer), num_iso, ec);
         }
         else [[unlikely]] {
+            // attributes & 0x03 已穷举 0..3，走到这里说明端点字段被破坏。
+            // 内部错误用 ec 上报，由 Session 结束会话
             SPDLOG_DEBUG("端口{:02x}的未知传输类型：{}", ep.address, ep.attributes);
             ec = make_error_code(ErrorType::INVALID_ARG);
         }
     }
     else [[unlikely]] {
+        // 走到这里说明调用方违反约定（Session 的 find_ep 必然带出目标接口）。
+        // 这是内部错误而不是可恢复的单个 URB 失败：ec 非 0 会让 Session
+        // 置 receiver_ec 并结束会话（连接关闭时主机 URB 随之完成），
+        // 因此刻意不回 RET_SUBMIT，也不伪造可重试的 EPIPE
         SPDLOG_ERROR("非控制传输却不存在目标接口");
         ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
