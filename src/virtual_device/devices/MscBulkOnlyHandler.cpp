@@ -331,9 +331,11 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     ReadFormatCapacitiesData buf{};
                     auto blocks = backend_ ? backend_->block_count() : 0;
                     std::uint32_t bs = backend_ ? backend_->block_size() : 512;
-                    put_be16(buf.list_length, 8); // 一个 8 字节描述符
+                    buf.list_length = 8; // 一个 8 字节描述符
                     put_be32(buf.capacity, static_cast<std::uint32_t>(blocks));
-                    buf.format_type = 0x02; // formatted media
+                    // Format Type 在 byte 8 的 bit7-2（2 = 已格式化介质），
+                    // 不能直接把 0x02 写进整字节，否则主机会解析成类型 0
+                    buf.format_type = static_cast<std::uint8_t>(0x02 << 2);
                     put_be24(buf.block_size, bs);
                     auto len = std::min(transfer_len, std::uint32_t(sizeof(ReadFormatCapacitiesData)));
                     staging_offset_ = 0;

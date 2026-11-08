@@ -687,6 +687,39 @@ TEST(TestMscHandler, ReadCapacity16ReportsLbpmeAndLbprz) {
     fixture.msc->on_disconnection(ec);
 }
 
+TEST(TestMscHandler, ReadFormatCapacitiesUsesShiftedFormatType) {
+    // READ FORMAT CAPACITIES：byte 3 = 容量列表长度，byte 8 的 bit7-2
+    // 才是 Format Type（2 = 已格式化介质，编码为 0x08）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::ReadFormatCapacities;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x555A, 0x80, cdb, 12));
+
+    deliver_in_request(*fixture.msc, 2, 12, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 12u);
+    EXPECT_EQ(data[0], 0x00);
+    EXPECT_EQ(data[1], 0x00);
+    EXPECT_EQ(data[2], 0x00);
+    EXPECT_EQ(data[3], 0x08); // 容量列表长度
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 4, data.begin() + 8)),
+              (std::vector<std::uint8_t>{0, 0, 0, 8})); // 8 块
+    EXPECT_EQ(data[8], 0x08); // Format Type 2 << 2
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 9, data.begin() + 12)),
+              (std::vector<std::uint8_t>{0, 2, 0})); // 块大小 512
+
+    fixture.msc->on_disconnection(ec);
+}
+
 TEST(TestMscHandler, ReadCapacity10ReportsCapacity) {
     // READ CAPACITY(10)：最后 LBA 与块大小（大端）
     StringPool string_pool;

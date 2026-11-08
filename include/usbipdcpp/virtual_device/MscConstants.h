@@ -227,10 +227,10 @@ struct ReadCapacity16Data {
 
 /// READ FORMAT CAPACITIES 响应（当前容量 + 一个格式描述符）
 struct ReadFormatCapacitiesData {
-    std::uint8_t reserved[2];     // byte 0-1
-    std::uint8_t list_length[2];  // byte 2-3：容量列表总长度（大端）
+    std::uint8_t reserved[3];     // byte 0-2
+    std::uint8_t list_length;     // byte 3：容量列表总长度（8）
     std::uint8_t capacity[4];     // byte 4-7：块数（大端）
-    std::uint8_t format_type;     // byte 8：0x02 = 已格式化介质
+    std::uint8_t format_type;     // byte 8：bit7-2 = Format Type（2 = 已格式化介质）
     std::uint8_t block_size[3];   // byte 9-11：块大小（大端 24 位）
 };
 
