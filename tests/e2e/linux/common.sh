@@ -211,6 +211,19 @@ check_block_device_size() { # check_block_device_size <设备名> <期望字节�
     [ "$size" = "$expected" ]
 }
 
+# 写操作前的硬性身份校验：sysfs 中 SCSI INQUIRY 的 vendor/model 必须是
+# mock_msc 的默认字符串（Usbipdcpp / Usbipdcpp Virtual Device，INQUIRY
+# 字段分别截断为 8/16 字节）。大小校验只能说明“是 2MiB 的盘”，再加一道
+# 设备自己报告的身份，防止恰好同尺寸的其他块设备被误写。
+# 不用 sg_inq：sg3-utils 是可选依赖，缺了也必须守得住写路径。
+check_msc_identity() { # check_msc_identity <设备名>
+    local dev="$1"
+    local sysfs="/sys/block/$dev/device"
+    [ -r "$sysfs/vendor" ] || return 1
+    [ -r "$sysfs/model" ] || return 1
+    grep -q '^Usbipdcp' "$sysfs/vendor" && grep -q '^Usbipdcpp Virtua' "$sysfs/model"
+}
+
 # 结果汇总 ====================================================================
 report() { # report <测试名>
     echo "=============================================="

@@ -44,6 +44,15 @@ check_block_device_size "$NEW_DEV" "$EXPECTED_SIZE" || {
     exit 1
 }
 
+# 分步 2a（只读）：厂商/型号硬校验。大小相同还不够，必须确认是 mock_msc
+assert "设备 $NEW_DEV 厂商/型号 == mock_msc（身份校验）" check_msc_identity "$NEW_DEV"
+check_msc_identity "$NEW_DEV" || {
+    echo "ABORT: 设备身份校验失败（vendor/model 不是 mock_msc），不执行任何写操作"
+    stop_server
+    report msc
+    exit 1
+}
+
 # 分步 2b（只读）：校验 SCSI VPD 页内容。USB 存储默认 try_rc_10_first，
 # 小容量设备内核不会发 READ CAPACITY(16)，也就看不到 LBPME/discard，
 # 所以这里直接用 sg_inq 验证设备侧返回是否按 SBC-4 组织
