@@ -32,6 +32,43 @@ void log_device_state(Server &server) {
     SPDLOG_INFO("设备状态: 可用 {} 个 [{}] | 使用中 {} 个 [{}]", available.size(), avail_busids, using_devices.size(),
                 using_busids);
 }
+
+/**
+ * @brief 把 libusb 配置描述符转换成 UsbInterface 列表
+ *
+ * 直接取 altsetting[0] 不需要检查 num_altsetting：libusb 的
+ * parse_configuration 在 parse_interface 返回 0（接口没有可解析的
+ * interface descriptor）时会把 bNumInterfaces 截断到 i 并退出
+ * （libusb/descriptor.c），所以 [0, bNumInterfaces) 内每个接口都至少有
+ * 一个 altsetting。
+ */
+std::vector<UsbInterface> build_usb_interfaces(const libusb_config_descriptor *config) {
+    std::vector<UsbInterface> interfaces;
+    for (auto intf_i = 0; intf_i < config->bNumInterfaces; intf_i++) {
+        auto &intf = config->interface[intf_i];
+        SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
+
+        std::vector<std::vector<UsbEndpoint>> endpoints;
+        endpoints.reserve(intf.num_altsetting);
+        for (auto alt_i = 0; alt_i < intf.num_altsetting; alt_i++) {
+            auto &intf_desc = intf.altsetting[alt_i];
+            std::vector<UsbEndpoint> alt_endpoints;
+            alt_endpoints.reserve(intf_desc.bNumEndpoints);
+            for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
+                alt_endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
+                                           intf_desc.endpoint[ep_i].bmAttributes & 0x03,
+                                           intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
+            }
+            endpoints.push_back(std::move(alt_endpoints));
+        }
+        interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
+                                             .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
+                                             .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
+                                             .interface_number = intf.altsetting[0].bInterfaceNumber,
+                                             .endpoints = std::move(endpoints)});
+    }
+    return interfaces;
+}
 } // namespace
 
 LibusbServer::LibusbServer(const LibusbServerConfig& config) : config(config) {
@@ -218,30 +255,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
 
     // 构建接口信息
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
-    std::vector<UsbInterface> interfaces;
-    for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
-        auto &intf = active_config_desc->interface[intf_i];
-        SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
-
-        std::vector<std::vector<UsbEndpoint>> endpoints;
-        endpoints.reserve(intf.num_altsetting);
-        for (auto alt_i = 0; alt_i < intf.num_altsetting; alt_i++) {
-            auto &intf_desc = intf.altsetting[alt_i];
-            std::vector<UsbEndpoint> alt_endpoints;
-            alt_endpoints.reserve(intf_desc.bNumEndpoints);
-            for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-                alt_endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
-                                           intf_desc.endpoint[ep_i].bmAttributes & 0x03,
-                                           intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
-            }
-            endpoints.push_back(std::move(alt_endpoints));
-        }
-        interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
-                                             .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
-                                             .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
-                                             .interface_number = intf.altsetting[0].bInterfaceNumber,
-                                             .endpoints = std::move(endpoints)});
-    }
+    auto interfaces = build_usb_interfaces(active_config_desc);
 
     // 创建 UsbDevice 和 LibusbDeviceHandler。busid 查重与添加由
     // Server::add_device 在同一把锁内原子完成，成功后的 on_device_added
@@ -331,30 +345,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
 
     // 构建接口信息
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
-    std::vector<UsbInterface> interfaces;
-    for (auto intf_i = 0; intf_i < active_config_desc->bNumInterfaces; intf_i++) {
-        auto &intf = active_config_desc->interface[intf_i];
-        SPDLOG_DEBUG("第{}个interface有{}个altsetting", intf_i, intf.num_altsetting);
-
-        std::vector<std::vector<UsbEndpoint>> endpoints;
-        endpoints.reserve(intf.num_altsetting);
-        for (auto alt_i = 0; alt_i < intf.num_altsetting; alt_i++) {
-            auto &intf_desc = intf.altsetting[alt_i];
-            std::vector<UsbEndpoint> alt_endpoints;
-            alt_endpoints.reserve(intf_desc.bNumEndpoints);
-            for (auto ep_i = 0; ep_i < intf_desc.bNumEndpoints; ep_i++) {
-                alt_endpoints.emplace_back(intf_desc.endpoint[ep_i].bEndpointAddress,
-                                           intf_desc.endpoint[ep_i].bmAttributes & 0x03,
-                                           intf_desc.endpoint[ep_i].wMaxPacketSize, intf_desc.endpoint[ep_i].bInterval);
-            }
-            endpoints.push_back(std::move(alt_endpoints));
-        }
-        interfaces.emplace_back(UsbInterface{.interface_class = intf.altsetting[0].bInterfaceClass,
-                                             .interface_subclass = intf.altsetting[0].bInterfaceSubClass,
-                                             .interface_protocol = intf.altsetting[0].bInterfaceProtocol,
-                                             .interface_number = intf.altsetting[0].bInterfaceNumber,
-                                             .endpoints = std::move(endpoints)});
-    }
+    auto interfaces = build_usb_interfaces(active_config_desc);
 
     // 保存设备信息
     auto busid = get_device_busid(device_for_info);
