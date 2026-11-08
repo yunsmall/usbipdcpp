@@ -1,6 +1,7 @@
 #include "usbipdcpp/LibusbHandler/LibusbServer.h"
 
 #include <iostream>
+#include <memory>
 
 #include <spdlog/spdlog.h>
 
@@ -177,38 +178,43 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
         return DeviceOperationResult::DeviceNotFound;
     }
 
+    // 从本函数起接管调用方传入的设备引用：所有失败返回和异常路径都由
+    // guard 释放。成功交给 handler 后 release（handler 析构时 unref）
+    std::unique_ptr<libusb_device, decltype(&libusb_unref_device)> dev_guard(dev, &libusb_unref_device);
+
     // 获取设备描述符
     libusb_device_descriptor device_descriptor{};
     int err = libusb_get_device_descriptor(dev, &device_descriptor);
     if (err) {
         SPDLOG_WARN("无法获取设备描述符：{}", libusb_strerror(err));
-        libusb_unref_device(dev);
         return DeviceOperationResult::GetDescriptorFailed;
     }
 
     // 跳过 hub 设备（bDeviceClass == 0x09），hub 对 USB/IP 无意义
     if (config.skip_hub && device_descriptor.bDeviceClass == LIBUSB_CLASS_HUB) {
         SPDLOG_DEBUG("跳过 hub 设备: busid={}", get_device_busid(dev));
-        libusb_unref_device(dev);
         return DeviceOperationResult::HubFiltered;
     }
 
     // 用户过滤器：放在描述符之后、打开设备/claim 接口之前——此时只做过只读
-    // 查询，跳过不留任何残留状态；与 skip_hub 叠加，不是替代关系
+    // 查询，跳过不留任何残留状态；与 skip_hub 叠加，不是替代关系。
+    // 过滤器是用户代码，可能抛异常，dev_guard 保证异常路径也释放引用
     if (config.device_bind_filter && config.device_bind_filter(dev, device_descriptor)) {
         SPDLOG_DEBUG("设备被 device_bind_filter 跳过: busid={}", get_device_busid(dev));
-        libusb_unref_device(dev);
         return DeviceOperationResult::DeviceFiltered;
     }
 
     // 获取配置描述符
-    struct libusb_config_descriptor *active_config_desc;
+    struct libusb_config_descriptor *active_config_desc = nullptr;
     err = libusb_get_active_config_descriptor(dev, &active_config_desc);
     if (err) {
         SPDLOG_WARN("无法获取设备当前的配置描述符：{}", libusb_strerror(err));
-        libusb_unref_device(dev);
         return DeviceOperationResult::GetConfigFailed;
     }
+    // 后面构建接口列表、创建 handler 都可能抛异常（含 bad_alloc），
+    // 用 guard 保证配置描述符在所有路径释放
+    std::unique_ptr<libusb_config_descriptor, decltype(&libusb_free_config_descriptor)> config_guard(
+            active_config_desc, &libusb_free_config_descriptor);
 
     // 构建接口信息
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
@@ -267,8 +273,8 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
 
     // 普通模式：传入设备引用（handler 持有引用所有权）
     current_device->with_handler<LibusbDeviceHandler>(dev, config.device_handler_config);
+    dev_guard.release();
     const auto add_status = server.add_device(std::move(current_device));
-    libusb_free_config_descriptor(active_config_desc);
     if (add_status != AddDeviceStatus::Added) {
         // busid 冲突未添加：设备已在 add_device 内析构，handler 析构时释放
         // libusb 引用（等价于原先在此处手动 unref）

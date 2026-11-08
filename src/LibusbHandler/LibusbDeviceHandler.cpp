@@ -972,6 +972,8 @@ bool usbipdcpp::LibusbDeviceHandler::wrap_fd_and_claim_interfaces() {
                                                    ? handle_device.interfaces[j].interface_number
                                                    : j;
                 libusb_release_interface(native_handle, rollback_number);
+                // 与 open_and_claim_device 的回滚保持一致：detach 过的内核驱动挂回去
+                libusb_attach_kernel_driver(native_handle, rollback_number);
             }
             libusb_free_config_descriptor(active_config_desc);
             libusb_close(native_handle);
