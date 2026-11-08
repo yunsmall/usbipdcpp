@@ -47,16 +47,16 @@ enum class CdcAcmControlSignal : std::uint16_t {
     RTS = 0x02, // Request To Send
 };
 
-// CDC ACM 串口状态位
+// CDC ACM 串口状态位（CDC PSTN 1.2 §6.5.4 Table 31：D15..D7 保留，
+// 只有 D0-D6 有效；CDC ACM 的 SERIAL_STATE 没有 CTS 位）
 enum class CdcAcmSerialState : std::uint16_t {
-    DCD = 0x01, // Data Carrier Detect
-    DSR = 0x02, // Data Set Ready
+    DCD = 0x01, // bRxCarrier：Data Carrier Detect
+    DSR = 0x02, // bTxCarrier：Data Set Ready
     Break = 0x04, // Break signal
     Ring = 0x08, // Ring signal
     FramingError = 0x10, // Framing error
     ParityError = 0x20, // Parity error
     OverrunError = 0x40, // Overrun error
-    CTS = 0x80, // Clear To Send
 };
 
 // ==================== 固定长度类特定描述符结构体 ====================

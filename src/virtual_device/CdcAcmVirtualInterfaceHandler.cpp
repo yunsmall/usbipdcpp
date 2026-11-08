@@ -349,13 +349,6 @@ std::size_t CdcAcmDataInterfaceHandler::get_tx_buffer_available() const {
 
 // ===== 流控状态 =====
 
-void CdcAcmDataInterfaceHandler::set_cts(bool cts) {
-    if (comm_handler_) {
-        std::uint16_t state = cts ? static_cast<std::uint16_t>(CdcAcmSerialState::CTS) : 0;
-        comm_handler_->send_serial_state_notification(state);
-    }
-}
-
 bool CdcAcmDataInterfaceHandler::get_rts() const {
     if (comm_handler_) {
         return comm_handler_->get_control_signal_state().rts;

@@ -66,6 +66,9 @@ struct ControlSignalState {
 
 /**
  * @brief CDC ACM 串口状态通知
+ *
+ * 通知头布局见 USB CDC 1.2 §6.3（8 字节），SERIAL_STATE 的
+ * bNotification=0x20、wLength=2 与状态位定义见 CDC PSTN 1.2 §6.5.4
  */
 struct SerialStateNotification {
     std::uint8_t bmRequestType = 0xA1; // 类特定、接口、IN
@@ -195,7 +198,8 @@ public:
 
     /**
      * @brief 发送串口状态通知到主机
-     * @param state_bits 状态位（如 CTS、DSR 等）
+     * @param state_bits 完整的 UART 状态位图（DCD/DSR/BREAK 等，见
+     *        CdcAcmSerialState；CDC ACM 没有 CTS 位）
      */
     void send_serial_state_notification(std::uint16_t state_bits);
 
@@ -379,12 +383,6 @@ public:
     [[nodiscard]] std::size_t get_tx_buffer_available() const;
 
     // ========== 流控状态 API ==========
-
-    /**
-     * @brief 设置 CTS 状态通知主机
-     * @param cts CTS 状态，true=设备可以接收数据
-     */
-    void set_cts(bool cts);
 
     /**
      * @brief 获取当前 RTS 状态（来自主机）

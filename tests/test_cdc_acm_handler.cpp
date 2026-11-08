@@ -106,13 +106,15 @@ TEST(VirtualDeviceHandlers, CdcDataInterfaceHasNoClassDescriptor) {
 TEST(VirtualDeviceHandlers, CdcSerialStateNotificationFormat) {
     SerialStateNotification notif;
     notif.wIndex = 1;
-    notif.data = 0x0300; // DCD | DSR
+    notif.data = 0x0003; // DCD | DSR（D15..D7 保留，不能置位）
 
     auto bytes = notif.to_bytes();
     ASSERT_EQ(bytes.size(), 10u);
     EXPECT_EQ(bytes[0], 0xA1); // bmRequestType
     EXPECT_EQ(bytes[1], 0x20); // bNotification: SERIAL_STATE
     EXPECT_EQ(bytes[4], 1);    // wIndex 小端
-    EXPECT_EQ(bytes[8], 0x00); // data 小端
-    EXPECT_EQ(bytes[9], 0x03);
+    EXPECT_EQ(bytes[8], 0x03); // data 小端
+    EXPECT_EQ(bytes[9], 0x00);
+    // PSTN 1.2 §6.5.4 Table 31：只有 D0-D6 有定义，没有 CTS 位
+    EXPECT_EQ(static_cast<std::uint16_t>(CdcAcmSerialState::OverrunError), 0x0040);
 }
