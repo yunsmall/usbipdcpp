@@ -495,6 +495,11 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_interface_cmd(const SetupPacket &s
                 SPDLOG_DEBUG("已切换接口 {} 到 alt {}，端点数量: {}", interface, alternate,
                              dev_intf.current_endpoints().size());
             }
+            else {
+                // 缓存来自 bind 时的活动配置；运行期切过配置后这里会对不上
+                SPDLOG_WARN("SET_INTERFACE 接口 {} 的 alt {} 超出缓存端点表（配置可能在 bind 后被切换？）",
+                            interface, alternate);
+            }
             break;
         }
     }
@@ -526,9 +531,15 @@ int usbipdcpp::LibusbDeviceHandler::tweak_set_configuration_cmd([[maybe_unused]]
     // }
     // return err;
 
-    // 不可以set_configuration，会device_busy
-    //  usbipd-libusb 返回 -1，表示不处理这个命令，继续正常提交 transfer
-    //  设备会收到 set_configuration 命令
+    // 不在这里调 libusb_set_configuration：已 claim 接口时 libusb 会返回
+    // LIBUSB_ERROR_BUSY（libusb 要求切配置前先 release 全部接口）。与参考
+    // 实现 usbipd-libusb 一致，返回 -1 让请求作为普通控制传输发给设备。
+    //
+    // 已知限制：设备会真正切换配置，而 handler 缓存的接口/端点表和已 claim
+    // 的接口集合仍是 bind 时的活动配置。多配置设备在运行期切到另一个配置后，
+    // 端点传输/接口查找可能与设备实际状态不一致（usbipd-libusb 同样如此）。
+    // 正常枚举不会切到与 bind 时不同的配置，因此不做运行期重建缓存这种
+    // 高侵入处理
     return -1;
 }
 
