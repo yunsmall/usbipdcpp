@@ -26,6 +26,12 @@ public:
         if (override) {
             override(pybind11::cast(&responder, pybind11::return_value_policy::reference));
         }
+        else {
+            // Python 子类没重写时基类登记必须照常发生，否则 responder 永远为空，
+            // 之后任何经基类提交应答的路径（如 HID 的 send_input_report）都会
+            // 解引用空指针。PYBIND11_OVERRIDE 的默认回退行为在这里必须手写
+            usbipdcpp::VirtualInterfaceHandler::on_new_connection(responder, ec);
+        }
     }
 
     void on_disconnection(usbipdcpp::error_code &ec) override {
@@ -112,6 +118,11 @@ public:
         if (overload) {
             overload(pybind11::cast(&responder, pybind11::return_value_policy::reference));
         }
+        else {
+            // 未重写时补上 HID 基类登记（绑定 input_channel 的会话指针），
+            // 否则 send_input_report 的通道没有会话可用（同 VirtualInterfaceHandler）
+            usbipdcpp::HidVirtualInterfaceHandler::on_new_connection(responder, ec);
+        }
     }
 
     void on_disconnection(usbipdcpp::error_code &ec) override {
@@ -145,7 +156,10 @@ void bind_virtual_device(py::module_ &m) {
             self.VirtualInterfaceHandler::on_new_connection(responder, ec);
         }, py::arg("responder"))
         .def("on_disconnection", [](usbipdcpp::VirtualInterfaceHandler &self) {
-            // 实际清理由 trampoline 在 Python 回调后自动执行
+            // Python 重写 on_disconnection 时按契约在末尾调 super()，这里必须
+            // 真正执行基类清理（清 session 指针），否则 responder 悬垂到断连后
+            std::error_code ec;
+            self.VirtualInterfaceHandler::on_disconnection(ec);
         })
         .def("get_string_interface_value", &usbipdcpp::VirtualInterfaceHandler::get_string_interface_value)
         .def("get_string_interface", &usbipdcpp::VirtualInterfaceHandler::get_string_interface)
@@ -158,6 +172,13 @@ void bind_virtual_device(py::module_ &m) {
                                                                        py::base<usbipdcpp::VirtualInterfaceHandler>())
         .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
              py::arg("handle_interface"), py::arg("string_pool"))
+        // 覆盖基类同名绑定：Python 子类 super().on_new_connection(responder)
+        // 必须落到 HID 实现上，否则 input_channel 拿不到会话指针
+        .def("on_new_connection", [](usbipdcpp::HidVirtualInterfaceHandler &self,
+                                     usbipdcpp::TransferResponder &responder) {
+            std::error_code ec;
+            self.HidVirtualInterfaceHandler::on_new_connection(responder, ec);
+        }, py::arg("responder"))
         .def("get_report_descriptor", &usbipdcpp::HidVirtualInterfaceHandler::get_report_descriptor)
         .def("get_report_descriptor_size", &usbipdcpp::HidVirtualInterfaceHandler::get_report_descriptor_size)
         .def("send_input_report", [](usbipdcpp::HidVirtualInterfaceHandler &self, py::bytes data) {
