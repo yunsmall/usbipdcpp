@@ -447,3 +447,18 @@ TEST(TestProtocol, AllCommandTypes) {
         EXPECT_EQ(bytes[3], static_cast<std::uint8_t>(cmd & 0xFF));
     }
 }
+
+TEST(TestProtocol, DevlistToSocketStopsAfterWriteError) {
+    // 首段写失败（未连接 socket）后不能继续逐设备重试写：ec 一旦置位直接返回，
+    // 与 OpRepImport::to_socket 的失败语义一致
+    asio::io_context io_context;
+    asio::ip::tcp::socket sock(io_context); // 未连接，写必然失败
+
+    UsbDevice dev{};
+    dev.busid = "1-1";
+    UsbIpResponse::OpRepDevlist rep{.status = 0, .device_count = 2, .devices = {dev, dev}};
+
+    usbipdcpp::error_code ec;
+    EXPECT_NO_THROW(rep.to_socket(sock, ec));
+    EXPECT_TRUE(static_cast<bool>(ec));
+}

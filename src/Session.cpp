@@ -50,6 +50,16 @@ void usbipdcpp::Session::submit_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submi
 }
 
 usbipdcpp::Session::~Session() {
+    // 成员析构是声明顺序的逆序：current_handler（持有 TransferOperator）
+    // 先于 write_buffer/read_buffer 析构。缓冲区里若滞留着带 TransferHandle
+    // 的应答（handler 违反"断连后禁止提交"契约的异步提交、或收尾路径漏清），
+    // 等到成员析构阶段才释放就会调用已析构 handler 的 free_transfer_handle。
+    // 在析构体里先清空，保证释放时 handler 仍存活
+    {
+        std::lock_guard lock(swap_mutex);
+        write_buffer.clear();
+        read_buffer.clear();
+    }
     // 主线程句柄已在 run() 就地 detach 不存成员，子线程（sender）已在
     // transfer_loop 内 join 完毕，此处无需线程句柄收尾
     // 注意：不能在析构中打日志。若进程正在退出（如测试 main 返回），spdlog 的

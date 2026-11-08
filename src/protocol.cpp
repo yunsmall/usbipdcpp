@@ -140,6 +140,9 @@ std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepDevlist::to_bytes() con
 void UsbIpResponse::OpRepDevlist::to_socket(asio::ip::tcp::socket &sock, error_code &ec) const {
     asio::write(sock, asio::buffer(to_network_data(USBIP_VERSION, OP_REP_DEVLIST, status, device_count)), ec);
     for (auto &device: devices) {
+        // 连接已断时不再逐设备重试写（与 OpRepImport::to_socket 的失败即返回一致）
+        if (ec)
+            return;
         asio::write(sock, asio::buffer(device.to_bytes_with_interfaces()), ec);
     }
 }
