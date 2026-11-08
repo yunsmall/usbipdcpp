@@ -44,6 +44,24 @@ check_block_device_size "$NEW_DEV" "$EXPECTED_SIZE" || {
     exit 1
 }
 
+# 分步 2b（只读）：校验 SCSI VPD 页内容。USB 存储默认 try_rc_10_first，
+# 小容量设备内核不会发 READ CAPACITY(16)，也就看不到 LBPME/discard，
+# 所以这里直接用 sg_inq 验证设备侧返回是否按 SBC-4 组织
+if command -v sg_inq >/dev/null 2>&1; then
+    assert "VPD 0xB0 Block Limits 宣告 UNMAP" \
+        bash -c "sudo sg_inq -p 0xb0 /dev/$NEW_DEV | grep -q 'Maximum unmap LBA count: 65536'"
+    assert "VPD 0xB0 Block Limits 宣告 WRITE SAME" \
+        bash -c "sudo sg_inq -p 0xb0 /dev/$NEW_DEV | grep -q 'Maximum write same length: 0xffff'"
+    assert "VPD 0xB1 报告非旋转介质" \
+        bash -c "sudo sg_inq -p 0xb1 /dev/$NEW_DEV | grep -q 'Non-rotating medium'"
+    assert "VPD 0x80 序列号可读" \
+        bash -c "sudo sg_inq -p 0x80 /dev/$NEW_DEV | grep -q 'USBIPDCPSN'"
+    assert "READ CAPACITY(16) 报告 LBPME/LBPRZ" \
+        bash -c "sudo sg_readcap -l /dev/$NEW_DEV | grep -q 'lbpme=1, lbprz=1'"
+else
+    echo "  [SKIP] 未安装 sg3-utils，跳过 VPD 校验"
+fi
+
 # 分步 3（写）：设备已确认且大小匹配，单独执行写（扇区 100 起，不碰分区表）。
 # 数据用文件准备（填满 512 字节），读写都走文件比对（cmp）——echo 管道喂 dd
 # 数据不足 512 字节写不满块，读回含 NUL/空白，字符串比较有陷阱
