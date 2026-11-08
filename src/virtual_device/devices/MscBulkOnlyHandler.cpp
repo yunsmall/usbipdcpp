@@ -235,7 +235,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     else if (page == 0x00) {
                         // Supported VPD Pages：0x00 0x80 0xB0 0xB1 0xB2
                         VpdSupportedPages vpd{};
-                        vpd.page_length = 5;
+                        put_be16(vpd.page_length, 5);
                         vpd.pages[0] = 0x00;
                         vpd.pages[1] = 0x80;
                         vpd.pages[2] = 0xB0;
@@ -251,7 +251,7 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                         VpdUnitSerialNumber vpd{};
                         vpd.page_code = 0x80;
                         auto sn_len = std::min<std::size_t>(config_.serial.size(), sizeof(vpd.serial));
-                        vpd.page_length = static_cast<std::uint8_t>(sn_len);
+                        put_be16(vpd.page_length, static_cast<std::uint16_t>(sn_len));
                         std::memcpy(vpd.serial, config_.serial.data(), sn_len);
                         auto len = std::min(transfer_len, std::uint32_t(4 + sn_len));
                         staging_offset_ = 0;
@@ -259,39 +259,43 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                                              reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
                     else if (page == 0xB0) {
-                        // Block Device Characteristics：全零 = 非旋转介质、无特殊特性。
-                        // （UNMAP 相关能力在 0xB1 Block Limits 中宣告）
-                        VpdBlockDeviceCharacteristics vpd{};
-                        vpd.page_code = 0xB0;
-                        put_be16(vpd.page_length, sizeof(vpd.data));
-                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdBlockDeviceCharacteristics)));
-                        staging_offset_ = 0;
-                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
-                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
-                    }
-                    else if (page == 0xB1) {
-                        // Block Limits (SBC-4)：宣告 UNMAP 与 WRITE SAME 能力，
-                        // 主机 sd 层据此启用 trim / zeroout 路径
+                        // Block Limits（SBC-4 §5.4.5 Table 450）：宣告 UNMAP 与
+                        // WRITE SAME 能力，主机 sd 层据此启用 discard / zeroout 路径
                         VpdBlockLimits vpd{};
-                        vpd.page_code = 0xB1;
+                        vpd.page_code = 0xB0;
                         put_be16(vpd.page_length, 0x3C);
-                        put_be32(vpd.max_unmap_lba_count, 65536); // 32 MiB
+                        put_be32(vpd.max_unmap_lba_count, 65536); // 单次最多 65536 块（32 MiB@512B）
                         put_be32(vpd.max_unmap_block_desc_count, 64);
-                        put_be32(vpd.opt_unmap_granularity, 8); // 4096 B
+                        put_be32(vpd.opt_unmap_granularity, 8); // 8 块 = 4096 B
                         put_be32(vpd.unmap_granularity_alignment, 0x80000008); // bit31=UGAVALID
-                        put_be32(vpd.max_write_same_length, 65535);
+                        put_be64(vpd.max_write_same_length, 65535);
                         auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdBlockLimits)));
                         staging_offset_ = 0;
                         staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
                                              reinterpret_cast<const std::uint8_t *>(&vpd) + len);
                     }
+                    else if (page == 0xB1) {
+                        // Block Device Characteristics（SBC-4 §5.4.3 Table 439）：
+                        // 0001h = 非旋转介质（Table 440），其余特性不报告
+                        VpdBlockDeviceCharacteristics vpd{};
+                        vpd.page_code = 0xB1;
+                        put_be16(vpd.page_length, 0x3C);
+                        put_be16(vpd.medium_rotation_rate, 1);
+                        auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdBlockDeviceCharacteristics)));
+                        staging_offset_ = 0;
+                        staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
+                                             reinterpret_cast<const std::uint8_t *>(&vpd) + len);
+                    }
                     else if (page == 0xB2) {
-                        // Logical Block Provisioning：宣告支持 UNMAP（LBPU=1）
+                        // Logical Block Provisioning（SBC-4 §5.4.13 Table 467）：
+                        // LBPU/LBPWS/LBPWS10 声明 UNMAP 和带 UNMAP 的 WRITE SAME
+                        // 都支持；LBPRZ=1（punch_hole 后读回 0）；
+                        // PROVISIONING TYPE=2h（thin provisioned）
                         VpdLogicalBlockProvisioning vpd{};
                         vpd.page_code = 0xB2;
                         put_be16(vpd.page_length, 0x0004);
-                        vpd.lbpu = 0x80;
-                        vpd.provisioning = 0x02;
+                        vpd.lbp_flags = 0xE4; // LBPU|LBPWS|LBPWS10|LBPRZ
+                        vpd.min_percentage_provisioning_type = 0x02; // 类型在 bit2-0
                         auto len = std::min(transfer_len, std::uint32_t(sizeof(VpdLogicalBlockProvisioning)));
                         staging_offset_ = 0;
                         staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&vpd),
@@ -349,7 +353,11 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                     ReadCapacity16Data buf{};
                     put_be64(buf.last_lba, blocks > 0 ? blocks - 1 : 0);
                     put_be32(buf.block_size, backend_ ? backend_->block_size() : 512);
-                    auto len = std::min(transfer_len, std::uint32_t(12)); // 低 12 字节即可（LBA+块大小）
+                    // SBC-4 §3.23.2 Table 122：参数数据固定 32 字节。
+                    // byte 14 bit7 = LBPME：置 1 主机才会去读 0xB2/0xB0 并启用
+                    // discard；bit6 = LBPRZ：punch_hole 后读回全 0
+                    buf.lbpme_lbprz_lowest_aligned[0] = 0xC0;
+                    auto len = std::min(transfer_len, std::uint32_t(sizeof(ReadCapacity16Data)));
                     staging_offset_ = 0;
                     staging_data_.assign(reinterpret_cast<const std::uint8_t *>(&buf),
                                          reinterpret_cast<const std::uint8_t *>(&buf) + len);
@@ -457,9 +465,8 @@ void MscBulkOnlyHandler::on_out_data_received(StorageIoTransfer *trx, std::size_
                 }
                 case ScsiCmd::WriteSame10:
                 case ScsiCmd::WriteSame16: {
-                    // WRITE SAME：CDB[1] 位布局（SBC-3 rev 26+）：
-                    //   bit7-5 = WRPROTECT、bit4 = ANCHOR、bit3 = UNMAP、
-                    //   bit2 = PBDATA、bit1 = LBDATA、bit0 = NDOB
+                    // WRITE SAME：CDB[1] 位布局（SBC-4 §3.73 Table 236 / §3.74 Table 237）：
+                    //   bit7-5 = WRPROTECT、bit4 = ANCHOR、bit3 = UNMAP，bit2-0 保留
                     // UNMAP=1：无数据阶段，直接 punch_hole（trim）
                     // UNMAP=0：DATA-OUT 收 1 个逻辑块，用该数据填充整个 LBA 范围
                     // 块数 0 = 到介质末尾（与 READ/WRITE 10 的 0=256 块语义不同）

@@ -469,6 +469,224 @@ TEST(TestMscHandler, InquiryStandardReturnsIdentifiers) {
     fixture.msc->on_disconnection(ec);
 }
 
+TEST(TestMscHandler, InquiryVpdSupportedPagesListsBlockPages) {
+    // VPD 0x00：必须列出 0x00/0x80/0xB0/0xB1/0xB2（SPC-4 Supported VPD Pages）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Inquiry;
+    cdb[1] = 0x01; // EVPD=1
+    cdb[2] = 0x00;
+    cdb[4] = 9; // 分配长度
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x4445, 0x80, cdb, 9));
+
+    deliver_in_request(*fixture.msc, 2, 9, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 9u);
+    EXPECT_EQ(data[1], 0x00);
+    EXPECT_EQ(data[3], 5); // 页数
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 4, data.end())),
+              (std::vector<std::uint8_t>{0x00, 0x80, 0xB0, 0xB1, 0xB2}));
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, InquiryVpdUnitSerialNumberHasTwoByteLength) {
+    // Unit Serial Number（SPC-4 §7.8.1x）：PAGE LENGTH 在 byte 2-3 大端，
+    // 序列号从 byte 4 开始。内核 scsi_get_vpd_page 用 get_unaligned_be16(&buf[2])
+    // 取长度，写成 1 字节会让长度字段把首字符算进去
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8), false,
+                                   MscConfig{.serial = "SN001"});
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Inquiry;
+    cdb[1] = 0x01; // EVPD=1
+    cdb[2] = 0x80;
+    cdb[4] = 64;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x4448, 0x80, cdb, 64));
+
+    deliver_in_request(*fixture.msc, 2, 64, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 4u + 5u);
+    EXPECT_EQ(data[1], 0x80);
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
+              (std::vector<std::uint8_t>{0x00, 0x05}));
+    EXPECT_EQ(std::string(data.begin() + 4, data.end()), "SN001");
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, InquiryVpdBlockLimitsIsPageB0) {
+    // Block Limits 是 0xB0（SBC-4 §5.4.5 Table 450），不是 0xB1。
+    // 主机 sd 层按固定偏移解析：byte 6-7 粒度、8-11 最大传输、20-23 最大 UNMAP、
+    // 24-27 UNMAP 描述符数、28-31 最优 UNMAP 粒度、32-35 UGAVALID、36-43 WRITE SAME
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Inquiry;
+    cdb[1] = 0x01; // EVPD=1
+    cdb[2] = 0xB0;
+    cdb[3] = 0;
+    cdb[4] = 64; // 分配长度
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x4446, 0x80, cdb, 64));
+
+    deliver_in_request(*fixture.msc, 2, 64, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 64u);
+    EXPECT_EQ(sizeof(VpdBlockLimits), 64u);
+
+    EXPECT_EQ(data[0], 0x00); // 直接访问块设备
+    EXPECT_EQ(data[1], 0xB0); // Block Limits
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
+              (std::vector<std::uint8_t>{0x00, 0x3C})); // 页长度 60
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 20, data.begin() + 24)),
+              (std::vector<std::uint8_t>{0x00, 0x01, 0x00, 0x00})); // UNMAP LBA 数 65536
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 24, data.begin() + 28)),
+              (std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x40})); // 描述符数 64
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 28, data.begin() + 32)),
+              (std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x08})); // 最优粒度 8 块
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 32, data.begin() + 36)),
+              (std::vector<std::uint8_t>{0x80, 0x00, 0x00, 0x08})); // UGAVALID + 对齐 8 块
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 36, data.begin() + 44)),
+              (std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0xFF, 0xFF})); // WRITE SAME 65535
+    // 未声明的能力保持 0：COMPARE AND WRITE 不支持、无原子写特性
+    EXPECT_EQ(data[5], 0x00);
+    for (std::size_t i = 44; i < 64; ++i) {
+        EXPECT_EQ(data[i], 0x00) << "byte " << i;
+    }
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, InquiryVpdBlockDeviceCharacteristicsIsPageB1) {
+    // Block Device Characteristics 是 0xB1（SBC-4 §5.4.3 Table 439）：
+    // byte 4-5 介质旋转速率，0001h = 非旋转介质（Table 440）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Inquiry;
+    cdb[1] = 0x01; // EVPD=1
+    cdb[2] = 0xB1;
+    cdb[4] = 64;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x4447, 0x80, cdb, 64));
+
+    deliver_in_request(*fixture.msc, 2, 64, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 64u);
+    EXPECT_EQ(sizeof(VpdBlockDeviceCharacteristics), 64u);
+
+    EXPECT_EQ(data[0], 0x00);
+    EXPECT_EQ(data[1], 0xB1);
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
+              (std::vector<std::uint8_t>{0x00, 0x3C}));
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 4, data.begin() + 6)),
+              (std::vector<std::uint8_t>{0x00, 0x01})); // 非旋转介质
+    // product type / form factor / zoned 等特性均不报告
+    for (std::size_t i = 6; i < 64; ++i) {
+        EXPECT_EQ(data[i], 0x00) << "byte " << i;
+    }
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, InquiryVpdLogicalBlockProvisioningIsPageB2) {
+    // Logical Block Provisioning（SBC-4 §5.4.13 Table 467）：byte 5 声明
+    // LBPU/LBPWS/LBPWS10/LBPRZ，byte 6 bit2-0 = 2h（thin provisioned）
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::Inquiry;
+    cdb[1] = 0x01; // EVPD=1
+    cdb[2] = 0xB2;
+    cdb[4] = 8;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x4449, 0x80, cdb, 8));
+
+    deliver_in_request(*fixture.msc, 2, 8, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 8u);
+    EXPECT_EQ(data[1], 0xB2);
+    EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
+              (std::vector<std::uint8_t>{0x00, 0x04}));
+    EXPECT_EQ(data[4], 0x00); // 不支持置备阈值
+    EXPECT_EQ(data[5], 0xE4); // LBPU|LBPWS|LBPWS10|LBPRZ
+    EXPECT_EQ(data[6], 0x02); // PROVISIONING TYPE = thin provisioned
+    EXPECT_EQ(data[7], 0x00); // 不支持置备百分比
+
+    fixture.msc->on_disconnection(ec);
+}
+
+TEST(TestMscHandler, ReadCapacity16ReportsLbpmeAndLbprz) {
+    // SBC-4 §3.23.2 Table 122 byte 14：bit7 LBPME、bit6 LBPRZ。
+    // 主机看不到 LBPME 就不会读 0xB2/0xB0，discard 永远不会启用
+    StringPool string_pool;
+    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+
+    CaptureResponder stub;
+    usbipdcpp::error_code ec;
+    fixture.msc->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 16> cdb{};
+    cdb[0] = ScsiCmd::ReadCapacity16;
+    deliver_out_data(*fixture.msc, 1, make_cbw(0x5559, 0x80, cdb, 32));
+
+    deliver_in_request(*fixture.msc, 2, 32, fixture.ep_in, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    auto data = data_from_submit(stub.submits[0]);
+    ASSERT_EQ(data.size(), 32u);
+    EXPECT_EQ(data[14], 0xC0); // LBPME | LBPRZ
+    EXPECT_EQ(data[15], 0x00); // 最低对齐 LBA = 0
+    // byte 12/13：RC BASIS、PROT_EN、块大小指数都应为 0（无保护信息、512:512）
+    EXPECT_EQ(data[12], 0x00);
+    EXPECT_EQ(data[13], 0x00);
+    for (std::size_t i = 16; i < 32; ++i) {
+        EXPECT_EQ(data[i], 0x00) << "byte " << i;
+    }
+
+    fixture.msc->on_disconnection(ec);
+}
+
 TEST(TestMscHandler, ReadCapacity10ReportsCapacity) {
     // READ CAPACITY(10)：最后 LBA 与块大小（大端）
     StringPool string_pool;
