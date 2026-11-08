@@ -261,12 +261,16 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
             }
         }
         else {
-            // tweak_ret == 0：tweak 内部已经用同步 API 把请求发过设备了，这是它办完的
-            // 结果，不能再提交一次（内核在 tweak 成功时同样跳过 usb_submit_urb，注释
+            // tweak 成功时走同步 libusb API 发过设备了，这是它办完的结果，
+            // 不能再提交一次（内核在 tweak 成功时同样跳过 usb_submit_urb，注释
             // 原话是 Skip submitting this URB to not duplicate the request）。
-            // libusb 失败返回负数、不需要 tweak 返回 -1，都走上面的提交分支
+            // libusb 失败返回负数、不需要 tweak 返回 -1，都走上面的提交分支。
+            // actual_length 必须为 0：tweak 的请求都是无数据阶段的控制传输，
+            // 内核 stub 成功后走 stub_complete，urb->actual_length 保持
+            // usb_alloc_urb 的初值 0（stub_rx.c），不能把
+            // transfer_buffer_length 当作实际传输长度上报
             responder->submit_ret_submit(
-                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, transfer_buffer_length));
+                    UsbIpResponse::UsbIpRetSubmit::create_ret_submit_ok_without_data(seqnum, 0));
         }
     }
     else if (interface.has_value()) [[likely]] {
@@ -297,6 +301,13 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                                            LibusbDeviceHandler::transfer_callback, callback_args, timeout_milliseconds);
         }
         else if (ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
+            // ISO 端点收到 0 / 0xFFFFFFFF 属于客户端违规（0xFFFFFFFF 只用于
+            // 非等时传输），这里不单独拦截：libusb_submit_transfer 对
+            // num_iso_packets < 1 返回 LIBUSB_ERROR_INVALID_PARAM
+            // （linux_usbfs 的 submit_iso_transfer），与内核 usb_submit_urb
+            // 对 number_of_packets <= 0 返回 -EINVAL 一致，统一走下面的
+            // submit 失败路径回 EPIPE；默认策略下同时断开会话，与内核 stub
+            // 把 submit 失败当作 SDEV_EVENT_ERROR_SUBMIT 丢弃连接的行为一致
             int num_iso_packets = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
                                           ? static_cast<int>(cmd.number_of_packets)
                                           : 0;
