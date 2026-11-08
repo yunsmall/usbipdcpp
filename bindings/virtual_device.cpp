@@ -149,7 +149,10 @@ void bind_virtual_device(py::module_ &m) {
     py::class_<usbipdcpp::VirtualInterfaceHandler, PyVirtualInterfaceHandler,
                std::shared_ptr<usbipdcpp::VirtualInterfaceHandler>>(m, "VirtualInterfaceHandler")
         .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
-             py::arg("handle_interface"), py::arg("string_pool"))
+             py::arg("handle_interface"), py::arg("string_pool"),
+             // handler 内部保存接口/字符串池的引用：必须把这两个 Python 对象
+             // 的存活期绑到 handler 上，否则临时对象被回收后引用悬垂
+             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
         .def("on_new_connection", [](usbipdcpp::VirtualInterfaceHandler &self,
                                      usbipdcpp::TransferResponder &responder) {
             std::error_code ec;
@@ -171,7 +174,8 @@ void bind_virtual_device(py::module_ &m) {
                std::shared_ptr<usbipdcpp::HidVirtualInterfaceHandler>>(m, "HidVirtualInterfaceHandler",
                                                                        py::base<usbipdcpp::VirtualInterfaceHandler>())
         .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
-             py::arg("handle_interface"), py::arg("string_pool"))
+             py::arg("handle_interface"), py::arg("string_pool"),
+             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
         // 覆盖基类同名绑定：Python 子类 super().on_new_connection(responder)
         // 必须落到 HID 实现上，否则 input_channel 拿不到会话指针
         .def("on_new_connection", [](usbipdcpp::HidVirtualInterfaceHandler &self,
@@ -195,7 +199,9 @@ void bind_virtual_device(py::module_ &m) {
                std::shared_ptr<usbipdcpp::SimpleVirtualDeviceHandler>>(
         m, "SimpleVirtualDeviceHandler")
         .def(py::init<usbipdcpp::UsbDevice &, usbipdcpp::StringPool &>(),
-             py::arg("handle_device"), py::arg("string_pool"))
+             py::arg("handle_device"), py::arg("string_pool"),
+             // 同接口 handler：设备/字符串池的引用由 handler 长期持有
+             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
         .def("setup_interface_handlers", &usbipdcpp::SimpleVirtualDeviceHandler::setup_interface_handlers)
         .def("change_string_manufacturer", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_manufacturer,
              py::arg("new_str"))

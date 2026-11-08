@@ -20,7 +20,9 @@ void bind_absolute_mouse(py::module_ &m) {
                std::shared_ptr<usbipdcpp::AbsoluteMouseHandler>>(m, "AbsoluteMouseHandler")
         .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &, int, int>(),
              py::arg("handle_interface"), py::arg("string_pool"),
-             py::arg("screen_width") = 1920, py::arg("screen_height") = 1080)
+             py::arg("screen_width") = 1920, py::arg("screen_height") = 1080,
+             // handler 长期持有接口/字符串池引用，绑定 Python 对象的存活期
+             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
         // 屏幕配置
         .def("set_screen_size", &usbipdcpp::AbsoluteMouseHandler::set_screen_size,
              py::arg("width"), py::arg("height"))
