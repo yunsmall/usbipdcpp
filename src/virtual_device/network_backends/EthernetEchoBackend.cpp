@@ -206,6 +206,12 @@ void EthernetEchoBackend::handle_tcp(const Ipv4Header *ip, const std::uint8_t *t
         send_segment(TCP_FLAG_SYN | TCP_FLAG_ACK, tcp_my_seq_, tcp_peer_seq_, nullptr, 0);
     }
     else if (tcp_established_) {
+        // ACK 字段在纯确认和带数据的段里都有效（RFC 793 §3.1）：主机发送
+        // 下一段数据时会捎带确认，忽略它会让回显序号落后于主机期望，主机
+        // 丢弃重复段后该轮传输收不到完整数据
+        if (ack > tcp_my_seq_) {
+            tcp_my_seq_ = ack;
+        }
         // 先处理数据回显，再处理 FIN
         if (payload_len > 0) {
             tcp_peer_seq_ = seq + payload_len;
@@ -216,10 +222,6 @@ void EthernetEchoBackend::handle_tcp(const Ipv4Header *ip, const std::uint8_t *t
             tcp_peer_seq_ = seq + payload_len + 1;
             send_segment(TCP_FLAG_ACK | TCP_FLAG_FIN, tcp_my_seq_, tcp_peer_seq_, nullptr, 0);
             tcp_established_ = false;
-        }
-        else if (payload_len == 0 && ack > tcp_my_seq_) {
-            // 纯确认（我们发过数据）：同步我方序列号
-            tcp_my_seq_ = ack;
         }
     }
 }
