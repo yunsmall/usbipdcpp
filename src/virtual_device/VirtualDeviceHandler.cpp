@@ -368,6 +368,11 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                         case StandardRequest::SetConfiguration: {
                             SPDLOG_TRACE("设备SetConfiguration");
                             // USB 2.0 §9.4.7：wValue 只有低字节是配置值，高字节保留；
+                            // 非零时行为未定义，这里按 Request Error 处理
+                            if ((setup_packet.value & 0xFF00) != 0) {
+                                status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+                                break;
+                            }
                             // 配置值为 0 表示让设备回到 Address 状态（未配置）
                             auto config_value = static_cast<std::uint8_t>(setup_packet.value & 0x00FF);
                             request_set_configuration(config_value, &status);
@@ -461,7 +466,11 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             auto ret = request_get_configuration(&status);
                             // 控制传输数据阶段统一小端（GetConfiguration 返回 1 字节，
                             // 大小端无区别，与 GetStatus 等保持一致）
-                            vector_append_to_le(result, ret);
+                            // 状态非 0（子类拒绝）时不能带数据阶段，否则 RET_SUBMIT 会
+                            // 出现“错误状态 + 非零 actual_length”的矛盾应答
+                            if (status == 0) {
+                                vector_append_to_le(result, ret);
+                            }
                             break;
                         }
                         case StandardRequest::GetDescriptor: {
@@ -483,8 +492,13 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             SPDLOG_TRACE("设备GetStatus");
                             auto gotten_status = request_get_status(&status);
                             // USB 控制传输数据阶段多字节字段小端（GetStatus 返回 2 字节
-                            // 设备状态，低字节在前），不能用网络字节序
-                            vector_append_to_le(result, gotten_status);
+                            // 设备状态，低字节在前），不能用网络字节序。
+                            // USB 2.0 §9.4.5 Figure 9-4：wValue 必须为 0，非零时设备
+                            // 行为未定义；与内核 gadget 一致选择忽略该保留字段。
+                            // 状态非 0 时不带数据阶段
+                            if (status == 0) {
+                                vector_append_to_le(result, gotten_status);
+                            }
                             break;
                         }
                         default: {
@@ -532,7 +546,12 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 break;
                             }
                             case StandardRequest::SetInterface: {
-                                // USB 2.0 §9.4.10：wValue 低字节是 alternate setting
+                                // USB 2.0 §9.4.10：wValue 低字节是 alternate setting，
+                                // 高字节保留必须为 0（非零时行为未定义，按 Request Error 处理）
+                                if ((setup_packet.value & 0xFF00) != 0) {
+                                    status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+                                    break;
+                                }
                                 auto alt = static_cast<std::uint16_t>(setup_packet.value & 0x00FF);
                                 SPDLOG_DEBUG("SET_INTERFACE: intf={} alt={}", setup_packet.index, alt);
                                 handler->request_set_interface(alt, &status);
@@ -566,15 +585,23 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 SPDLOG_TRACE("接口request_get_interface");
                                 auto ret = this->request_get_interface(setup_packet.index, &status);
                                 // 控制传输数据阶段统一小端（GetInterface 返回 1 字节，
-                                // 大小端无区别，与 GetStatus 等保持一致）
-                                vector_append_to_le(result, ret);
+                                // 大小端无区别，与 GetStatus 等保持一致）；
+                                // 状态非 0 时不带数据阶段
+                                if (status == 0) {
+                                    vector_append_to_le(result, ret);
+                                }
                                 break;
                             }
                             case StandardRequest::GetStatus: {
                                 SPDLOG_TRACE("接口request_get_status");
                                 auto ret = handler->request_get_status(&status);
-                                // USB 控制传输数据阶段多字节字段小端，不能用网络字节序
-                                vector_append_to_le(result, ret);
+                                // 控制传输数据阶段多字节字段小端，不能用网络字节序；
+                                // USB 2.0 §9.4.5：接口 GET_STATUS 的 wValue 必须为 0，
+                                // 非零时行为未定义，与内核 gadget 一致忽略。
+                                // 状态非 0 时不带数据阶段
+                                if (status == 0) {
+                                    vector_append_to_le(result, ret);
+                                }
                                 break;
                             }
                             case StandardRequest::GetDescriptor: {
@@ -617,6 +644,9 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
             }
             case RequestRecipient::Endpoint: {
                 SPDLOG_TRACE("发给端点");
+                // USB 2.0 Table 9-2/§9.4.5：端点请求的 wIndex 低字节是端点地址，
+                // 高字节保留，非零时设备行为未定义；与内核 gadget 一致忽略高字节
+                // （内核用 (w_index & 0x80) >> 3 | (w_index & 0x0f) 取端点号）
                 auto find_ret = handle_device.find_ep(setup_packet.index);
                 if (find_ret) [[likely]] {
                     // auto &target_ep = find_ret->first;
@@ -661,8 +691,13 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                         SPDLOG_TRACE("端点request_endpoint_get_status");
                                         auto gotten_status =
                                                 handler->request_endpoint_get_status(setup_packet.index, &status);
-                                        // USB 控制传输数据阶段多字节字段小端，不能用网络字节序
-                                        vector_append_to_le(result, gotten_status);
+                                        // 控制传输数据阶段多字节字段小端，不能用网络字节序；
+                                        // USB 2.0 §9.4.5 Figure 9-6：端点 GET_STATUS 的
+                                        // wValue 必须为 0，非零时行为未定义，与内核 gadget
+                                        // 一致忽略。状态非 0 时不带数据阶段
+                                        if (status == 0) {
+                                            vector_append_to_le(result, gotten_status);
+                                        }
                                         break;
                                     }
                                     case StandardRequest::SynchFrame: {

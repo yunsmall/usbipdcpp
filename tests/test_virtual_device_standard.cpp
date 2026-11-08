@@ -1440,6 +1440,103 @@ TEST(VirtualDeviceStandard, WirelessEp0UsesHighSpeedPacketSize) {
     EXPECT_EQ(ep0_max_packet_size(UsbSpeed::Wireless), 64);
 }
 
+TEST(VirtualDeviceStandard, ReservedSetupFieldsFollowKernelBehavior) {
+    // 与内核 gadget（gadget/composite.c）保持一致：
+    // SET_CONFIGURATION/SET_INTERFACE 用完整 wValue 匹配配置/alt，高字节非 0
+    // 天然会失败（STALL）；GET_STATUS 的 wValue 和端点 wIndex 高字节被忽略
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {{{.address = 0x81,
+                        .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                        .max_packet_size = 64,
+                        .interval = 0}}};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
+    device->interfaces[0].with_handler<ProbeInterface>(pool);
+    auto handler = device->with_handler<ProbeDevice>(pool);
+    handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    // SET_CONFIGURATION 的 wValue 高字节非 0：匹配不到配置，回 EPIPE
+    SetupPacket set_cfg{.request_type = 0x00, .request = 9, .value = 0x0101, .index = 0, .length = 0};
+    send_control(*handler, op, 1, UsbIpDirection::Out, 0, set_cfg);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // SET_INTERFACE 的 wValue 高字节非 0：alt 越界，回 EPIPE
+    SetupPacket set_intf{.request_type = 0x01, .request = 11, .value = 0x0101, .index = 0, .length = 0};
+    send_control(*handler, op, 2, UsbIpDirection::Out, 0, set_intf);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    EXPECT_EQ(stub.submits[1].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    // GET_STATUS 的 wValue 非 0：与内核一样忽略，正常返回 2 字节状态
+    SetupPacket get_status{.request_type = 0x80, .request = 0, .value = 1, .index = 0, .length = 2};
+    send_control(*handler, op, 3, UsbIpDirection::In, 2, get_status);
+    ASSERT_EQ(stub.submits.size(), 3u);
+    EXPECT_EQ(stub.submits[2].status, 0u);
+    EXPECT_EQ(stub.submits[2].actual_length, 2u);
+
+    // 端点请求的 wIndex 高字节非 0：与内核一样忽略高字节，按 0x81 处理
+    SetupPacket ep_status{.request_type = 0x82, .request = 0, .value = 0, .index = 0x0181, .length = 2};
+    send_control(*handler, op, 4, UsbIpDirection::In, 2, ep_status);
+    ASSERT_EQ(stub.submits.size(), 4u);
+    EXPECT_EQ(stub.submits[3].status, 0u);
+    EXPECT_EQ(stub.submits[3].actual_length, 2u);
+
+    // 非法配置值没有生效
+    std::uint32_t status = 0;
+    EXPECT_EQ(handler->request_get_configuration(&status), 0u);
+    EXPECT_EQ(status, 0u);
+
+    handler->on_disconnection(ec);
+}
+
+namespace {
+
+/// GET_INTERFACE 返回失败的接口 handler（验证错误状态不携带数据）
+class FailingGetInterfaceHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    std::uint8_t request_get_interface(std::uint32_t *p_status) override {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return 0xFF;
+    }
+};
+
+} // namespace
+
+TEST(VirtualDeviceStandard, GetInterfaceErrorCarriesNoData) {
+    // 子类 handler 用非零 status 拒绝 GET_INTERFACE 时，RET_SUBMIT 不能带
+    // 数据阶段（状态与 actual_length 必须一致）
+    StringPool pool;
+    UsbInterface intf{};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
+    device->interfaces[0].with_handler<FailingGetInterfaceHandler>(pool);
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket get_intf{.request_type = 0x81, .request = 10, .value = 0, .index = 0, .length = 1};
+    send_control(*handler, op, 1, UsbIpDirection::In, 1, get_intf);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_EQ(stub.submits[0].actual_length, 0u);
+    EXPECT_TRUE(ret_submit_data(stub.submits[0]).empty());
+
+    handler->on_disconnection(ec);
+}
+
 TEST(VirtualDeviceStandard, ControlRequestToMissingEndpointStalls) {
     // USB 2.0 §9.4.1/§9.4.5：引用不存在的端点必须回 Request Error。
     // 控制传输必须有 RET_SUBMIT，漏掉应答会让主机 URB 永久挂起
