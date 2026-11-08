@@ -301,12 +301,13 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
         SPDLOG_ERROR("libusb_wrap_sys_device 失败: {}", libusb_strerror(err));
         return DeviceOperationResult::DeviceOpenFailed;
     }
+    // 临时 handle 只用于查询信息；guard 覆盖后续所有分配抛异常的路径
+    std::unique_ptr<libusb_device_handle, decltype(&libusb_close)> handle_guard(temp_handle, &libusb_close);
 
     // 从临时 handle 获取设备信息
     libusb_device *device_for_info = libusb_get_device(temp_handle);
     if (!device_for_info) {
         SPDLOG_ERROR("libusb_get_device returns nullptr");
-        libusb_close(temp_handle);
         return DeviceOperationResult::DeviceNotFound;
     }
 
@@ -315,18 +316,18 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     err = libusb_get_device_descriptor(device_for_info, &device_descriptor);
     if (err) {
         SPDLOG_WARN("无法获取设备描述符：{}", libusb_strerror(err));
-        libusb_close(temp_handle);
         return DeviceOperationResult::GetDescriptorFailed;
     }
 
     // 获取配置描述符
-    struct libusb_config_descriptor *active_config_desc;
+    struct libusb_config_descriptor *active_config_desc = nullptr;
     err = libusb_get_active_config_descriptor(device_for_info, &active_config_desc);
     if (err) {
         SPDLOG_WARN("无法获取设备当前的配置描述符：{}", libusb_strerror(err));
-        libusb_close(temp_handle);
         return DeviceOperationResult::GetConfigFailed;
     }
+    std::unique_ptr<libusb_config_descriptor, decltype(&libusb_free_config_descriptor)> config_guard(
+            active_config_desc, &libusb_free_config_descriptor);
 
     // 构建接口信息
     SPDLOG_DEBUG("该设备有{}个interface", active_config_desc->bNumInterfaces);
@@ -364,9 +365,10 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
     auto speed = (std::uint32_t) libusb_speed_to_usb_speed(libusb_get_device_speed(device_for_info));
     auto configuration_value = active_config_desc->bConfigurationValue;
 
-    // 关闭临时 handle
-    libusb_free_config_descriptor(active_config_desc);
-    libusb_close(temp_handle);
+    // 信息已拷出，释放临时资源；之后创建 UsbDevice/handler 的分配异常
+    // 不会再泄漏这两个句柄
+    config_guard.reset();
+    handle_guard.reset();
 
     // 创建 UsbDevice 和 LibusbDeviceHandler；busid 查重与添加由
     // Server::add_device 在同一把锁内原子完成（见 bind_host_device 的注释）
