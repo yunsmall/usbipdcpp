@@ -126,6 +126,7 @@ bash tests/e2e/linux/run_all.sh
 | test_cdc_acm.sh | Virtual serial port | python(termios) single-fd write/read, echo matches exactly |
 | test_ecm.sh | Virtual NIC | enx interface + ping 192.168.53.1 |
 | test_msc.sh | USB flash drive | lsblk+dmesg dual confirmation of new disk → size check → sector-100 write/read cmp |
+| test_msc_usb3.sh | USB flash drive (SuperSpeed) | mock_msc --super → speed=5000 / bcdUSB=3.00 → size check → read-only 8 sectors |
 | test_keyboard.sh | HID keyboard | evtest captures KEY_A events |
 | test_mouse.sh | HID mouse | evtest captures REL motion events |
 | test_gamepad.sh | HID gamepad | evtest captures gamepad events |

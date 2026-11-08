@@ -97,6 +97,7 @@ bash tests/e2e/linux/run_all.sh
 | test_cdc_acm.sh | 虚拟串口 | python(termios) 单 fd 写读，回显精确一致 |
 | test_ecm.sh | 虚拟网卡 | enx 网卡 + ping 192.168.53.1 |
 | test_msc.sh | U 盘 | lsblk+dmesg 双路确认新盘 → 大小校验 → 扇区 100 写读 cmp |
+| test_msc_usb3.sh | U 盘（SuperSpeed） | mock_msc --super → speed=5000/bcdUSB=3.00 → 大小校验 → 只读 8 扇区 |
 | test_keyboard.sh | HID 键盘 | evtest 捕获 KEY_A 事件 |
 | test_mouse.sh | HID 鼠标 | evtest 捕获 REL 移动事件 |
 | test_gamepad.sh | HID 手柄 | evtest 捕获手柄事件 |
