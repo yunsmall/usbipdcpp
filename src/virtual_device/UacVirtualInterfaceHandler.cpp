@@ -731,6 +731,10 @@ void UacAudioStreamingSourceHandler::request_set_interface(std::uint16_t alterna
     if (alternate_setting == 0) {
         streaming = false;
         *p_status = 0;
+        // 调度器里已排期的 URB 不在这里主动取消：主机停流时会自己 UNLINK
+        // （handle_unlink_seqnum → TransferScheduler::cancel）。取消到达前
+        // 若服务了一个，只是按原数据应答，重开流时 chunk/残差都会重置，
+        // 不会污染新流；主动丢弃反而会漏应答
     }
     else if (alternate_setting == 1) {
         streaming = true;
@@ -1130,6 +1134,8 @@ void UacAudioStreamingSinkHandler::request_set_interface(std::uint16_t alternate
     if (alternate_setting == 0) {
         streaming = false;
         *p_status = 0;
+        // 同麦克风方向：已排期的 URB 由主机的 UNLINK 取消，不在停流时主动
+        // 丢弃——取消前已收到的那批数据本来就是这次流的合法数据
     }
     else if (alternate_setting == 1) {
         streaming = true;

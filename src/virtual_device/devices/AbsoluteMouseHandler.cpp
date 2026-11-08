@@ -145,6 +145,10 @@ void AbsoluteMouseHandler::on_new_connection(TransferResponder &current_session,
     client_connected_.notify_all();
     client_connect_cv_.notify_all();
 
+    // 新连接重新放行用户线程的移动循环（move/humanized_move 在连接期间查
+    // should_stop_，断连时能及时退出）。断开后立刻重连时旧移动线程可能还没
+    // 看到停止标志、继续操作新连接——这是可接受行为：绝对坐标与连接无关，
+    // 旧循环写入的位置对新会话同样有效
     should_stop_ = false;
     state_changed_ = true;
 
