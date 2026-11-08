@@ -144,6 +144,11 @@ TEST(VirtualDeviceStandard, FullSpeedDeviceDescriptorUsesActualEp0Size) {
 TEST(VirtualDeviceStandard, EndpointHaltSetGetClear) {
     StringPool pool;
     UsbInterface intf{};
+    // Halt 只对中断/Bulk 端点有效（USB 2.0 §9.4.5），接口里必须声明端点
+    intf.endpoints = {{{.address = 0x81,
+                        .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
+                        .max_packet_size = 64,
+                        .interval = 0}}};
     ProbeInterface handler(intf, pool);
 
     std::uint32_t status = 0;
@@ -171,6 +176,27 @@ TEST(VirtualDeviceStandard, EndpointZeroCannotBeHalted) {
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x00, &status);
     EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
     EXPECT_FALSE(handler.is_endpoint_halted(0x00));
+}
+
+TEST(VirtualDeviceStandard, IsochronousEndpointCannotBeHalted) {
+    // USB 2.0 §9.4.5：Halt 特性只为中断和 Bulk 端点实现，等时端点
+    // SET/CLEAR_FEATURE(ENDPOINT_HALT) 必须回 Request Error
+    StringPool pool;
+    UsbInterface intf{};
+    intf.endpoints = {{{.address = 0x81,
+                        .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous),
+                        .max_packet_size = 1024,
+                        .interval = 1}}};
+    ProbeInterface handler(intf, pool);
+
+    std::uint32_t status = 0;
+    handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_FALSE(handler.is_endpoint_halted(0x81));
+
+    status = 0;
+    handler.request_endpoint_clear_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
+    EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
 }
 
 TEST(VirtualDeviceStandard, UnknownEndpointFeatureStalls) {
@@ -353,7 +379,10 @@ TEST(VirtualDeviceStandard, ResetEndpointHaltStateClearsAllAlternates) {
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
+    // 0x82 只存在于 alt 1，切到 alt 1 后才是当前端点
+    intf.current_altsetting = 1;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x82, &status);
+    intf.current_altsetting = 0;
     ASSERT_TRUE(handler.is_endpoint_halted(0x81));
     ASSERT_TRUE(handler.is_endpoint_halted(0x82));
 
@@ -1366,6 +1395,112 @@ TEST(VirtualDeviceStandard, U1U2EnableOnlyInConfiguredSuperSpeedState) {
     status = 0;
     hs.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
     EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    ss.handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, SetConfigurationZeroClearsU1U2Enable) {
+    // USB 3.0 §9.4.9：U1/U2 Enable 只在 Configured 状态有效；SET_CONFIGURATION(0)
+    // 回到 Address 状态后必须清零，否则主机在 Address 状态无法用 CLEAR_FEATURE
+    // 清除（会回 Request Error），状态一直卡住
+    DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    ss.handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket set_cfg{.request_type = 0x00, .request = 9, .value = 1, .index = 0, .length = 0};
+    send_control(*ss.handler, op, 1, UsbIpDirection::Out, 0, set_cfg);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].status, 0u);
+
+    std::uint32_t status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    ASSERT_EQ(status, 0u);
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U2_ENABLE, &status);
+    ASSERT_EQ(status, 0u);
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0x000C);
+
+    SetupPacket unset_cfg{.request_type = 0x00, .request = 9, .value = 0, .index = 0, .length = 0};
+    send_control(*ss.handler, op, 2, UsbIpDirection::Out, 0, unset_cfg);
+    ASSERT_EQ(stub.submits.size(), 2u);
+    ASSERT_EQ(stub.submits[1].status, 0u);
+
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0u);
+
+    ss.handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, WirelessEp0UsesHighSpeedPacketSize) {
+    // Wireless USB 1.0 与高速同为 480Mbps，EP0 包大小一致；
+    // change_device_ep0_max_size_by_speed 也把 Wireless 按 64 处理
+    EXPECT_EQ(ep0_max_packet_size(UsbSpeed::Wireless), 64);
+}
+
+TEST(VirtualDeviceStandard, ControlRequestToMissingEndpointStalls) {
+    // USB 2.0 §9.4.1/§9.4.5：引用不存在的端点必须回 Request Error。
+    // 控制传输必须有 RET_SUBMIT，漏掉应答会让主机 URB 永久挂起
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto handler = device->with_handler<ProbeDevice>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket get_status{.request_type = 0x82, .request = 0, .value = 0, .index = 0x85, .length = 2};
+    send_control(*handler, op, 1, UsbIpDirection::In, 2, get_status);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+
+    handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, NewConnectionResetsDeviceRuntimeState) {
+    // 新连接等价于总线复位（USB 2.0 §9.2.1）；§9.1.1.6 要求复位后远程唤醒
+    // 禁用，U1/U2 Enable、SET_SEL、SET_ISOCH_DELAY 保存的值也不能残留
+    DeviceEnv ss(UsbSpeed::Super, {3, 0, 0});
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    ss.handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket set_cfg{.request_type = 0x00, .request = 9, .value = 1, .index = 0, .length = 0};
+    send_control(*ss.handler, op, 1, UsbIpDirection::Out, 0, set_cfg);
+    ASSERT_EQ(stub.submits.size(), 1u);
+    ASSERT_EQ(stub.submits[0].status, 0u);
+
+    std::uint32_t status = 0;
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U1_ENABLE, &status);
+    ASSERT_EQ(status, 0u);
+    ss.handler->request_set_feature(SetupPacket::USB_DEVICE_U2_ENABLE, &status);
+    ASSERT_EQ(status, 0u);
+    ss.handler->request_set_sel(data_type{1, 2, 3, 0, 4, 0}, 0, 0, &status);
+    ASSERT_EQ(status, 0u);
+    ss.handler->request_set_isoch_delay(321, &status);
+    ASSERT_EQ(status, 0u);
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0x000C);
+
+    // 断开后重新连接：所有运行时状态清零
+    ss.handler->on_disconnection(ec);
+    ss.handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    status = 0;
+    EXPECT_EQ(ss.handler->request_get_status(&status), 0u);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(ss.handler->get_u1_system_exit_latency(), 0);
+    EXPECT_EQ(ss.handler->get_u1_device_to_host_latency(), 0);
+    EXPECT_EQ(ss.handler->get_u2_system_exit_latency(), 0);
+    EXPECT_EQ(ss.handler->get_u2_device_to_host_latency(), 0);
+    EXPECT_EQ(ss.handler->get_isoch_delay_ns(), 0);
 
     ss.handler->on_disconnection(ec);
 }

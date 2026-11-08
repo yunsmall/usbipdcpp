@@ -269,16 +269,18 @@ public:
     }
 
     [[nodiscard]] virtual std::wstring get_string_interface() const {
+        // StringPool 内部自带互斥锁，这里只读索引（原子量），不需要设备级锁
         return string_pool.get_string(string_interface).value_or(L"");
     }
 
     void change_string_interface(const std::wstring &new_str) {
+        // StringPool::change_string 内部加锁；索引本身是原子量
         string_pool.change_string(string_interface, new_str);
     }
 
     /// 使 iInterface 与另一个 handler 一致（USBCCGP 移除 IAD 后，同功能接口靠 iInterface 分组）
     void sync_string_interface_from(const VirtualInterfaceHandler &other) {
-        string_interface = other.string_interface;
+        string_interface = other.string_interface.load();
     }
 
 protected:
@@ -291,7 +293,9 @@ protected:
     /// 用 atomic 避免数据竞争
     std::array<std::atomic_bool, 256> endpoint_halted{};
 
-    std::uint8_t string_interface;
+    /// 接口字符串索引：构造/配置时写，描述符构造（会话线程）与
+    /// change_string_interface 可能来自不同线程，用原子量避免数据竞争
+    std::atomic<std::uint8_t> string_interface;
 
     StringPool &string_pool;
 };

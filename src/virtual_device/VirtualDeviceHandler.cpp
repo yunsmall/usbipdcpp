@@ -29,6 +29,7 @@ constexpr std::uint16_t USB3_MAX_POWER_UNIT_MA = 8;
 constexpr std::uint16_t DEVICE_STATUS_REMOTE_WAKEUP = 0x0002;
 constexpr std::uint16_t DEVICE_STATUS_U1_ENABLE = 0x0004;
 constexpr std::uint16_t DEVICE_STATUS_U2_ENABLE = 0x0008;
+constexpr std::uint16_t DEVICE_STATUS_LTM_ENABLE = 0x0010;
 
 /**
  * @brief 设备是否工作在 SuperSpeed（含 SuperSpeedPlus）
@@ -210,6 +211,17 @@ void VirtualDeviceHandler::on_new_connection(TransferResponder &current_session,
     // 新会话等价于总线复位：设备回到未配置状态（USB 2.0 §9.2.1 复位后
     // 设备未配置），接口回到默认的 alternate setting 0（§9.6.5）
     current_configuration = 0;
+    // USB 2.0 §9.1.1.6：复位后远程唤醒必须禁用；U1/U2 Enable、SET_SEL 与
+    // SET_ISOCH_DELAY 保存的值同样是上一次连接的主机设置的运行时状态，
+    // 复位后不能残留给下一个客户端。self-powered（bit0）是设备能力，保留
+    device_status &= static_cast<std::uint16_t>(
+            ~(DEVICE_STATUS_REMOTE_WAKEUP | DEVICE_STATUS_U1_ENABLE | DEVICE_STATUS_U2_ENABLE |
+              DEVICE_STATUS_LTM_ENABLE));
+    isoch_delay_ns = 0;
+    u1_system_exit_latency = 0;
+    u1_device_to_host_latency = 0;
+    u2_system_exit_latency = 0;
+    u2_device_to_host_latency = 0;
     for (auto &intf: handle_device.interfaces) {
         intf.current_altsetting = 0;
     }
@@ -235,10 +247,13 @@ void VirtualDeviceHandler::on_new_connection(TransferResponder &current_session,
                 // Session（use-after-free，见 AbstDeviceHandler::register_session 注释）
                 error_code rollback_ec;
                 for (auto &done: handle_device.interfaces) {
-                    if (&done == &intf)
-                        break;
                     if (done.handler)
                         done.handler->on_disconnection(rollback_ec);
+                    // 失败接口自己也要回滚：它的 on_new_connection 已经设置了
+                    // responder（并可能启动了线程/定时器），不清理会留下指向即将
+                    // 析构 Session 的悬垂指针
+                    if (&done == &intf)
+                        break;
                 }
                 remove_responder();
                 break;
@@ -358,6 +373,15 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                             request_set_configuration(config_value, &status);
                             if (status == 0) {
                                 current_configuration = config_value;
+                                // USB 3.0 §9.4.9：U1/U2/LTM Enable 只在 Configured 状态
+                                // 有效。配置变更（含 SET_CONFIGURATION(0) 回到 Address）
+                                // 后清零；否则未配置状态下主机发 CLEAR_FEATURE 会被拒绝，
+                                // 特性位将一直卡在置位状态。主机重新配置成功后会重新
+                                // SetFeature 打开（Linux usb_set_configuration 末尾
+                                // 调用 usb_enable_lpm/usb_enable_ltm）
+                                device_status &= static_cast<std::uint16_t>(
+                                        ~(DEVICE_STATUS_U1_ENABLE | DEVICE_STATUS_U2_ENABLE |
+                                          DEVICE_STATUS_LTM_ENABLE));
                                 for (auto &intf: handle_device.interfaces) {
                                     // USB 2.0 §9.6.5：接口的默认设置恒为 alt 0；
                                     // §9.1.1.5：配置/切换 alternate setting 会把受影响
@@ -688,6 +712,15 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                         return;
                     }
+                }
+                else {
+                    // USB 2.0 §9.4.1/§9.4.5：引用不存在的端点必须回 Request Error。
+                    // 控制传输必须有应答，漏掉 RET_SUBMIT 会让主机的 URB 永久挂起
+                    SPDLOG_ERROR("端点{:04x}不存在，返回EPIPE", setup_packet.index);
+                    ec = make_error_code(ErrorType::INVALID_ARG);
+                    responder->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
+                    return;
                 }
                 break;
             }

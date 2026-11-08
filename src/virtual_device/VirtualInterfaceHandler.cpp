@@ -6,6 +6,32 @@
 
 using namespace usbipdcpp;
 
+namespace {
+
+/**
+ * @brief 查找实现 Halt 特性的端点
+ * @param interface 端点所属接口
+ * @param ep_address 端点地址（含方向位）
+ * @return 端点存在且为 Bulk/Interrupt 时返回该端点，否则返回 nullptr。
+ *         USB 2.0 §9.4.5 只要求中断和 Bulk 端点实现 Halt，等时/控制端点没有
+ *         该特性，SET/CLEAR_FEATURE(ENDPOINT_HALT) 必须回 Request Error
+ */
+const UsbEndpoint *find_haltable_endpoint(UsbInterface &interface, std::uint8_t ep_address) {
+    for (const auto &endpoint: interface.current_endpoints()) {
+        if (endpoint.address != ep_address) {
+            continue;
+        }
+        auto type = static_cast<EndpointAttributes>(endpoint.attributes & 0x03);
+        if (type == EndpointAttributes::Bulk || type == EndpointAttributes::Interrupt) {
+            return &endpoint;
+        }
+        return nullptr;
+    }
+    return nullptr;
+}
+
+} // namespace
+
 void VirtualInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
                                                    TransferHandle transfer, std::error_code &ec) {
@@ -78,8 +104,9 @@ void VirtualInterfaceHandler::reset_endpoint_halt_state() {
 
 void VirtualInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature_selector,
                                                            std::uint8_t ep_address, std::uint32_t *p_status) {
-    // 控制端点（0x00/0x80）不可设置 halt，按规范回 STALL
-    if (feature_selector == SetupPacket::USB_ENDPOINT_HALT && ep_address != 0x00 && ep_address != 0x80) {
+    // 控制端点（0x00/0x80）与等时端点不实现 Halt，按规范回 STALL
+    if (feature_selector == SetupPacket::USB_ENDPOINT_HALT &&
+        find_haltable_endpoint(handle_interface, ep_address)) {
         endpoint_halted[ep_address].store(true, std::memory_order_relaxed);
         *p_status = 0;
         return;
@@ -89,7 +116,8 @@ void VirtualInterfaceHandler::request_endpoint_set_feature(std::uint16_t feature
 
 void VirtualInterfaceHandler::request_endpoint_clear_feature(std::uint16_t feature_selector,
                                                              std::uint8_t ep_address, std::uint32_t *p_status) {
-    if (feature_selector == SetupPacket::USB_ENDPOINT_HALT && ep_address != 0x00 && ep_address != 0x80) {
+    if (feature_selector == SetupPacket::USB_ENDPOINT_HALT &&
+        find_haltable_endpoint(handle_interface, ep_address)) {
         endpoint_halted[ep_address].store(false, std::memory_order_relaxed);
         *p_status = 0;
         return;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/TransferScheduler.h"
@@ -235,6 +237,8 @@ public:
     }
 
     void change_string_configuration(const std::wstring &new_str) {
+        // 描述符构造会并发读取这些索引与 StringPool，修改必须持有独占锁
+        std::unique_lock lock(data_mutex);
         // 首次设置（索引 0 未分配）时先分配有效索引，避免 change_string(0) 抛异常；
         // 已分配则直接更新。四个 change_string_* 统一此健壮性处理
         if (string_configuration_value == 0) {
@@ -246,6 +250,7 @@ public:
     }
 
     void change_string_manufacturer(const std::wstring &new_str) {
+        std::unique_lock lock(data_mutex);
         if (string_manufacturer_value == 0) {
             string_manufacturer_value = string_pool.new_string(new_str);
         }
@@ -255,6 +260,7 @@ public:
     }
 
     void change_string_product(const std::wstring &new_str) {
+        std::unique_lock lock(data_mutex);
         if (string_product_value == 0) {
             string_product_value = string_pool.new_string(new_str);
         }
@@ -264,6 +270,7 @@ public:
     }
 
     void change_string_serial(const std::wstring &new_str) {
+        std::unique_lock lock(data_mutex);
         // string_serial_value 默认 0（无序列号，不占字符串池索引）
         if (string_serial_value == 0) {
             string_serial_value = string_pool.new_string(new_str);
@@ -274,14 +281,17 @@ public:
     }
 
     std::wstring get_string_manufacturer() const {
+        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_manufacturer_value).value_or(L"");
     }
 
     std::wstring get_string_product() const {
+        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_product_value).value_or(L"");
     }
 
     std::wstring get_string_serial() const {
+        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_serial_value).value_or(L"");
     }
 
@@ -294,7 +304,9 @@ protected:
     StringPool &string_pool;
 
     Version usb_version;
-    std::shared_mutex data_mutex;
+    /// 描述符构造与字符串修改共用；getter 用 shared_lock，change_string_* 用
+    /// unique_lock。mutable 是让 const getter 也能加共享锁
+    mutable std::shared_mutex data_mutex;
 
     /// 设备级传输调度器：连接建立时启动、断开时停止（生命周期见
     /// on_new_connection / on_disconnection），所有接口共享
@@ -309,14 +321,15 @@ protected:
     std::uint16_t device_status = 0;
     /// 是否支持远程唤醒（见 set_remote_wakeup_support）
     bool remote_wakeup_supported = false;
-    /// SET_ISOCH_DELAY 设置的时延（ns，USB 3.0 §9.4.11）
-    std::uint16_t isoch_delay_ns = 0;
+    /// SET_ISOCH_DELAY 设置的时延（ns，USB 3.0 §9.4.11）。标准请求在会话线程
+    /// 写入，应用/接口线程可能经 getter 读取，用原子量避免数据竞争
+    std::atomic<std::uint16_t> isoch_delay_ns{0};
     /// SET_SEL 设置的退出时延（μs，USB 3.0 §9.4.12）：U1 的系统/设备到主机时延
-    std::uint8_t u1_system_exit_latency = 0;
-    std::uint8_t u1_device_to_host_latency = 0;
+    std::atomic<std::uint8_t> u1_system_exit_latency{0};
+    std::atomic<std::uint8_t> u1_device_to_host_latency{0};
     /// SET_SEL 设置的退出时延（μs，USB 3.0 §9.4.12）：U2 的系统/设备到主机时延
-    std::uint16_t u2_system_exit_latency = 0;
-    std::uint16_t u2_device_to_host_latency = 0;
+    std::atomic<std::uint16_t> u2_system_exit_latency{0};
+    std::atomic<std::uint16_t> u2_device_to_host_latency{0};
     /// 当前配置值（0 = Address 状态/未配置）。USB 2.0 §9.4.7：SET_CONFIGURATION(0)
     /// 使设备回到 Address 状态；§9.4.2：未配置时 GET_CONFIGURATION 必须返回 0。
     /// 不能直接返回 handle_device.configuration_value——那是描述符里声明的配置值，

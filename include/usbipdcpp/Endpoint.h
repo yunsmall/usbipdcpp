@@ -25,6 +25,9 @@ constexpr std::uint16_t max_packet_size_limit(UsbSpeed speed, EndpointAttributes
                     return 1023;
             }
         case UsbSpeed::High:
+            [[fallthrough]];
+        // Wireless USB 1.0 与高速同为 480Mbps，EP0 包大小一致
+        case UsbSpeed::Wireless:
             switch (type) {
                 case EndpointAttributes::Control:
                     return 64;
