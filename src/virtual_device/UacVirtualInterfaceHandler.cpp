@@ -204,7 +204,7 @@ void UacAudioControlHandler::handle_non_standard_request_type_control_urb(
             }
             switch (request) {
                 case GET_CUR: {
-                    auto v = volume_db;
+                    auto v = volume_db.load();
                     trx->data = {static_cast<std::uint8_t>(v & 0xFF), static_cast<std::uint8_t>((v >> 8) & 0xFF)};
                     trx->actual_length = 2;
                     break;
@@ -493,6 +493,9 @@ void UacAudioStreamingSourceHandler::handle_non_standard_request_type_control_ur
 bool UacAudioStreamingSourceHandler::handle_sampling_freq_control(std::uint32_t seqnum, std::uint8_t request,
                                                             GenericTransfer *trx, TransferHandle &transfer,
                                                             std::uint32_t transfer_buffer_length) {
+    // 与调度线程的 process_iso_in 互斥：SET_CUR 的 set_format 会重新分配
+    // source 内部缓冲，不能与 fill_pcm 正在用的 chunk 指针并发
+    std::lock_guard stream_lock(stream_mutex);
     auto fmt = source->current_format();
     switch (request) {
         case GET_CUR: {
@@ -593,11 +596,14 @@ void UacAudioStreamingSourceHandler::fill_pcm(std::uint8_t *dst, std::size_t n) 
             std::memset(dst, 0, take);
         }
         else {
-            // 逐样本 Q16 缩放（16 位有符号小端）
-            const auto *src = reinterpret_cast<const std::int16_t *>(chunk_data + chunk_offset);
-            auto *out = reinterpret_cast<std::int16_t *>(dst);
-            for (std::size_t i = 0; i < take / 2; ++i) {
-                out[i] = static_cast<std::int16_t>((static_cast<std::int32_t>(src[i]) * scale) >> 16);
+            // 逐样本 Q16 缩放（16 位有符号小端）。chunk_offset 与主机给的
+            // ISO offset 都可能让地址不对齐，用 memcpy 读写避免未对齐的
+            // int16_t 访问（x86 容忍，ARM/ESP32 会 fault）
+            for (std::size_t i = 0; i + 1 < take; i += 2) {
+                std::int16_t sample = 0;
+                std::memcpy(&sample, chunk_data + chunk_offset + i, sizeof(sample));
+                auto scaled = static_cast<std::int16_t>((static_cast<std::int32_t>(sample) * scale) >> 16);
+                std::memcpy(dst + i, &scaled, sizeof(scaled));
             }
         }
         dst += take;
@@ -646,6 +652,9 @@ void UacAudioStreamingSourceHandler::handle_isochronous_transfer(std::uint32_t s
 void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder, const UsbEndpoint &ep,
                                                     std::uint32_t seqnum, int num_iso_packets,
                                                     TransferHandle transfer) {
+    // 与控制面（SET_CUR/SET_INTERFACE）互斥：source 缓冲、包长参数、chunk
+    // 游标都是共享状态
+    std::lock_guard stream_lock(stream_mutex);
     auto *trx = GenericTransfer::from_handle(transfer.get());
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
@@ -699,6 +708,7 @@ void UacAudioStreamingSourceHandler::process_iso_in(TransferResponder &responder
 
 void UacAudioStreamingSourceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    std::lock_guard stream_lock(stream_mutex);
     streaming = false;
     chunk_data = nullptr;
     chunk_size = 0;
@@ -706,14 +716,18 @@ void UacAudioStreamingSourceHandler::on_new_connection(TransferResponder &curren
 }
 
 void UacAudioStreamingSourceHandler::on_disconnection(error_code &ec) {
-    streaming = false;
-    chunk_data = nullptr;
-    chunk_size = 0;
-    chunk_offset = 0;
+    {
+        std::lock_guard stream_lock(stream_mutex);
+        streaming = false;
+        chunk_data = nullptr;
+        chunk_size = 0;
+        chunk_offset = 0;
+    }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void UacAudioStreamingSourceHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+    std::lock_guard stream_lock(stream_mutex);
     if (alternate_setting == 0) {
         streaming = false;
         *p_status = 0;
@@ -869,6 +883,9 @@ void UacAudioStreamingSinkHandler::handle_non_standard_request_type_control_urb_
 bool UacAudioStreamingSinkHandler::handle_sampling_freq_control(std::uint32_t seqnum, std::uint8_t request,
                                                                 GenericTransfer *trx, TransferHandle &transfer,
                                                                 std::uint32_t transfer_buffer_length) {
+    // 与调度线程的 process_iso_out 互斥：set_format 可能重配 sink 内部缓冲，
+    // 不能与 write_pcm 并发（AudioSink 实现不要求线程安全）
+    std::lock_guard stream_lock(stream_mutex);
     auto fmt = sink->current_format();
     // 当前声道/位深下 sink 支持的采样率（去重升序），GET_MIN/GET_MAX/SET_CUR 共用
     auto collect_rates = [&fmt, this]() {
@@ -988,6 +1005,8 @@ void UacAudioStreamingSinkHandler::handle_isochronous_transfer(std::uint32_t seq
 void UacAudioStreamingSinkHandler::process_iso_out(TransferResponder &responder, const UsbEndpoint &ep,
                                                    std::uint32_t seqnum, int num_iso_packets,
                                                    TransferHandle transfer) {
+    // 与控制面（SET_CUR/SET_INTERFACE 的 set_format/reset）互斥
+    std::lock_guard stream_lock(stream_mutex);
     auto *trx = GenericTransfer::from_handle(transfer.get());
     auto &data = trx->data;
     auto &iso_descs = trx->iso_descriptors;
@@ -1081,6 +1100,7 @@ void UacAudioStreamingSinkHandler::process_iso_out(TransferResponder &responder,
 
 void UacAudioStreamingSinkHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
+    std::lock_guard stream_lock(stream_mutex);
     streaming = false;
     sink->reset();
     // 闭环状态从零开始：新连接的水位/节奏与上次无关（统计字段全清，
@@ -1097,12 +1117,16 @@ void UacAudioStreamingSinkHandler::on_new_connection(TransferResponder &current_
 }
 
 void UacAudioStreamingSinkHandler::on_disconnection(error_code &ec) {
-    streaming = false;
-    sink->reset();
+    {
+        std::lock_guard stream_lock(stream_mutex);
+        streaming = false;
+        sink->reset();
+    }
     VirtualInterfaceHandler::on_disconnection(ec);
 }
 
 void UacAudioStreamingSinkHandler::request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) {
+    std::lock_guard stream_lock(stream_mutex);
     if (alternate_setting == 0) {
         streaming = false;
         *p_status = 0;
@@ -1135,6 +1159,11 @@ std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> dev
     // 里 UAC 接口可能不在 interfaces 开头，与其他功能交错）
     auto found = device->find_interfaces_by_number<2>(ac_interface_number);
     if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    // 设备已绑定其它类型的处理器时不能装配 UAC：后续要把 handler 当
+    // VirtualDeviceHandler 用，dynamic_pointer_cast 会得到空指针
+    if (device->handler && !std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)) {
         return make_error_code(ErrorType::INVALID_ARG);
     }
     auto *ac_interface = found[0];
@@ -1174,6 +1203,10 @@ std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device
     // 按 interface_number 定位 AC/AS 两个相邻接口（不依赖数组下标，同 setup_microphone）
     auto found = device->find_interfaces_by_number<2>(ac_interface_number);
     if (!found[0] || !found[1]) {
+        return make_error_code(ErrorType::INVALID_ARG);
+    }
+    // 同 setup_microphone：处理器类型不符时直接报参数错误
+    if (device->handler && !std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)) {
         return make_error_code(ErrorType::INVALID_ARG);
     }
     auto *ac_interface = found[0];

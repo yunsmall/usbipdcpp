@@ -3,6 +3,7 @@
 #include <atomic>
 #include <deque>
 #include <memory>
+#include <mutex>
 
 #include "usbipdcpp/Export.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
@@ -92,9 +93,11 @@ private:
     data_type class_desc;
     bool desc_built = false;
     UacDeviceConfig config{};
-    bool mute = false;
-    std::int16_t volume_db = 0; // 单位 1/256 dB，0 表示 0dB
-    std::uint32_t gain_q16 = 65536; // 10^(volume_db/256/20) 的 Q16 表示
+    // 会被数据面线程（调度线程里 fill_pcm/process_iso_out 查静音与增益）读取，
+    // 写发生在会话线程的控制请求里：用原子量避免数据竞争（取值顺序无关紧要）
+    std::atomic<bool> mute{false};
+    std::atomic<std::int16_t> volume_db{0}; // 单位 1/256 dB，0 表示 0dB
+    std::atomic<std::uint32_t> gain_q16{65536}; // 10^(volume_db/256/20) 的 Q16 表示
     // AC Header 的 baInterfaceNr（AS 接口号），set_as_handler 装配时写入。
     // 默认 1 保持单设备形态（AC=0 → AS=1）的旧行为
     std::uint8_t as_interface_number = 1;
@@ -190,6 +193,11 @@ private:
     const std::uint8_t *chunk_data = nullptr;
     std::size_t chunk_size = 0;
     std::size_t chunk_offset = 0;
+
+    // 控制面（会话线程：采样率 SET_CUR、SET_INTERFACE）与数据面（调度线程：
+    // process_iso_in/fill_pcm）共享 source 与包长参数。source->set_format 会
+    // 重新分配内部缓冲，与 get_chunk 返回的指针并发使用会 UAF，两侧都必须持锁
+    std::mutex stream_mutex;
 };
 
 /// AudioStreaming 接口处理器（扬声器方向）— 类描述符 + 采样率协商 + ISO OUT 收流
@@ -272,6 +280,11 @@ private:
     std::uint64_t urb_stat_bytes = 0;
     std::int64_t urb_stat_last_bytes = 0;   // 上一窗口的累计接收字节
     std::int64_t urb_stat_last_time_us = 0; // 上一窗口的墙钟时刻（steady_clock µs）
+
+    // 控制面（会话线程：采样率 SET_CUR、SET_INTERFACE）与数据面（调度线程：
+    // process_iso_out）共享 sink。sink->set_format 重配内部缓冲时不能与
+    // write_pcm 并发（后端不保证线程安全），两侧都必须持锁
+    std::mutex stream_mutex;
 };
 
 /// UAC 设备辅助类 — 在 device 上装配 UAC 功能（AC + AS 接口 handler、互相关联）
