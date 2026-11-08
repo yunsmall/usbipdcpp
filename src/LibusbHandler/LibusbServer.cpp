@@ -506,25 +506,29 @@ DeviceOperationResult LibusbServer::try_remove_dead_device(const std::string &bu
         return DeviceOperationResult::Success;
     }
 
-    // 不在可用列表：若正在使用中则触发断连（通知由会话收尾的 release_device 发）
+    // 不在可用列表：若正在使用中则触发断连（通知由会话收尾的 release_device 发）。
+    // 取 handler 与通知分两步（理由见 handle_device_left：lock 外调用
+    // trigger_session_stop 的 socket 操作）
+    std::shared_ptr<AbstDeviceHandler> handler;
     {
         std::lock_guard lock(server.get_devices_mutex());
         auto &server_using_devices = server.get_using_devices();
         if (auto device = server_using_devices.find(busid); device != server_using_devices.end()) {
-            // 设备正在使用中：不能直接 close handle / unref device——挂起的
-            // libusb 传输回调持有 handler 裸指针，erase 后 handler 引用计数归零
-            // 即析构，回调再访问 handler 是 use-after-free；且 session 对设备
-            // 拔出毫无感知。与 handle_device_left 的拔出路径一致：置
-            // device_removed 并触发会话停止，由 session 收尾（on_disconnection）
-            // 完成取消传输、等待回调、释放接口的完整清理，随后设备按
-            // is_device_removed() 从 using 列表移除，不会移回可用列表
-            if (std::dynamic_pointer_cast<LibusbDeviceHandler>(device->second->handler)) {
-                device->second->handler->on_device_removed();
-                SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
-                device->second->handler->trigger_session_stop();
-                return DeviceOperationResult::Success;
-            }
+            handler = device->second->handler;
         }
+    }
+    if (handler && std::dynamic_pointer_cast<LibusbDeviceHandler>(handler)) {
+        // 设备正在使用中：不能直接 close handle / unref device——挂起的
+        // libusb 传输回调持有 handler 裸指针，erase 后 handler 引用计数归零
+        // 即析构，回调再访问 handler 是 use-after-free；且 session 对设备
+        // 拔出毫无感知。与 handle_device_left 的拔出路径一致：置
+        // device_removed 并触发会话停止，由 session 收尾（on_disconnection）
+        // 完成取消传输、等待回调、释放接口的完整清理，随后设备按
+        // is_device_removed() 从 using 列表移除，不会移回可用列表
+        handler->on_device_removed();
+        SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+        handler->trigger_session_stop();
+        return DeviceOperationResult::Success;
     }
 
     SPDLOG_WARN("无法找到busid为{}的设备", busid);
@@ -553,18 +557,21 @@ DeviceOperationResult LibusbServer::notify_device_removed(const std::string &bus
         return DeviceOperationResult::Success;
     }
 
-    // 2. 不在可用列表：若正在使用中则触发断连（通知由会话收尾的 release_device 发）
+    // 2. 不在可用列表：若正在使用中则触发断连（通知由会话收尾的 release_device 发）。
+    // 取 handler 与通知分两步（理由见 handle_device_left）
+    std::shared_ptr<AbstDeviceHandler> handler;
     {
         std::lock_guard lock(server.get_devices_mutex());
         auto &using_devices = server.get_using_devices();
         if (auto it = using_devices.find(busid); it != using_devices.end()) {
-            if (auto handler = it->second->handler) {
-                handler->on_device_removed();
-                SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
-                handler->trigger_session_stop();
-            }
-            return DeviceOperationResult::Success;
+            handler = it->second->handler;
         }
+    }
+    if (handler) {
+        handler->on_device_removed();
+        SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+        handler->trigger_session_stop();
+        return DeviceOperationResult::Success;
     }
 
     SPDLOG_WARN("未找到设备: {}", busid);
@@ -691,16 +698,24 @@ void LibusbServer::handle_device_left(const std::string &busid) {
     // 2. 不在可用列表：若正在使用中则触发断连。这条路径不发通知——设备留在
     // using 列表，由会话收尾时的 release_device 按 is_device_removed() 丢弃
     // 并发 on_device_released(DeviceRemoved)
-    std::lock_guard lock(server.get_devices_mutex());
-    auto &using_devices = server.get_using_devices();
-    if (auto it = using_devices.find(busid); it != using_devices.end()) {
-        if (auto handler = it->second->handler) {
-            // 通过 AbstDeviceHandler 接口通知（后端无关）
-            handler->on_device_removed();
-            // 强制关闭 Session
-            SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
-            handler->trigger_session_stop();
+    //
+    // 取 handler 与通知分两步：trigger_session_stop 会触碰 Session 的 socket
+    // 锁，不应与设备列表锁嵌套（同 Server 的「回调在锁外发出」约定）；shared_ptr
+    // 副本保证锁外调用期间 handler 不会被释放
+    std::shared_ptr<AbstDeviceHandler> handler;
+    {
+        std::lock_guard lock(server.get_devices_mutex());
+        auto &using_devices = server.get_using_devices();
+        if (auto it = using_devices.find(busid); it != using_devices.end()) {
+            handler = it->second->handler;
         }
+    }
+    if (handler) {
+        // 通过 AbstDeviceHandler 接口通知（后端无关）
+        handler->on_device_removed();
+        // 强制关闭 Session
+        SPDLOG_WARN("正在使用的设备被拔出，强制关闭 Session: {}", busid);
+        handler->trigger_session_stop();
     }
 }
 

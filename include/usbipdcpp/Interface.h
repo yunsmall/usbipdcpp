@@ -27,6 +27,9 @@ struct USBIPDCPP_API UsbInterface {
     /// 类/子类/协议），不进 to_bytes/from_socket
     std::optional<IadDesc> interface_association_descriptor;
 
+    /// 当前 alternate setting。只由会话收包线程维护（SET_INTERFACE 处理）并在
+    /// 同一线程查端点用；没有跨线程同步——外部线程经 Server 的设备列表读到
+    /// 它时可能看到旧值，不要把它当实时状态用
     std::uint8_t current_altsetting = 0;
 
     /// 所有 alternate setting 的端点列表，[altsetting] = 该 alt 的端点

@@ -888,7 +888,12 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
         const int interface_number = intf_i < static_cast<int>(handle_device.interfaces.size())
                                              ? handle_device.interfaces[intf_i].interface_number
                                              : intf_i;
-        libusb_set_interface_alt_setting(native_handle, interface_number, 0);
+        // 失败时仍记录 alt 0：后续客户端发 SET_INTERFACE 会重新设置；但设备
+        // 实际可能不在 alt 0，打告警便于排查（不因此放弃打开设备）
+        int alt_err = libusb_set_interface_alt_setting(native_handle, interface_number, 0);
+        if (alt_err) {
+            SPDLOG_WARN("设置接口 {} 到 alt 0 失败: {}", interface_number, libusb_strerror(alt_err));
+        }
         if (intf_i < static_cast<int>(handle_device.interfaces.size()))
             handle_device.interfaces[intf_i].current_altsetting = 0;
     }
@@ -969,7 +974,12 @@ bool usbipdcpp::LibusbDeviceHandler::wrap_fd_and_claim_interfaces() {
         const int interface_number = intf_i < static_cast<int>(handle_device.interfaces.size())
                                              ? handle_device.interfaces[intf_i].interface_number
                                              : intf_i;
-        libusb_set_interface_alt_setting(native_handle, interface_number, 0);
+        // 失败时仍记录 alt 0：后续客户端发 SET_INTERFACE 会重新设置；但设备
+        // 实际可能不在 alt 0，打告警便于排查（不因此放弃打开设备）
+        int alt_err = libusb_set_interface_alt_setting(native_handle, interface_number, 0);
+        if (alt_err) {
+            SPDLOG_WARN("设置接口 {} 到 alt 0 失败: {}", interface_number, libusb_strerror(alt_err));
+        }
         if (intf_i < static_cast<int>(handle_device.interfaces.size()))
             handle_device.interfaces[intf_i].current_altsetting = 0;
     }
