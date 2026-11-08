@@ -486,6 +486,12 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 result = request_get_descriptor(desc_type, setup_packet.value & 0x00FF,
                                                                 setup_packet.length, &status);
                             }
+                            // 状态非 0 时不带数据阶段（USB 2.0 §9.4.3：不支持的
+                            // 描述符回 Request Error）。子类可能返回非空描述符
+                            // 同时置 EPIPE，不能把数据带进 RET_SUBMIT
+                            if (status != 0) {
+                                result.clear();
+                            }
                             break;
                         }
                         case StandardRequest::GetStatus: {
@@ -609,6 +615,11 @@ void VirtualDeviceHandler::handle_control_urb(std::uint32_t seqnum, const UsbEnd
                                 result = handler->request_get_descriptor(setup_packet.value >> 8,
                                                                          setup_packet.value & 0x00FF,
                                                                          setup_packet.length, &status);
+                                // 状态非 0 时不带数据阶段（USB 2.0 §9.4.3），
+                                // 与设备级描述符请求保持一致
+                                if (status != 0) {
+                                    result.clear();
+                                }
                                 if (setup_packet.length < result.size()) {
                                     result.resize(setup_packet.length);
                                 }

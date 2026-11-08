@@ -1508,7 +1508,81 @@ public:
     }
 };
 
+/// 模拟违约的派生类：返回非空描述符的同时报 EPIPE
+class FailingDescriptorDevice : public SimpleVirtualDeviceHandler {
+public:
+    using SimpleVirtualDeviceHandler::SimpleVirtualDeviceHandler;
+
+protected:
+    data_type get_custom_descriptor(std::uint8_t, std::uint8_t, std::uint16_t,
+                                    std::uint32_t *p_status) override {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {0x01, 0x02, 0x03};
+    }
+};
+
+/// 同上，接口级
+class FailingDescriptorInterface : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    data_type request_get_descriptor(std::uint8_t, std::uint8_t, std::uint16_t,
+                                     std::uint32_t *p_status) override {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+        return {0x01, 0x02, 0x03};
+    }
+};
+
 } // namespace
+
+TEST(VirtualDeviceStandard, DeviceGetDescriptorErrorCarriesNoData) {
+    // 子类返回非空描述符并置 EPIPE 时，RET_SUBMIT 不能带数据阶段
+    // （USB 2.0 §9.4.3：不支持的描述符回 Request Error，无数据）
+    StringPool pool;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
+    auto handler = device->with_handler<FailingDescriptorDevice>(pool);
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket get_desc{.request_type = 0x80, .request = 6, .value = 0x0F00, .index = 0, .length = 8};
+    send_control(*handler, op, 1, UsbIpDirection::In, 8, get_desc);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_EQ(stub.submits[0].actual_length, 0u);
+    EXPECT_TRUE(ret_submit_data(stub.submits[0]).empty());
+
+    handler->on_disconnection(ec);
+}
+
+TEST(VirtualDeviceStandard, InterfaceGetDescriptorErrorCarriesNoData) {
+    // 接口级描述符请求同样不能在 EPIPE 时带数据
+    StringPool pool;
+    UsbInterface intf{};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
+    device->interfaces[0].with_handler<FailingDescriptorInterface>(pool);
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    handler->setup_interface_handlers();
+
+    GenericTransferOperator op;
+    CaptureResponder stub;
+    error_code ec;
+    handler->on_new_connection(stub, ec);
+    ASSERT_FALSE(ec);
+
+    SetupPacket get_desc{.request_type = 0x81, .request = 6, .value = 0x2200, .index = 0, .length = 8};
+    send_control(*handler, op, 1, UsbIpDirection::In, 8, get_desc);
+
+    ASSERT_EQ(stub.submits.size(), 1u);
+    EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
+    EXPECT_EQ(stub.submits[0].actual_length, 0u);
+    EXPECT_TRUE(ret_submit_data(stub.submits[0]).empty());
+
+    handler->on_disconnection(ec);
+}
 
 TEST(VirtualDeviceStandard, GetInterfaceErrorCarriesNoData) {
     // 子类 handler 用非零 status 拒绝 GET_INTERFACE 时，RET_SUBMIT 不能带
