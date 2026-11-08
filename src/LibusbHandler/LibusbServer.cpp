@@ -397,6 +397,10 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
 }
 
 DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
+    if (device == nullptr) {
+        SPDLOG_ERROR("device 不能为空");
+        return DeviceOperationResult::DeviceNotFound;
+    }
     auto target_busid = get_device_busid(device);
 
     // 从可用列表摘除：Server::detach_available_device 锁内摘除 + 锁外发
@@ -437,6 +441,12 @@ DeviceOperationResult LibusbServer::unbind_host_device(libusb_device *device) {
 }
 
 DeviceOperationResult LibusbServer::unbind_host_device_by_fd(intptr_t fd) {
+    // 负 fd 是无效值；普通模式 handler 的 wrapped_fd_ 也初始化为 -1，
+    // 不拦住会把普通模式设备当成 Android 设备摘除
+    if (fd < 0) {
+        SPDLOG_WARN("fd 无效: {}", fd);
+        return DeviceOperationResult::DeviceNotFound;
+    }
     // 先查该 fd 对应可用列表里的哪个 busid（detach_available_device 按 busid
     // 操作）。查询与摘除是两次加锁：解绑是低频操作，中间的状态变化无碍
     std::string target_busid;
@@ -578,6 +588,11 @@ DeviceOperationResult LibusbServer::notify_device_removed(const std::string &bus
 }
 
 void LibusbServer::start_hotplug_monitor() {
+    // 已注册时直接返回：重复注册会覆盖 hotplug_handle_，旧句柄再也无法注销。
+    // 只认 hotplug_enabled_，stop 时它会被清掉，重启才能重新注册
+    if (hotplug_enabled_) {
+        return;
+    }
     if (!hotplug_enabled_by_user_) {
         SPDLOG_DEBUG("热插拔监控已被用户禁用");
         return;
@@ -756,6 +771,11 @@ void LibusbServer::bind_existing_devices() {
 }
 
 usbipdcpp::error_code LibusbServer::start(const asio::ip::tcp::endpoint &ep) {
+    // 与 Server::start 的幂等语义一致：已在运行直接返回成功。否则下面
+    // 对 joinable 的 std::thread 赋值会触发 std::terminate
+    if (libusb_event_thread.joinable()) {
+        return {};
+    }
     start_hotplug_monitor();
 
     should_exit_libusb_event_thread = false;

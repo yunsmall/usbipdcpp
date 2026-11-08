@@ -118,6 +118,7 @@ public:
      * on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
      * @param device The libusb device to unbind. The function takes ownership of this reference.
+     *        Must not be nullptr; passing nullptr returns DeviceNotFound.
      * @return DeviceOperationResult::Success on success,
      *         DeviceOperationResult::DeviceNotFound if not in available devices,
      *         DeviceOperationResult::DeviceInUse if currently in use.
@@ -132,7 +133,8 @@ public:
      * Finds and removes the device that was bound with the specified fd.
      * On success the Server emits on_device_released(busid, DeviceRemoved) (see ServerObserver).
      *
-     * @param fd The file descriptor used when binding the device.
+     * @param fd The file descriptor used when binding the device. Negative fd is invalid
+     *        and returns DeviceNotFound.
      * @return DeviceOperationResult::Success on success,
      *         DeviceOperationResult::DeviceNotFound if not in available devices,
      *         DeviceOperationResult::DeviceInUse if currently in use.
@@ -185,7 +187,8 @@ public:
      * @return The error code if the server fails to start (e.g. port already
      *         in use), no error otherwise. Does not throw.
      *
-     * @thread_safety 不可并发调用。至多调用一次（需先 stop() 才能再次调用）。
+     * @thread_safety 不可并发调用。已在运行时直接返回成功（幂等）；
+     *                停止后需先调用 stop() 才能再次 start。
      */
     usbipdcpp::error_code start(const asio::ip::tcp::endpoint &ep);
 
