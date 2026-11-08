@@ -132,11 +132,11 @@ TEST(VirtualDeviceHandlers, HidReportFormalResponse) {
 TEST(VirtualDeviceHandlers, HidProtocolFormalResponse) {
     HidTestEnv env;
 
-    // GET_PROTOCOL 返回初始 protocol 值 0
+    // HID 1.11 §7.2.6：上电默认 Report Protocol，GET_PROTOCOL 返回 1
     std::uint32_t status = 0;
     auto ret = env.handler.request_get_protocol(&status);
     EXPECT_EQ(status, static_cast<std::uint32_t>(UrbStatusType::StatusOK));
-    EXPECT_EQ(ret, 0u);
+    EXPECT_EQ(ret, 1u);
 
     // 测试环境接口 subclass=0（非 Boot），SET_PROTOCOL 应 stall（对齐内核）
     status = 0;

@@ -104,21 +104,21 @@ public:
     // ========== HID 类特定请求（子类可选重写） ==========
 
     /**
-     * @brief 获取当前协议（Boot/Report），形式响应对齐内核 f_hid.c：
-     *        内核 GET_PROTOCOL 返回 protocol 值（configfs 初始 0），
-     *        即使设备不支持切换也照常应答。子类实现协议切换时重写返回实际值
+     * @brief 获取当前协议（Boot/Report）
+     * HID 1.11 §7.2.6：设备上电后默认使用 Report Protocol，
+     * 因此未切换过时 GET_PROTOCOL 必须返回 1
      * @param p_status
      * @return 协议值（0=Boot，1=Report）
      */
     virtual std::uint8_t request_get_protocol(std::uint32_t *p_status) {
         *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
-        return 0;
+        return 1;
     };
 
     /**
-     * @brief 设置协议，对齐内核 f_hid.c：仅 Boot 子类接口（bInterfaceSubClass=1）
-     *        接受 SET_PROTOCOL（wValue ≤ 1），其余 stall。协议值仅内部记录，
-     *        本项目默认不做 Boot 报告切换，接受即可；子类可重写
+     * @brief 设置协议。HID 1.11 §7.2.6：只有 Boot 子类接口
+     *        （bInterfaceSubClass=1）才实现该请求，其余 stall。
+     *        基类不保存状态，需要真正切换 Boot 报告格式的子类重写
      * @param type wValue（0=Boot 协议，1=Report 协议）
      * @param p_status
      */

@@ -40,15 +40,17 @@ public:
     /**
      * @brief 创建标准的 HID 绝对坐标鼠标接口（描述符模板，未绑定 handler）
      *
-     * 接口定义：HID 类、Boot 鼠标子类/协议（03/01/02），一个中断 IN 端点。
+     * 接口定义：HID 类、无子类/协议（03/00/00），一个中断 IN 端点。
+     * HID 1.11 Appendix B.2 的 Boot 鼠标只定义相对位移报告，绝对坐标设备
+     * 无法提供 Boot 报告格式，因此不能声明 Boot 子类（bInterfaceSubClass=1）
      * @param in_ep 中断 IN 端点地址（设备→主机，绝对坐标报告）
      * @return 未绑定 handler 的 UsbInterface
      */
     static UsbInterface make_interface(std::uint8_t in_ep) {
         UsbInterface i{
                 .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
-                .interface_subclass = 0x01, // Boot Interface Subclass
-                .interface_protocol = 0x02, // Mouse
+                .interface_subclass = 0x00,
+                .interface_protocol = 0x00,
                 .endpoints = {{UsbEndpoint{.address = in_ep,
                                            .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
                                            .max_packet_size = 8,

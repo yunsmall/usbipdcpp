@@ -178,6 +178,12 @@ usbipdcpp::data_type usbipdcpp::HidVirtualInterfaceHandler::request_get_descript
                                                                                    std::uint32_t *p_status) {
     auto hid_type = static_cast<HidDescriptorType>(type);
     switch (hid_type) {
+        case HidDescriptorType::Hid: {
+            // HID 1.11 §7.1.1：主机用 GET_DESCRIPTOR(HID, 0x21) 单独取
+            // HID 类描述符（bNumDescriptors/wDescriptorLength），
+            // 不能只依赖配置描述符里内嵌的那一份
+            return get_class_specific_descriptor();
+        }
         case HidDescriptorType::Report: {
             return get_report_descriptor();
         }

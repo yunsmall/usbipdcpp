@@ -66,3 +66,75 @@ TEST(TestKeyboardHandler, SetReportNonOutputLeavesLedUntouched) {
     env.handler.request_set_report(static_cast<std::uint8_t>(HIDReportType::Input), 0, 1, {0x00}, &status);
     EXPECT_EQ(env.handler.get_led_status(), 0x01);
 }
+
+// HID 1.11 §7.1.1：接口级 GET_DESCRIPTOR(HID, 0x21) 必须返回 9 字节
+// HID 类描述符，其中 wDescriptorLength 是报告描述符长度
+TEST(TestKeyboardHandler, GetDescriptorHidReturnsClassDescriptor) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0;
+    auto desc = env.handler.request_get_descriptor(0x21, 0, 9, &status);
+    EXPECT_EQ(status, 0u);
+    ASSERT_EQ(desc.size(), 9u);
+    EXPECT_EQ(desc[0], 0x09); // bLength
+    EXPECT_EQ(desc[1], 0x21); // bDescriptorType HID
+    EXPECT_EQ(desc[2], 0x11); // bcdHID 1.11
+    EXPECT_EQ(desc[3], 0x01);
+    EXPECT_EQ(desc[4], 0x00); // bCountryCode
+    EXPECT_EQ(desc[5], 0x01); // bNumDescriptors
+    EXPECT_EQ(desc[6], 0x22); // bDescriptorType[0] Report
+    EXPECT_EQ(static_cast<std::uint16_t>(desc[7] | (desc[8] << 8)),
+              env.handler.get_report_descriptor_size());
+}
+
+// HID 1.11 §7.2.6：上电默认 Report Protocol，GET_PROTOCOL 必须返回 1
+TEST(TestKeyboardHandler, GetProtocolDefaultsToReport) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0xFFFFFFFF;
+    EXPECT_EQ(env.handler.request_get_protocol(&status), 1);
+    EXPECT_EQ(status, 0);
+}
+
+// HID 1.11 §7.2.6 + Appendix B.1：切到 Boot 协议后报告变成固定 8 字节，
+// 无 Report ID：修饰键、保留字节、6 个按键码
+TEST(TestKeyboardHandler, BootProtocolSwitchesToEightByteReport) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0xFFFFFFFF;
+    env.handler.request_set_protocol(0, &status);
+    EXPECT_EQ(status, 0);
+    EXPECT_EQ(env.handler.request_get_protocol(&status), 0);
+
+    env.handler.set_modifier(0x02); // Left Shift
+    env.handler.press_key(HIDKey::A);
+
+    auto report = env.handler.request_get_report(static_cast<std::uint8_t>(HIDReportType::Input), 1, 8, &status);
+    EXPECT_EQ(status, 0);
+    EXPECT_EQ(report.size(), 8u);
+    EXPECT_EQ(report[0], 0x02); // 修饰键
+    EXPECT_EQ(report[1], 0x00); // 保留
+    EXPECT_EQ(report[2], HIDKey::A); // 第一个按键码
+    for (std::size_t i = 3; i < 8; ++i) {
+        EXPECT_EQ(report[i], 0x00);
+    }
+}
+
+// 非法协议值必须 STALL，且不改变当前协议
+TEST(TestKeyboardHandler, SetProtocolRejectsInvalidValue) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0;
+    env.handler.request_set_protocol(2, &status);
+    EXPECT_NE(status, 0u); // StatusEPIPE
+    status = 0;
+    EXPECT_EQ(env.handler.request_get_protocol(&status), 1); // 仍为 Report
+}
+
+// Report 协议保持 9 字节报告（首字节 Report ID=1）
+TEST(TestKeyboardHandler, ReportProtocolKeepsNineByteReport) {
+    KeyboardTestEnv env;
+    std::uint32_t status = 0;
+    env.handler.press_key(HIDKey::Enter);
+    auto report = env.handler.request_get_report(static_cast<std::uint8_t>(HIDReportType::Input), 1, 9, &status);
+    EXPECT_EQ(status, 0);
+    EXPECT_EQ(report.size(), 9u);
+    EXPECT_EQ(report[0], 0x01); // REPORT_ID_KEYBOARD
+    EXPECT_EQ(report[3], HIDKey::Enter);
+}

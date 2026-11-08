@@ -87,6 +87,8 @@ public:
     data_type request_get_idle(std::uint8_t type, std::uint8_t report_id, std::uint16_t length,
                                std::uint32_t *p_status) override;
     void request_set_idle(std::uint8_t speed, std::uint32_t *p_status) override;
+    std::uint8_t request_get_protocol(std::uint32_t *p_status) override;
+    void request_set_protocol(std::uint16_t type, std::uint32_t *p_status) override;
 
     // ========== 按键 API ==========
 
@@ -157,6 +159,8 @@ private:
     data_type report_descriptor_;
     std::atomic<std::int16_t> idle_speed_{1};
     std::atomic<std::uint8_t> led_status_{0};
+    /// 当前是否为 Boot 协议（HID 1.11 §7.2.6，上电/重连后默认 Report）
+    std::atomic_bool boot_protocol_{false};
 
     KeyboardState current_state_;
     KeyboardState last_state_;

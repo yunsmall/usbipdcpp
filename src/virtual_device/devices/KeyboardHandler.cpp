@@ -82,6 +82,8 @@ KeyboardHandler::KeyboardHandler(UsbInterface &handle_interface, StringPool &str
             // Input (Data,Var,Abs) — 按键码
             0x81,
             0x00,
+            // HID 1.11 §6.2.2 报告描述符：LED Usage Page 0x08，
+            // Num Lock(1)..Kana(5) 见 HUT 1.6 §12（LED Page）
             // Usage Page (LEDs)
             0x05,
             0x08,
@@ -178,6 +180,8 @@ void KeyboardHandler::on_new_connection(TransferResponder &current_session, erro
         last_state_ = KeyboardState{};
     }
     idle_speed_ = 1;
+    // HID 1.11 §7.2.6：重连（等价于设备重新上电）后回到 Report Protocol
+    boot_protocol_ = false;
 
     send_thread_ = std::thread([this]() {
         while (!should_stop_) {
@@ -191,24 +195,39 @@ void KeyboardHandler::on_new_connection(TransferResponder &current_session, erro
             bool consumer_set = (current_state_.consumer_usage != 0);
 
             // Report ID 1: 标准键盘（9 字节含 Report ID）
+            // Boot 协议下改用 HID 1.11 Appendix B.1 的固定 8 字节报告：
+            // 修饰键、保留字节、6 个按键码，不带 Report ID
             if (kb_changed) {
-                std::array<std::uint8_t, 9> report{};
-                report[0] = REPORT_ID_KEYBOARD;
-                report[1] = current_state_.modifier;
-                report[2] = 0; // 保留字节
-                for (std::size_t i = 0; i < MAX_KEYS; ++i) {
-                    report[3 + i] = current_state_.keys[i];
+                if (boot_protocol_.load()) {
+                    std::array<std::uint8_t, 8> report{};
+                    report[0] = current_state_.modifier;
+                    for (std::size_t i = 0; i < MAX_KEYS; ++i) {
+                        report[2 + i] = current_state_.keys[i];
+                    }
+                    send_input_report(asio::buffer(report));
                 }
-                send_input_report(asio::buffer(report));
+                else {
+                    std::array<std::uint8_t, 9> report{};
+                    report[0] = REPORT_ID_KEYBOARD;
+                    report[1] = current_state_.modifier;
+                    report[2] = 0; // 保留字节
+                    for (std::size_t i = 0; i < MAX_KEYS; ++i) {
+                        report[3 + i] = current_state_.keys[i];
+                    }
+                    send_input_report(asio::buffer(report));
+                }
             }
-            // Report ID 2: Consumer Control（3 字节含 Report ID），单次触发后自动清零
+            // Report ID 2: Consumer Control（3 字节含 Report ID），单次触发后自动清零。
+            // Boot 协议没有 Consumer 报告，直接丢弃（仍要清零，避免状态卡住）
             if (consumer_set) {
-                std::array<std::uint8_t, 3> report{};
-                report[0] = REPORT_ID_CONSUMER;
-                uint16_t usage = current_state_.consumer_usage;
-                report[1] = usage & 0xFF;
-                report[2] = (usage >> 8) & 0xFF;
-                send_input_report(asio::buffer(report));
+                if (!boot_protocol_.load()) {
+                    std::array<std::uint8_t, 3> report{};
+                    report[0] = REPORT_ID_CONSUMER;
+                    uint16_t usage = current_state_.consumer_usage;
+                    report[1] = usage & 0xFF;
+                    report[2] = (usage >> 8) & 0xFF;
+                    send_input_report(asio::buffer(report));
+                }
                 current_state_.consumer_usage = 0;
             }
 
@@ -244,6 +263,15 @@ data_type KeyboardHandler::request_get_report(std::uint8_t type, std::uint8_t re
                                               std::uint32_t *p_status) {
     if (static_cast<HIDReportType>(type) == HIDReportType::Input) {
         std::lock_guard lock(state_mutex_);
+        if (boot_protocol_.load()) {
+            // Boot 协议：固定 8 字节、无 Report ID（HID 1.11 Appendix B.1）
+            data_type result(8, 0);
+            result[0] = current_state_.modifier;
+            for (std::size_t i = 0; i < MAX_KEYS; ++i) {
+                result[2 + i] = current_state_.keys[i];
+            }
+            return result;
+        }
         if (report_id == REPORT_ID_CONSUMER) {
             // Consumer Control 报告（3 字节含 Report ID）
             data_type result(3, 0);
@@ -288,6 +316,24 @@ data_type KeyboardHandler::request_get_idle(std::uint8_t type, std::uint8_t repo
 void KeyboardHandler::request_set_idle(std::uint8_t speed, std::uint32_t *p_status) {
     idle_speed_ = speed;
     *p_status = 0;
+}
+
+std::uint8_t KeyboardHandler::request_get_protocol(std::uint32_t *p_status) {
+    *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+    return boot_protocol_.load() ? static_cast<std::uint8_t>(HIDProtocolType::Boot)
+                                 : static_cast<std::uint8_t>(HIDProtocolType::Report);
+}
+
+void KeyboardHandler::request_set_protocol(std::uint16_t type, std::uint32_t *p_status) {
+    // HID 1.11 §7.2.6：Boot 子类接口必须支持 0/1 两种协议，切换后输入报告
+    // 立刻改用对应格式（Boot = Appendix B.1 的 8 字节报告）
+    if (type <= static_cast<std::uint16_t>(HIDProtocolType::Report)) {
+        boot_protocol_ = (type == static_cast<std::uint16_t>(HIDProtocolType::Boot));
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusOK);
+    }
+    else {
+        *p_status = static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE);
+    }
 }
 
 // ========== 按键 API ==========
