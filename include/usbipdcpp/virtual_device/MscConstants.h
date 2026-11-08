@@ -59,6 +59,74 @@ namespace ScsiCmd {
     inline constexpr std::uint8_t WriteSame16 = 0x93;
 } // namespace ScsiCmd
 
+/// SCSI sense key（SPC-5 §2.4.1.1，固定格式 sense 数据 byte 2）
+enum class ScsiSenseKey : std::uint8_t {
+    NoSense = 0x00,
+    RecoveredError = 0x01,
+    NotReady = 0x02,
+    MediumError = 0x03,
+    HardwareError = 0x04,
+    IllegalRequest = 0x05,
+    UnitAttention = 0x06,
+    DataProtect = 0x07,
+};
+
+/// SCSI additional sense code（SPC-5 §2.4.1，fixed format sense 数据 byte 12）
+enum class ScsiAsc : std::uint8_t {
+    NoAdditionalSense = 0x00,
+    WriteError = 0x0C,
+    UnrecoveredReadError = 0x11,
+    InvalidCommandOperationCode = 0x20,
+    LogicalBlockAddressOutOfRange = 0x21,
+    InvalidFieldInCdb = 0x24,
+    WriteProtected = 0x27,
+    MediumNotPresent = 0x3A,
+};
+
+/// additional sense code qualifier 的 0 值 = 无进一步限定
+inline constexpr std::uint8_t SCSI_ASCQ_NONE = 0x00;
+
+/// VPD 页号（SPC-5 §7.8 / SBC-4 §5.4）
+enum class VpdPageCode : std::uint8_t {
+    SupportedPages = 0x00,
+    UnitSerialNumber = 0x80,
+    BlockLimits = 0xB0,
+    BlockDeviceCharacteristics = 0xB1,
+    LogicalBlockProvisioning = 0xB2,
+};
+
+/// READ FORMAT CAPACITIES 的 Format Type（SBC-4，位于 byte 8 的 bit7-2，
+/// 写入时需左移 2 位）
+enum class ScsiFormatType : std::uint8_t {
+    UnformattedMedia = 0x01,
+    FormattedMedia = 0x02,
+    NoMedia = 0x03,
+};
+
+/// READ CAPACITY(16) 参数数据 byte 14 的位（SBC-4 §3.23.2 Table 122）
+inline constexpr std::uint8_t RC16_LBPME = 0x80;
+inline constexpr std::uint8_t RC16_LBPRZ = 0x40;
+
+/// Logical Block Provisioning VPD 页 byte 5 的位（SBC-4 §5.4.13 Table 467）
+inline constexpr std::uint8_t LBP_FLAG_LBPU = 0x80;
+inline constexpr std::uint8_t LBP_FLAG_LBPWS = 0x40;
+inline constexpr std::uint8_t LBP_FLAG_LBPWS10 = 0x20;
+inline constexpr std::uint8_t LBP_FLAG_LBPRZ_ZERO = 0x04; // LBPRZ=xx1b，占 bit4-2
+
+/// PROVISIONING TYPE（B2 页 byte 6 的 bit2-0，Table 470）
+inline constexpr std::uint8_t PROVISIONING_TYPE_THIN = 0x02;
+
+/// 虚拟 MSC 设备在 VPD 页里宣告的能力参数。
+/// UNMAP 粒度以逻辑块为单位（8 块 = 4 KiB@512B 块）；
+/// UGAVALID（bit31）置位表示对齐值有效
+inline constexpr std::uint32_t MSC_MAX_UNMAP_LBA_COUNT = 65536;
+inline constexpr std::uint32_t MSC_MAX_UNMAP_BLOCK_DESCRIPTORS = 64;
+inline constexpr std::uint32_t MSC_OPTIMAL_UNMAP_GRANULARITY = 8;
+inline constexpr std::uint32_t MSC_UNMAP_ALIGNMENT_UGAVALID = 0x80000000 | MSC_OPTIMAL_UNMAP_GRANULARITY;
+inline constexpr std::uint64_t MSC_MAX_WRITE_SAME_LENGTH = 65535;
+/// MEDIUM ROTATION RATE：0001h = 非旋转介质（Table 440）
+inline constexpr std::uint16_t MSC_MEDIUM_ROTATION_NON_ROTATING = 0x0001;
+
 /// SCSI 数据都是大端序，统一用字节数组字段 + 以下辅助读写，
 /// 避免结构体字段直填整型导致的小端机器字节序错乱
 inline void put_be16(std::uint8_t *p, std::uint16_t v) {

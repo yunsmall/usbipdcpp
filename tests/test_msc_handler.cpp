@@ -464,16 +464,16 @@ TEST(TestMscHandler, RequestSenseReportsLastCommandFailure) {
     auto sense = request_sense(3, 0x3335);
     ASSERT_EQ(sense.size(), 18u);
     EXPECT_EQ(sense[0], 0x70);
-    EXPECT_EQ(sense[2], 0x05);  // ILLEGAL REQUEST
-    EXPECT_EQ(sense[12], 0x20); // INVALID COMMAND OPERATION CODE
+    EXPECT_EQ(sense[2], static_cast<std::uint8_t>(ScsiSenseKey::IllegalRequest));
+    EXPECT_EQ(sense[12], static_cast<std::uint8_t>(ScsiAsc::InvalidCommandOperationCode));
 
     // sense 已被取走：第二次查询应回到 NO SENSE
     deliver_in_request(*fixture.msc, 5, 13, fixture.ep_in, ec); // 第一条 REQUEST SENSE 的 CSW
     ASSERT_FALSE(ec);
     auto sense2 = request_sense(6, 0x3337);
     ASSERT_EQ(sense2.size(), 18u);
-    EXPECT_EQ(sense2[2], 0x00);
-    EXPECT_EQ(sense2[12], 0x00);
+    EXPECT_EQ(sense2[2], static_cast<std::uint8_t>(ScsiSenseKey::NoSense));
+    EXPECT_EQ(sense2[12], static_cast<std::uint8_t>(ScsiAsc::NoAdditionalSense));
 
     fixture.msc->on_disconnection(ec);
 }
@@ -659,7 +659,8 @@ TEST(TestMscHandler, InquiryVpdBlockDeviceCharacteristicsIsPageB1) {
     EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
               (std::vector<std::uint8_t>{0x00, 0x3C}));
     EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 4, data.begin() + 6)),
-              (std::vector<std::uint8_t>{0x00, 0x01})); // 非旋转介质
+              (std::vector<std::uint8_t>{static_cast<std::uint8_t>(MSC_MEDIUM_ROTATION_NON_ROTATING >> 8),
+                                         static_cast<std::uint8_t>(MSC_MEDIUM_ROTATION_NON_ROTATING)}));
     // product type / form factor / zoned 等特性均不报告
     for (std::size_t i = 6; i < 64; ++i) {
         EXPECT_EQ(data[i], 0x00) << "byte " << i;
@@ -695,8 +696,8 @@ TEST(TestMscHandler, InquiryVpdLogicalBlockProvisioningIsPageB2) {
     EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 2, data.begin() + 4)),
               (std::vector<std::uint8_t>{0x00, 0x04}));
     EXPECT_EQ(data[4], 0x00); // 不支持置备阈值
-    EXPECT_EQ(data[5], 0xE4); // LBPU|LBPWS|LBPWS10|LBPRZ
-    EXPECT_EQ(data[6], 0x02); // PROVISIONING TYPE = thin provisioned
+    EXPECT_EQ(data[5], LBP_FLAG_LBPU | LBP_FLAG_LBPWS | LBP_FLAG_LBPWS10 | LBP_FLAG_LBPRZ_ZERO);
+    EXPECT_EQ(data[6], PROVISIONING_TYPE_THIN);
     EXPECT_EQ(data[7], 0x00); // 不支持置备百分比
 
     fixture.msc->on_disconnection(ec);
@@ -722,7 +723,7 @@ TEST(TestMscHandler, ReadCapacity16ReportsLbpmeAndLbprz) {
     ASSERT_EQ(stub.submits.size(), 1u);
     auto data = data_from_submit(stub.submits[0]);
     ASSERT_EQ(data.size(), 32u);
-    EXPECT_EQ(data[14], 0xC0); // LBPME | LBPRZ
+    EXPECT_EQ(data[14], static_cast<std::uint8_t>(RC16_LBPME | RC16_LBPRZ));
     EXPECT_EQ(data[15], 0x00); // 最低对齐 LBA = 0
     // byte 12/13：RC BASIS、PROT_EN、块大小指数都应为 0（无保护信息、512:512）
     EXPECT_EQ(data[12], 0x00);
@@ -760,7 +761,7 @@ TEST(TestMscHandler, ReadFormatCapacitiesUsesShiftedFormatType) {
     EXPECT_EQ(data[3], 0x08); // 容量列表长度
     EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 4, data.begin() + 8)),
               (std::vector<std::uint8_t>{0, 0, 0, 8})); // 8 块
-    EXPECT_EQ(data[8], 0x08); // Format Type 2 << 2
+    EXPECT_EQ(data[8], static_cast<std::uint8_t>(ScsiFormatType::FormattedMedia) << 2);
     EXPECT_EQ((std::vector<std::uint8_t>(data.begin() + 9, data.begin() + 12)),
               (std::vector<std::uint8_t>{0, 2, 0})); // 块大小 512
 
