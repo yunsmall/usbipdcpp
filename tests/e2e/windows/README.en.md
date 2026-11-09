@@ -45,11 +45,17 @@ is still imported.
 |---|---|
 | `test_cdc_acm.ps1` | COM port enumeration, serial echo |
 | `test_hid.ps1` | keyboard / mouse / gamepad enumerate as the right HID class |
+| `test_keyboard_led.ps1` | keyboard LED: enum only by default; `-TestInput` toggles Caps Lock to verify SET_REPORT(Output) (state restored afterwards) |
+| `test_multi_interface_hid.ps1` | composite HID: mouse and keyboard in one configuration enumerate as separate child devices |
 | `test_msc.ps1` | USB disk, 2 MiB capacity (read-only check, no writes) |
 | `test_rndis.ps1` | Remote NDIS adapter Up, ping + TCP echo |
+| `test_stress_rndis.ps1` | RNDIS network stress: loops 8 KB TCP echo for 60 s by default, checks no failures and process alive |
 | `test_uac_mic.ps1` | microphone records 2 seconds, sane data size |
 | `test_uac_speaker.ps1` | plays 440 Hz sine, FFT verifies the received peak |
 | `test_uvc.ps1` | camera captures one JPEG frame |
+| `test_reconnect.ps1` | reconnect: detach→attach and server restart→attach, serial echo verified each time |
+| `test_repeat_import.ps1` | repeated import: a second client import must fail while in use; the first session is unaffected |
+| `test_multi_devices.ps1` | multi-device: one server exports 3 devices imported together; detaching one leaves the others intact |
 
 HID tests start mocks with `--no-demo`: the keyboard otherwise types `A` and the
 mouse moves the cursor, and an automated test must never inject input into the
@@ -67,6 +73,12 @@ Windows assigns a drive letter and mounts the volume automatically.
 system. Do not run `format` / `diskpart clean` on this device — locate it by
 `SerialNumber -like 'SBIPDCPSN*'` and confirm the disk number before any manual
 operation.
+
+**Do not plug in, add or remove any disk while a test is running** (USB flash
+drives, external disks, `diskpart` / storage-pool operations): drive letters and
+`Get-Disk` disk numbers shift when disks are added or removed, so scripted or
+manual operations that address a disk by number can hit the wrong disk. Stop the
+test first.
 
 ## Logs
 

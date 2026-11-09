@@ -807,6 +807,14 @@ Due to this complexity, we recommend [usbipd-win](https://github.com/dorssel/usb
 Windows.  
 This project is ideal for implementing **virtual USB devices** on Windows.
 
+### Connection resource limits
+
+The server applies no idle timeout and has no maximum session count: the USB/IP protocol has
+no keep-alive, so a connection may legitimately stay idle for a long time. A client that
+connects and stops sending keeps its receiver/sender threads until the TCP connection is
+closed. Deployments reachable from untrusted networks should cap concurrent connections at
+the accept/firewall layer; `set_connection_filter()` can be used for source filtering.
+
 ---
 
 ## Contributing

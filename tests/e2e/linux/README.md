@@ -13,8 +13,8 @@ attach → 验证虚拟设备行为（网络/串口/块设备/HID/音频/视频�
 |---|---|---|
 | WSL2（Ubuntu） | 测试环境 | 脚本在 WSL 内执行；Windows 侧用 `wsl -e bash` 调 |
 | `sudo` 免密 | usbip attach/detach 必需 | vhci 写 /sys 要 root；非免密时脚本会卡在密码输入 |
-| usbip 客户端（`/usr/local/sbin/usbip`） | attach/list/detach | 内核 usbip 用户层工具，支持 `-t <端口>`；**必须 sudo** |
-| usbip-win2 vhci 内核模块 | USB 总线模拟 | `lsmod \| grep vhci` 确认已加载；没加载则 attach 失败 |
+| usbip 客户端（`usbip`，需支持 `-t`） | attach/list/detach | 内核 usbip 用户层工具；**必须 sudo**（发行版包可能装在 `/usr/sbin`，直接用 PATH 里的即可） |
+| Linux 内核 vhci_hcd 模块 | USB 总线模拟 | `lsmod \| grep vhci` 确认已加载；没加载则 attach 失败 |
 | 编译产物（`build_wsl2/`） | mock 服务器二进制 | 先 `cmake --build build_wsl2 -j6`（WSL 里编译，依赖走 vcpkg） |
 | python3 + pyusb（`python3-usb` 包） | cdc_acm / pipe 数据面测试 | 没有则这两个脚本失败 |
 | alsa-utils（aplay/arecord） | audio / speaker 测试 | 缺失时对应脚本 SKIP 或失败 |
@@ -98,8 +98,11 @@ bash tests/e2e/linux/run_all.sh
 | test_ecm.sh | 虚拟网卡 | enx 网卡 + ping 192.168.53.1 |
 | test_msc.sh | U 盘 | lsblk+dmesg 双路确认新盘 → 大小校验 → 扇区 100 写读 cmp |
 | test_msc_usb3.sh | U 盘（SuperSpeed） | mock_msc --super → speed=5000/bcdUSB=3.00 → 大小校验 → 只读 8 扇区 |
+| test_msc_interrupt.sh | U 盘写入中断 | 写块设备时直接 detach，服务器不崩溃、端口继续监听，重新 attach 后可读写 |
 | test_keyboard.sh | HID 键盘 | evtest 捕获 KEY_A 事件 |
+| test_keyboard_led.sh | HID 键盘 LED | 主机写 capslock brightness → SET_REPORT(Output) → 服务器侧 LED 状态变化 |
 | test_mouse.sh | HID 鼠标 | evtest 捕获 REL 移动事件 |
+| test_absolute_mouse.sh | HID 绝对坐标鼠标 | 默认只验证枚举；`HID_EVENTS=1` 时发送移动并捕获 EV_ABS（会移动宿主机光标） |
 | test_gamepad.sh | HID 手柄 | evtest 捕获手柄事件 |
 | test_cdc_throttle.sh | 串口（节流） | ttyACM 计数上报 |
 | test_pipe.sh | vendor 管道 | pyusb bulk OUT→IN 回显 + 周期发送日志 |
@@ -110,11 +113,13 @@ bash tests/e2e/linux/run_all.sh
 | test_uvc_formats.sh | UVC 640x480 | v4l2-ctl 枚举格式/分辨率 + 指定分辨率拉流、关闭后重新打开 |
 | test_webcam.sh | 复合摄像头+麦克风 | ffmpeg 拉帧 + arecord 录音同时验证 |
 | test_rndis.sh | 虚拟 RNDIS 网卡 | enx 网卡 + ping + 5B/8KB TCP echo |
+| test_stress_net.sh | ECM 网络压力 | 默认 60s（`STRESS_SECONDS` 可调）循环 8KB TCP echo，校验不失败、进程存活、内存无明显增长 |
 | test_reconnect.sh | 串口重连 | detach→attach、停服→重启→attach，每次回显验证 |
+| test_repeat_import.sh | 重复导入 | 设备已被占用时第二个客户端 import 被拒（NA），原会话不受影响，detach 后可重新导入 |
 | test_msc_mount.sh | U 盘文件系统 | mkfs.ext4 + mount + 写文本/1MiB 文件读回 + 重挂载校验 |
 | test_multi_devices.sh | 多设备服务器 | list 三台、同时 attach、逐台 detach 互不影响 |
 | test_multi_interface_hid.sh | 复合 HID | 键盘/鼠标节点并存、并发事件、互不串扰 |
 
 python 辅助脚本：`cdc_acm_test.py`（串口读写）、`pipe_test.py`（libusb 传输）、
 `speaker_verify.py`（音频内容比对）、`tone_check.py`（单文件音调校验）、
-`net_echo.py`（TCP 大包回显校验）。
+`net_echo.py`（TCP 大包回显校验）、`net_stress.py`（持续 TCP 压力）。

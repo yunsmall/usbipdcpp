@@ -15,8 +15,8 @@ attach with the local usbip client → verify the virtual device's behavior
 |---|---|---|
 | WSL2 (Ubuntu) | Test environment | Scripts run inside WSL; invoke from Windows via `wsl -e bash` |
 | Passwordless `sudo` | Required for usbip attach/detach | vhci writes to /sys as root; without passwordless sudo the scripts hang at password prompts |
-| usbip client (`/usr/local/sbin/usbip`) | attach/list/detach | The kernel usbip userspace tool, supports `-t <port>`; **must run with sudo** |
-| usbip-win2 vhci kernel module | USB bus emulation | Confirm with `lsmod \| grep vhci`; attach fails if not loaded |
+| usbip client (`usbip`, must support `-t`) | attach/list/detach | Kernel usbip userspace tool; **must run with sudo** (distro packages may install it under `/usr/sbin`; just use whatever is in PATH) |
+| Linux kernel vhci_hcd module | USB bus emulation | Confirm with `lsmod \| grep vhci`; attach fails if not loaded |
 | Build artifacts (`build_wsl2/`) | mock server binaries | Build first with `cmake --build build_wsl2 -j6` (built inside WSL, deps via vcpkg) |
 | python3 + pyusb (`python3-usb` package) | cdc_acm / pipe data-plane tests | These two scripts fail without it |
 | alsa-utils (aplay/arecord) | audio / speaker tests | Scripts SKIP or fail if missing |
@@ -127,8 +127,11 @@ bash tests/e2e/linux/run_all.sh
 | test_ecm.sh | Virtual NIC | enx interface + ping 192.168.53.1 |
 | test_msc.sh | USB flash drive | lsblk+dmesg dual confirmation of new disk → size check → sector-100 write/read cmp |
 | test_msc_usb3.sh | USB flash drive (SuperSpeed) | mock_msc --super → speed=5000 / bcdUSB=3.00 → size check → read-only 8 sectors |
+| test_msc_interrupt.sh | USB drive write interruption | detach while writing the block device; server survives, port stays open, re-attach works |
 | test_keyboard.sh | HID keyboard | evtest captures KEY_A events |
+| test_keyboard_led.sh | HID keyboard LED | host writes capslock brightness → SET_REPORT(Output) → server-side LED state changes |
 | test_mouse.sh | HID mouse | evtest captures REL motion events |
+| test_absolute_mouse.sh | HID absolute mouse | enum only by default; with `HID_EVENTS=1` sends movement and captures EV_ABS (moves the host cursor) |
 | test_gamepad.sh | HID gamepad | evtest captures gamepad events |
 | test_cdc_throttle.sh | Serial (throttled) | ttyACM count report |
 | test_pipe.sh | vendor pipe | pyusb bulk OUT→IN echo + periodic-send logs |
@@ -139,7 +142,9 @@ bash tests/e2e/linux/run_all.sh
 | test_uvc_formats.sh | UVC 640x480 | v4l2-ctl format/resolution enumeration + capture at the requested size, reopen after close |
 | test_webcam.sh | Composite camera + microphone | ffmpeg capture and arecord recording verified together |
 | test_rndis.sh | Virtual RNDIS NIC | enx interface + ping + 5 B / 8 KB TCP echo |
+| test_stress_net.sh | ECM network stress | loops 8 KB TCP echo for 60 s by default (`STRESS_SECONDS`), checks no failures, process alive, no obvious memory growth |
 | test_reconnect.sh | Serial reconnect | detach→attach, stop server→restart→attach, echo verified each time |
+| test_repeat_import.sh | Repeated import | a second client import is rejected (NA) while the device is in use; the first session is unaffected and re-import works after detach |
 | test_msc_mount.sh | USB drive filesystem | mkfs.ext4 + mount + write text/1 MiB file and read back + remount check |
 | test_multi_devices.sh | Multi-device server | all three listed, attached together, detaching one leaves the others intact |
 | test_multi_interface_hid.sh | Composite HID | keyboard/mouse nodes coexist, concurrent events, no crosstalk |
@@ -147,4 +152,5 @@ bash tests/e2e/linux/run_all.sh
 Python helper scripts: `cdc_acm_test.py` (serial read/write),
 `pipe_test.py` (libusb transfer), `speaker_verify.py` (audio content
 comparison), `tone_check.py` (single-file tone verification),
-`net_echo.py` (large-payload TCP echo verification).
+`net_echo.py` (large-payload TCP echo verification),
+`net_stress.py` (sustained TCP stress).

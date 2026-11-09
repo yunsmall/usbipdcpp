@@ -42,11 +42,17 @@ powershell -NoProfile -File tests\e2e\windows\test_uac_speaker.ps1
 |---|---|
 | `test_cdc_acm.ps1` | 枚举为 COM 口，串口回显 |
 | `test_hid.ps1` | 键盘/鼠标/游戏手柄枚举成对应 HID 类别 |
+| `test_keyboard_led.ps1` | 键盘 LED：默认只验证枚举；`-TestInput` 才切换 Caps Lock 验证 SET_REPORT(Output)（测试前后恢复） |
+| `test_multi_interface_hid.ps1` | 复合 HID：同一配置里的鼠标与键盘各自枚举成对应子设备 |
 | `test_msc.ps1` | 枚举为 USB 磁盘，容量 2 MiB（只读校验，不写盘） |
 | `test_rndis.ps1` | Remote NDIS 网卡 Up，ping + TCP echo |
+| `test_stress_rndis.ps1` | RNDIS 网络压力：默认 60s 循环 8KB TCP echo，校验无失败、进程存活 |
 | `test_uac_mic.ps1` | 麦克风录音 2 秒，数据量合理 |
 | `test_uac_speaker.ps1` | 播放 440 Hz 正弦，FFT 验证接收端主峰 |
 | `test_uvc.ps1` | 摄像头抓一帧 JPEG |
+| `test_reconnect.ps1` | 重连：detach→attach、停服→重启→attach，每次用串口回显验证 |
+| `test_repeat_import.ps1` | 重复导入：设备占用时第二个客户端 import 必须失败，原会话不受影响 |
+| `test_multi_devices.ps1` | 多设备：一个服务器导出 3 台设备同时 import，detach 一台不影响其余 |
 
 HID 测试用 `--no-demo` 启动 mock：键盘会自动敲 A、鼠标会移动光标，
 自动化测试里绝不能向宿主机注入输入。
@@ -61,6 +67,10 @@ Windows 会自动给 U 盘分配盘符并挂载卷。`test_msc.ps1` 只读容量
 不写盘、不挂载文件系统。不要在该设备上执行 `format`/`diskpart clean`
 等操作——`Get-Disk` 里多个 USB 磁盘时按 `SerialNumber -like 'SBIPDCPSN*'`
 定位，先确认盘号再操作。
+
+**测试期间不要插拔、添加或移除任何磁盘**（U 盘、移动硬盘、`diskpart`/存储池操作）：
+盘符和 `Get-Disk` 的磁盘号会随磁盘增删变化，脚本或手工命令按盘号定位时可能指向
+别的盘。确需改动，先停掉测试。
 
 ## 日志
 
