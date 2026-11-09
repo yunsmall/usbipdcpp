@@ -85,6 +85,12 @@ public:
 
     /**
      * @brief 判断一次 libusb_submit_transfer 失败是否应断开会话
+     *
+     * 只决定"要不要结束本会话"，不决定设备是否被移除。调用方在返回 true 的
+     * 分支里还要单独检查 err == LIBUSB_ERROR_NO_DEVICE 才置 device_removed：
+     * 严格策略下客户端构造的非法请求也会提交失败并断连，但设备本身完好，
+     * 会话结束后必须放回可用列表，不能当作被拔出丢掉
+     *
      * @param err libusb_submit_transfer 的返回值（负数）
      * @param policy 配置的断连策略
      * @return true 表示需要断开
@@ -157,6 +163,19 @@ public:
 
     // 这个标记一旦为true那么就应该立即停止通信，所有用来标记通信状态的变量都无效
     std::atomic_bool client_disconnection = false;
+
+    /**
+     * @brief 设备是否已被物理移除（is_device_removed() 的存储）
+     *
+     * 单向终态，一旦 true 不允许改回 false。只由三类证据置位：
+     * 1. 异步传输完成的 LIBUSB_TRANSFER_NO_DEVICE；
+     * 2. libusb_submit_transfer 返回 LIBUSB_ERROR_NO_DEVICE；
+     * 3. 热插拔/管理路径显式调用 on_device_removed()。
+     *
+     * 与 ErrorType::NO_DEVICE 的区别：后者只表示本会话必须中止，普通提交
+     * 失败也会用到；本标记才代表"设备没了"，Server::release_device() 只在
+     * 它为 true 时丢弃设备、不再移回可用列表
+     */
     std::atomic_bool device_removed = false;
 
     // 正在进行的传输：seqnum → callback_args*

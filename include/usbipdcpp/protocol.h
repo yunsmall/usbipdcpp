@@ -49,11 +49,22 @@ enum UsbIpDirection {
     In = 1,
 };
 
+/**
+ * @brief 项目内部错误码（与 USB/IP 线协议里的 URB 状态码无关）
+ *
+ * 主要作为 handler 回给 Session 的 ec：Session 收到任何非 OK 值就停止
+ * 收包并关闭当前连接。它描述的是"本会话层面发生了什么"，不是设备状态。
+ */
 enum class ErrorType {
     OK = 0,
     UNKNOWN_VERSION,
     UNKNOWN_CMD,
     PROTOCOL_ERROR,
+    // 本会话必须中止，但不代表设备被物理移除：默认的 DisconnectOnAnyError
+    // 策略下任何 libusb 提交失败都会用它断连（例如客户端构造的非法请求），
+    // 此时设备本身完好，会话结束后仍要放回可用列表。设备是否真的消失由
+    // AbstDeviceHandler::is_device_removed() 单独表达，libusb 后端只在
+    // LIBUSB_ERROR_NO_DEVICE / LIBUSB_TRANSFER_NO_DEVICE 时才置位
     NO_DEVICE,
     SOCKET_EOF,
     SOCKET_ERR,

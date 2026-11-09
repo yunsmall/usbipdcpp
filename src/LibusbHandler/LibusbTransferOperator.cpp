@@ -59,7 +59,11 @@ void *LibusbTransferOperator::alloc_transfer_handle(std::size_t buffer_length, i
     std::size_t write_offset = (header.ep == 0) ? LIBUSB_CONTROL_SETUP_SIZE : 0;
     std::size_t actual_buffer_length = buffer_length + write_offset;
 
-    trx->buffer = static_cast<unsigned char *>(malloc(actual_buffer_length));
+    // 零长度非控制传输是合法的（例如 bulk OUT length=0），malloc(0) 允许返回
+    // nullptr；glibc 会返回可释放指针，但部分嵌入式 libc 返回 nullptr，会把
+    // 合法请求当成内存不足断连。只放大分配大小，trx->length 仍记录实际长度
+    trx->buffer = static_cast<unsigned char *>(
+            malloc(actual_buffer_length > 0 ? actual_buffer_length : 1));
     if (!trx->buffer) [[unlikely]] {
         if (num_iso_packets == 0) {
             if (!transfer_pool_.free(trx))

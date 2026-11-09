@@ -138,6 +138,9 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                                                  std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) {
 
     if (device_removed) [[unlikely]] {
+        // 设备已被物理移除，之后的提交没有意义：返回 NO_DEVICE 让 Session
+        // 停止本会话。这里只结束会话，设备已经从可用列表摘除（由
+        // Server::release_device 按 is_device_removed() 丢弃）
         ec = make_error_code(ErrorType::NO_DEVICE);
         return;
     }
@@ -243,20 +246,34 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
                     // 无需检查 unlinking：receive_urb 与 handle_unlink_seqnum
                     // 同在 receiver 线程串行执行，submit 失败时 handle_unlink
                     // 不可能已置位（线程模型见 handle_unlink_seqnum 注释）。
-                    // 对齐内核 stub_recv_cmd_submit：提交失败直接回
-                    // RET_SUBMIT(EPIPE)；若主机仍发来 CMD_UNLINK，entry 已
-                    // erase 会走 handle_unlink_seqnum 的 else 分支回
-                    // RET_UNLINK(0)，vhci 对已完成的 URB 丢弃该响应
+                    // 内核 stub_recv_cmd_submit 对提交失败是
+                    // usbip_event_add(SDEV_EVENT_ERROR_SUBMIT) 丢弃连接、不回
+                    // RET_SUBMIT；若主机仍发来 CMD_UNLINK，entry 已 erase 会走
+                    // handle_unlink_seqnum 的 else 分支回 RET_UNLINK(0)，
+                    // vhci 对已完成的 URB 丢弃该响应
                 }
                 callback_args->transfer.reset();
                 if (!callback_args_pool_.free(callback_args)) {
                     delete callback_args;
                 }
-                responder->submit_ret_submit(
-                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 if (should_disconnect_on_submit_error(err, device_handler_config.submit_error_policy)) [[unlikely]] {
-                    device_removed = true;
+                    // 与内核一致：提交失败直接丢弃本会话，不先入队 EPIPE。
+                    // sender 看到停止标志会丢弃队列里的响应，入队 EPIPE 只能
+                    // 做到"有时发、有时不发"，同一输入出现两种可观测行为
+                    //
+                    // 只有 libusb 明确报告设备消失时才标记为移除（不再放回
+                    // 可用列表）；严格策略下其他提交错误（例如客户端构造的
+                    // 非法参数）只断开本会话，设备本身没坏，下次导入仍可用
+                    if (err == LIBUSB_ERROR_NO_DEVICE) {
+                        device_removed = true;
+                    }
                     ec = make_error_code(ErrorType::NO_DEVICE);
+                }
+                else {
+                    // 非致命策略下会话继续，必须回 EPIPE，否则这个 URB
+                    // 永远等不到应答
+                    responder->submit_ret_submit(
+                            UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
                 }
             }
         }
@@ -372,10 +389,17 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
             if (!callback_args_pool_.free(callback_args)) {
                 delete callback_args;
             }
-            responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             if (should_disconnect_on_submit_error(err, device_handler_config.submit_error_policy)) [[unlikely]] {
-                device_removed = true;
+                // 同控制传输分支：严格策略下按内核语义直接断会话、不回 EPIPE；
+                // 只有设备真的消失才从可用列表移除
+                if (err == LIBUSB_ERROR_NO_DEVICE) {
+                    device_removed = true;
+                }
                 ec = make_error_code(ErrorType::NO_DEVICE);
+            }
+            else {
+                responder->submit_ret_submit(
+                        UsbIpResponse::UsbIpRetSubmit::create_ret_submit_epipe_without_data(seqnum, 0));
             }
         }
     }
@@ -732,8 +756,12 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
 
     // 计算 ISO 传输的实际长度
     std::uint32_t actual_length = trx->actual_length;
-    if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS && !callback_arg.is_out) {
-        // ISO IN 传输：需要计算所有 iso packet 的实际长度之和
+    if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
+        // libusb_transfer::actual_length 对 ISO 传输没有意义（libusb 文档明确
+        // 标注 ISO 不使用该字段，Linux usbfs 实测恒为 0），不分方向都必须按包
+        // 累加。vhci 会校验 header.actual_length == 各包 actual_length 之和，
+        // 不相等时直接断开整台设备（"total length of iso packets ... not equal
+        // to actual length of buffer"）
         size_t iso_actual_length = 0;
         for (int i = 0; i < trx->num_iso_packets; i++) {
             iso_actual_length += trx->iso_packet_desc[i].actual_length;
@@ -786,8 +814,8 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
             // 若不带描述符返回，客户端 URB 的 number_of_packets 被覆盖为 0、
             // 每包状态/实际长度缺失，依赖 per-packet 结果的驱动（audio 等）
             // 会行为异常。注意描述符 actual_length 之和必须等于 header 的
-            // actual_length，否则 vhci 校验失败会断开连接——libusb 对 ISO
-            // OUT 的 trx->actual_length 就是各包 actual_length 之和，天然满足
+            // actual_length，否则 vhci 校验失败会断开连接——上面已经按包累加
+            // 计算 actual_length，两者同源，天然一致
             UsbIpResponse::UsbIpRetSubmit ret;
             if (callback_arg.is_out) {
                 if (trx->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) [[unlikely]] {

@@ -843,7 +843,7 @@ void LibusbServer::stop() {
     server.stop();
     SPDLOG_INFO("usbip服务器关闭");
 
-    {
+    auto release_all_devices = [this] {
         std::lock_guard lock(server.get_devices_mutex());
         auto &server_using_devices = server.get_using_devices();
         auto &server_available_devices = server.get_available_devices();
@@ -874,7 +874,8 @@ void LibusbServer::stop() {
             }
         }
         server_using_devices.clear();
-    }
+    };
+    release_all_devices();
 
     should_exit_libusb_event_thread = true;
     libusb_interrupt_event_handler(nullptr);
@@ -885,6 +886,11 @@ void LibusbServer::stop() {
         libusb_event_thread.join();
     }
     spdlog::info("libusb事件线程结束");
+
+    // deregister 不等待正在执行的热插拔回调：回调可能在第一次清理之后才把
+    // 新绑定的设备加进列表，错过上面的释放。事件线程退出后不会再有回调，
+    // 再扫一遍把这类设备释放掉，否则 native_handle/设备引用会泄漏到进程退出
+    release_all_devices();
 }
 
 LibusbServer::~LibusbServer() {
