@@ -433,9 +433,12 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
     if (transfer) {
         auto *op = transfer.get_operator();
         void *raw_handle = transfer.get();
-        // 数据阶段只在 OUT 方向携带（与 from_socket 的方向判断对称）：
-        // IN 恒传 0，防止 IN 的 transfer 缓冲内容被误发
-        op->send_transfer_data(raw_handle, sock, op->transfer_is_in(raw_handle) ? 0 : transfer_buffer_length, ec);
+        // 数据阶段只在 OUT 方向携带，方向只取协议头——与 from_socket 对称。
+        // 不能用 transfer_is_in()：它读的是后端传输对象里的方向字段，而本函数
+        // 发送时对象刚由 alloc_transfer_handle 分配、尚未经过 fill_*_transfer
+        // （libusb 后端此时 type/endpoint 都未初始化），读出来的是残留值
+        op->send_transfer_data(raw_handle, sock,
+                               header.direction == UsbIpDirection::In ? 0 : transfer_buffer_length, ec);
     }
 }
 

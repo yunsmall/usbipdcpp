@@ -224,4 +224,30 @@ TEST(TestTransferDirection, CmdSubmitOutSendsDataInSendsNone) {
         EXPECT_EQ(be32(hdr, 0), USBIP_CMD_SUBMIT);
         EXPECT_EQ(sp.recv_sock.available(), 0u);
     }
+
+    // 后端传输对象内部的方向字段与协议头矛盾时，必须以协议头为准：
+    // 发送方刚 alloc 出来的对象可能还没被 fill_*_transfer 初始化方向，
+    // 依赖 transfer_is_in() 会读到残留值，导致数据阶段有无判断错误
+    {
+        SocketPair sp;
+        UsbIpHeaderBasic alloc_header{};
+        alloc_header.direction = UsbIpDirection::In; // 与下面 submit 头故意相反
+        auto *raw = op.alloc_transfer_handle(4, 0, alloc_header, {});
+        auto *trx = GenericTransfer::from_handle(raw);
+        trx->data = {5, 4, 3, 2};
+        TransferHandle handle(raw, &op);
+        UsbIpCommand::UsbIpCmdSubmit submit{};
+        submit.header.command = USBIP_CMD_SUBMIT;
+        submit.header.seqnum = 202;
+        submit.header.direction = UsbIpDirection::Out;
+        submit.transfer_buffer_length = 4;
+        submit.transfer = std::move(handle);
+        usbipdcpp::error_code ec;
+        submit.to_socket(sp.send_sock, ec);
+        ASSERT_FALSE(ec);
+        auto hdr = read_n(sp.recv_sock, 48);
+        EXPECT_EQ(be32(hdr, 0), USBIP_CMD_SUBMIT);
+        auto data = read_n(sp.recv_sock, 4);
+        EXPECT_EQ(data, (std::vector<std::uint8_t>{5, 4, 3, 2}));
+    }
 }
