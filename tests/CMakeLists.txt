@@ -150,8 +150,9 @@ if (TARGET usbipdcpp_libusb)
     # iso e2e 的包填充/校验格式（设备与客户端共用，填充/校验必须互逆）
     add_test_file(test_iso_pattern)
 
-    # 真机 e2e（FunctionFS 设备 + libusb 客户端）：手动运行，不注册 ctest
-    if (UNIX)
+    # 真机 e2e（FunctionFS 设备 + libusb 客户端）：手动运行，不注册 ctest。
+    # 设备侧依赖 Linux 的 FunctionFS 和 linux/usb/ch9.h（macOS 等 UNIX 上编不了）
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_subdirectory(e2e/libusb)
     endif ()
 endif ()
