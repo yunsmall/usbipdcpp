@@ -132,7 +132,9 @@ file(GLOB VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES CONFIGURE_DEPENDS src/virtua
 # TunBackend 依赖 Linux 的 /dev/net/tun + TUNSETIFF ioctl（Android/termux 内核同样
 # 提供），macOS 无此接口（utun 是三层设备且无公开 TAP API），不编译
 list(FILTER VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES EXCLUDE REGEX ".*TunBackend\\.cpp$")
-if (UNIX AND NOT APPLE)
+# termux 原生编译时 CMAKE_SYSTEM_NAME 是 Linux，Windows 侧 NDK 交叉编译是 Android，
+# 两者都提供 TUN；其他 UNIX 没有这套 ioctl
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     list(APPEND VIRTUAL_DEVICE_NETWORK_BACKENDS_SRC_FILES
             ${CMAKE_CURRENT_SOURCE_DIR}/src/virtual_device/network_backends/TunBackend.cpp)
 endif ()
