@@ -11,3 +11,5 @@ CLAUDE.local.md
 /tmp
 # mock_msc 在运行目录生成的默认镜像
 /disk.img
+# python 脚本运行产生的字节码
+__pycache__/

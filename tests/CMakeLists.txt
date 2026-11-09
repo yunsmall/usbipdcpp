@@ -146,4 +146,12 @@ if (TARGET usbipdcpp_libusb)
     # 公开 API 前置条件与 start 幂等语义
     add_test_file(test_libusb_server_api)
     target_link_libraries(test_libusb_server_api PRIVATE usbipdcpp_libusb)
+
+    # iso e2e 的包填充/校验格式（设备与客户端共用，填充/校验必须互逆）
+    add_test_file(test_iso_pattern)
+
+    # 真机 e2e（FunctionFS 设备 + libusb 客户端）：手动运行，不注册 ctest
+    if (UNIX)
+        add_subdirectory(e2e/libusb)
+    endif ()
 endif ()
