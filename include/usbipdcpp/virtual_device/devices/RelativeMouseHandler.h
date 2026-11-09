@@ -24,7 +24,7 @@ namespace usbipdcpp {
  */
 class USBIPDCPP_API RelativeMouseHandler : public HidVirtualInterfaceHandler {
 public:
-    RelativeMouseHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit RelativeMouseHandler(UsbInterface &handle_interface);
     ~RelativeMouseHandler() override = default;
 
     /**

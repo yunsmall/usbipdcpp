@@ -67,8 +67,6 @@ int main(int argc, char **argv) {
 
         spdlog::set_level(spdlog::level::trace);
 
-        StringPool string_pool;
-
         // 接口描述与相对鼠标相同（HID 03/00/00 + 中断 IN 8/10），复用其工厂建接口，
         // 再覆盖为本示例的 LibevdevMouseInterfaceHandler（把 libevdev 事件翻译成鼠标报告）
         std::vector<UsbInterface> interfaces = {
@@ -77,8 +75,8 @@ int main(int argc, char **argv) {
 
         auto libevdev_mouse = UsbDevice::make(busid, 0x1234, 0x5678, interfaces, 1, 1, 0, "/usbipdcpp/libevdev_mouse",
                                           UsbSpeed::Low, 0xabcd);
-        libevdev_mouse->interfaces[0].with_handler<LibevdevMouseInterfaceHandler>(string_pool);
-        auto device_handler = libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+        libevdev_mouse->interfaces[0].with_handler<LibevdevMouseInterfaceHandler>();
+        auto device_handler = libevdev_mouse->with_handler<SimpleVirtualDeviceHandler>();
         device_handler->setup_interface_handlers();
 
         LibevdevMouseInterfaceHandler &mouse_interface_handler =

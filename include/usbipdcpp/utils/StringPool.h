@@ -25,12 +25,13 @@ public:
         throw std::system_error(std::make_error_code(std::errc::no_buffer_space));
     }
 
-    std::optional<std::wstring> get_string(std::uint8_t index) {
+    std::optional<std::wstring> get_string(std::uint8_t index) const {
         std::shared_lock lock(string_pool_mutex);
-        if (!string_pool.contains(index)) {
+        auto it = string_pool.find(index);
+        if (it == string_pool.end()) {
             return std::nullopt;
         }
-        return string_pool[index];
+        return it->second;
     }
 
     void change_string(std::uint8_t index, const std::wstring &new_str) {
@@ -49,6 +50,7 @@ public:
 
 private:
     std::unordered_map<std::uint8_t, std::wstring> string_pool;
-    std::shared_mutex string_pool_mutex;
+    /// get_string 是 const（逻辑只读），锁需要 mutable
+    mutable std::shared_mutex string_pool_mutex;
 };
 }

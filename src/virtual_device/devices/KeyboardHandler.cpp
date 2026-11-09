@@ -8,8 +8,8 @@
 
 namespace usbipdcpp {
 
-KeyboardHandler::KeyboardHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool) {
+KeyboardHandler::KeyboardHandler(UsbInterface &handle_interface) :
+    HidVirtualInterfaceHandler(handle_interface) {
     // 两个独立报告，通过 Report ID 区分（兼容 Boot Protocol）
     report_descriptor_ = {
             // ===== Report ID 1: 标准键盘 =====

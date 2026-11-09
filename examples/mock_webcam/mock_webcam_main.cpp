@@ -175,8 +175,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     // 视频源 + 音频源：--video 提供时用音画同步文件源（FFmpeg 同时解视频轨和
     // 音轨，音频消费推进主时钟、视频帧按主时钟对齐取帧）；否则彩条视频 +
     // 合成音频（sine/fourier/--audio 文件）
@@ -298,11 +296,11 @@ int main(int argc, char **argv) {
     device->assign_interface_numbers();
     // 先 UVC 后 UAC：UAC helper 会把设备级调度器打开（等时按帧节奏延迟响应），
     // UVC 等时 URB 不走调度器（立即响应，见 UvcDeviceHelper::setup 注释），互不影响
-    if (auto ec = UvcDeviceHelper::setup(device, 0, string_pool, std::move(video_source)); ec) {
+    if (auto ec = UvcDeviceHelper::setup(device, 0, std::move(video_source)); ec) {
         SPDLOG_ERROR("UVC 功能装配失败：{}", ec.message());
         return 1;
     }
-    if (auto ec = UacDeviceHelper::setup_microphone(device, 2, string_pool, std::move(source)); ec) {
+    if (auto ec = UacDeviceHelper::setup_microphone(device, 2, std::move(source)); ec) {
         SPDLOG_ERROR("UAC 功能装配失败：{}", ec.message());
         return 1;
     }

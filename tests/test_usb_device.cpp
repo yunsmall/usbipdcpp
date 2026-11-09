@@ -2,7 +2,6 @@
 
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Endpoint.h"
-#include "usbipdcpp/utils/StringPool.h"
 
 using namespace usbipdcpp;
 
@@ -45,7 +44,6 @@ TEST(TestUsbInterface, BasicInterface) {
 }
 
 TEST(TestUsbDevice, BasicDevice) {
-    StringPool string_pool;
 
     auto device = std::make_shared<UsbDevice>(UsbDevice{.path = "/test/device",
                                                         .busid = "1-1",

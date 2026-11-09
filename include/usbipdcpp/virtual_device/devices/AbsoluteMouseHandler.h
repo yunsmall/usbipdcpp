@@ -28,11 +28,10 @@ public:
     /**
      * @brief 构造函数
      * @param handle_interface USB接口
-     * @param string_pool 字符串池
      * @param screen_width 屏幕宽度（像素，默认1920）
      * @param screen_height 屏幕高度（像素，默认1080）
      */
-    AbsoluteMouseHandler(UsbInterface &handle_interface, StringPool &string_pool, int screen_width = 1920,
+    AbsoluteMouseHandler(UsbInterface &handle_interface, int screen_width = 1920,
                          int screen_height = 1080);
 
     ~AbsoluteMouseHandler() override = default;

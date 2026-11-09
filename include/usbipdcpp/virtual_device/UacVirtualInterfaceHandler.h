@@ -39,7 +39,9 @@ struct UacDeviceConfig {
 /// AudioControl 接口处理器 — 类描述符 + Feature Unit（mute/volume）控制
 class USBIPDCPP_API UacAudioControlHandler : public VirtualInterfaceHandler {
 public:
-    UacAudioControlHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit UacAudioControlHandler(UsbInterface &handle_interface);
+
+    [[nodiscard]] std::wstring interface_string_to_register() const override;
 
     /// 应用设备配置（必须在 UacDeviceHelper::setup_microphone 调用 setup_interface_handlers 之前完成）
     void set_config(const UacDeviceConfig &config);
@@ -110,8 +112,10 @@ private:
 /// AudioStreaming 接口处理器 — 类描述符 + 采样率协商 + ISO PCM 推流
 class USBIPDCPP_API UacAudioStreamingSourceHandler : public VirtualInterfaceHandler {
 public:
-    UacAudioStreamingSourceHandler(UsbInterface &handle_interface, StringPool &string_pool,
-                             std::unique_ptr<AudioSource> source);
+    UacAudioStreamingSourceHandler(UsbInterface &handle_interface,
+                                   std::unique_ptr<AudioSource> source);
+
+    [[nodiscard]] std::wstring interface_string_to_register() const override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
     [[nodiscard]] data_type get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) override;
@@ -205,8 +209,10 @@ private:
 /// PCM（写入 AudioSink），控制面（采样率协商、类描述符）逻辑相同
 class USBIPDCPP_API UacAudioStreamingSinkHandler : public VirtualInterfaceHandler {
 public:
-    UacAudioStreamingSinkHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    UacAudioStreamingSinkHandler(UsbInterface &handle_interface,
                                  std::unique_ptr<AudioSink> sink);
+
+    [[nodiscard]] std::wstring interface_string_to_register() const override;
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
     [[nodiscard]] data_type get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) override;
@@ -297,13 +303,12 @@ public:
      *        AS 按 interface_number = ac_interface_number + 1 在 device->interfaces
      *        中查找（功能接口编号连续，与数组下标无关）。设备里其他接口的
      *        handler 不受影响
-     * @param string_pool 字符串池
      * @param source 音频源
      * @param config UAC 设备配置（声道数等）
      * @return 出错时的错误码（如 AC/AS 接口缺失），成功返回默认构造（无错误）
      */
     static std::error_code setup_microphone(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
-                                            StringPool &string_pool, std::unique_ptr<AudioSource> source,
+                                            std::unique_ptr<AudioSource> source,
                                             const UacDeviceConfig &config = {});
 
     /**
@@ -312,14 +317,13 @@ public:
      * @param ac_interface_number UAC 功能首个接口（AC）的 interface_number；
      *        AS 按 interface_number = ac_interface_number + 1 查找。设备里
      *        其他接口的 handler 不受影响
-     * @param string_pool 字符串池
      * @param sink 音频接收器
      * @param config UAC 设备配置（声道数等）；AC 的 input_terminal_type 强制
      *        TT_USB_STREAMING（扬声器拓扑）
      * @return 出错时的错误码（如 AC/AS 接口缺失），成功返回默认构造（无错误）
      */
     static std::error_code setup_speaker(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
-                                         StringPool &string_pool, std::unique_ptr<AudioSink> sink,
+                                         std::unique_ptr<AudioSink> sink,
                                          const UacDeviceConfig &config = {});
 };
 

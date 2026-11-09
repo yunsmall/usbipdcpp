@@ -11,9 +11,9 @@ namespace usbipdcpp {
 
 class USBIPDCPP_API VirtualDeviceHandler : public AbstDeviceHandler {
 public:
-    explicit VirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
+    explicit VirtualDeviceHandler(UsbDevice &handle_device,
                                   const Version &usb_version = {2, 0, 0}) :
-        AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()), string_pool(string_pool),
+        AbstDeviceHandler(handle_device, std::make_unique<VirtualDeviceTransferOperator>()),
         usb_version(usb_version), transfer_scheduler(static_cast<UsbSpeed>(handle_device.speed)) {
         change_device_ep0_max_size_by_speed();
 
@@ -22,6 +22,8 @@ public:
         string_product_value = string_pool.new_string(L"Usbipdcpp Virtual Device");
         string_serial_value = 0; // 无序列号，匹配物理 UVC 设备行为
     }
+
+    ~VirtualDeviceHandler() override = default;
 
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
                      usbipdcpp::error_code &ec) override;
@@ -74,8 +76,17 @@ public:
     }
 
     /**
-     * @brief 设置所有接口 handler 的 device_handler 指针
-     * @note 应在创建完 UsbDevice 并设置好所有接口 handler 之后调用。
+     * @brief 完成接口 handler 的绑定初始化
+     *
+     * 对每个已绑定 handler 的接口依次：设置 device_handler、调用
+     * register_strings 把接口字符串登记进设备池、注册端点路由、调用
+     * on_setup_interface_handlers。应在设备创建且接口 handler 绑定完成后、导出给服务器
+     * （Server::add_device）之前调用：register_strings 会写接口 handler 的 string_pool
+     * 指针，导出后再调用就与会话线程的读取构成数据竞争。复合设备的辅助函数（UAC/UVC）
+     * 会重复调用，字符串登记和端点注册都按幂等处理。
+     * 顺序是硬约束：register_strings 必须在 on_setup_interface_handlers 之前，
+     * 后者可能读取 get_string_interface_value() 填 IAD。
+     * 字符串池满时 register_strings 会抛 std::system_error，设备构造失败。
      * 设为 virtual：子类重写后能自定义初始化 interface_handlers 的流程
      */
     virtual void setup_interface_handlers();
@@ -236,9 +247,13 @@ public:
         return u2_device_to_host_latency;
     }
 
+    /**
+     * @brief 修改配置名字符串（iConfiguration）
+     * @param new_str 新的字符串
+     * @note 只能在设备导出给 Server 之前调用：主机枚举时就取走了字符串，
+     *       运行期修改不会被重新读取，所以这里不做任何同步
+     */
     void change_string_configuration(const std::wstring &new_str) {
-        // 描述符构造会并发读取这些索引与 StringPool，修改必须持有独占锁
-        std::unique_lock lock(data_mutex);
         // 首次设置（索引 0 未分配）时先分配有效索引，避免 change_string(0) 抛异常；
         // 已分配则直接更新。四个 change_string_* 统一此健壮性处理
         if (string_configuration_value == 0) {
@@ -249,8 +264,12 @@ public:
         }
     }
 
+    /**
+     * @brief 修改制造商字符串（iManufacturer）
+     * @param new_str 新的字符串
+     * @note 同 change_string_configuration：只能在导出前调用
+     */
     void change_string_manufacturer(const std::wstring &new_str) {
-        std::unique_lock lock(data_mutex);
         if (string_manufacturer_value == 0) {
             string_manufacturer_value = string_pool.new_string(new_str);
         }
@@ -259,8 +278,12 @@ public:
         }
     }
 
+    /**
+     * @brief 修改产品名字符串（iProduct）
+     * @param new_str 新的字符串
+     * @note 同 change_string_configuration：只能在导出前调用
+     */
     void change_string_product(const std::wstring &new_str) {
-        std::unique_lock lock(data_mutex);
         if (string_product_value == 0) {
             string_product_value = string_pool.new_string(new_str);
         }
@@ -269,8 +292,12 @@ public:
         }
     }
 
+    /**
+     * @brief 修改序列号字符串（iSerialNumber）
+     * @param new_str 新的字符串
+     * @note 同 change_string_configuration：只能在导出前调用
+     */
     void change_string_serial(const std::wstring &new_str) {
-        std::unique_lock lock(data_mutex);
         // string_serial_value 默认 0（无序列号，不占字符串池索引）
         if (string_serial_value == 0) {
             string_serial_value = string_pool.new_string(new_str);
@@ -281,17 +308,14 @@ public:
     }
 
     std::wstring get_string_manufacturer() const {
-        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_manufacturer_value).value_or(L"");
     }
 
     std::wstring get_string_product() const {
-        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_product_value).value_or(L"");
     }
 
     std::wstring get_string_serial() const {
-        std::shared_lock lock(data_mutex);
         return string_pool.get_string(string_serial_value).value_or(L"");
     }
 
@@ -301,12 +325,22 @@ protected:
     std::uint8_t string_product_value;
     std::uint8_t string_serial_value;
 
-    StringPool &string_pool;
+    /// 设备自己的字符串描述符表（索引分配器）。接口 handler 通过
+    /// setup_interface_handlers 传入的 register_strings 拿它，不直接暴露给外部
+    StringPool string_pool;
+
+    /**
+     * @brief 取设备自己的字符串描述符表
+     *
+     * 设备与它的所有接口 handler 共用这一张表。接口 handler 在
+     * register_strings 里拿到它，不再由调用方另行创建和传递
+     * @return 字符串描述符表
+     */
+    StringPool &get_string_pool() {
+        return string_pool;
+    }
 
     Version usb_version;
-    /// 描述符构造与字符串修改共用；getter 用 shared_lock，change_string_* 用
-    /// unique_lock。mutable 是让 const getter 也能加共享锁
-    mutable std::shared_mutex data_mutex;
 
     /// 设备级传输调度器：连接建立时启动、断开时停止（生命周期见
     /// on_new_connection / on_disconnection），所有接口共享

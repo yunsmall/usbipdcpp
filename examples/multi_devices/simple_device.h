@@ -14,7 +14,7 @@
  */
 class SimpleHidInterfaceHandler : public usbipdcpp::HidVirtualInterfaceHandler {
 public:
-    explicit SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &handle_interface, usbipdcpp::StringPool &string_pool);
+    explicit SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &handle_interface);
 
     std::uint16_t get_report_descriptor_size() override;
     usbipdcpp::data_type get_report_descriptor() override;
@@ -29,5 +29,5 @@ private:
  */
 class SimpleDeviceHandler : public usbipdcpp::SimpleVirtualDeviceHandler {
 public:
-    SimpleDeviceHandler(usbipdcpp::UsbDevice &handle_device, usbipdcpp::StringPool &string_pool);
+    explicit SimpleDeviceHandler(usbipdcpp::UsbDevice &handle_device);
 };

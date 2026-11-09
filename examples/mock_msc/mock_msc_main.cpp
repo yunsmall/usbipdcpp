@@ -22,14 +22,12 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     auto backend = std::unique_ptr<StorageBackend>(std::make_unique<RawImageBackend>(image_path, 4096));
     auto device = UsbDevice::make(busid, 0x1234, 0x5681,
                                   {MscBulkOnlyHandler::make_interface(0x81, 0x02)},
                                   1, 1, 0, "/usbipdcpp/mock_msc", speed);  // 磁盘是高速设备，EP0 按所配速度生成
-    device->interfaces[0].with_handler<MscBulkOnlyHandler>(string_pool, std::move(backend));
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->interfaces[0].with_handler<MscBulkOnlyHandler>(std::move(backend));
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     Server server;
     server.add_device(std::move(device));

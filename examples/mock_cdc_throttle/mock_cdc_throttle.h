@@ -23,7 +23,7 @@
  */
 class ThrottleCdcAcmDataInterfaceHandler : public usbipdcpp::CdcAcmDataInterfaceHandler {
 public:
-    ThrottleCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface, usbipdcpp::StringPool &string_pool,
+    ThrottleCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,
                                        std::uint32_t limit_bytes, std::uint32_t window_ms);
 
     /// 创建限流数据接口（描述符模板，未绑定 handler），复用基类 CDC 数据接口定义

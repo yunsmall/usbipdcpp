@@ -45,7 +45,7 @@ public:
         Center = 0x0F,
     };
 
-    GamepadHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit GamepadHandler(UsbInterface &handle_interface);
     ~GamepadHandler() override = default;
 
     /**

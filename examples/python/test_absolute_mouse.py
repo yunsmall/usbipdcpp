@@ -12,9 +12,6 @@ import usbipdcpp
 
 
 def main():
-    # 创建字符串池
-    string_pool = usbipdcpp.StringPool()
-
     # 创建设备（先添加接口，再在接口上创建 handler）
     device = usbipdcpp.UsbDevice()
     device.path = "/usbipdcpp/absolute_mouse"
@@ -52,11 +49,11 @@ def main():
 
     # 在设备内的接口上创建 handler（确保 handler 引用的是 vector 内的接口）
     iface_in_device = device.get_interface(0)
-    mouse = usbipdcpp.AbsoluteMouseHandler(iface_in_device, string_pool, 1920, 1080)
+    mouse = usbipdcpp.AbsoluteMouseHandler(iface_in_device, 1920, 1080)
     iface_in_device.set_handler(mouse)
 
     # 设置设备 handler 并初始化接口
-    device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device, string_pool)
+    device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device)
     device_handler.change_string_manufacturer("Usbipdcpp Python")
     device_handler.change_string_product("Absolute Mouse (Python)")
     device_handler.change_string_serial("python-abs-mouse-001")

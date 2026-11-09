@@ -151,8 +151,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     // 音频源：--audio 提供时用文件音源（声道数由文件决定，--channels 忽略）；
     // --harmonics 提供时用傅里叶级数合成；否则正弦波。
     // 文件打不开时 AudioFileSource 软失败（日志报错 + 输出静音），设备仍可枚举（同 FfmpegSource 做法）
@@ -226,7 +224,7 @@ int main(int argc, char **argv) {
     // UacDeviceHelper 创建 AC/AS handler 并注册 + 设置描述符。
     // 接口从 0 连续编号：按下标依次填 interface_number（bInterfaceNumber 依赖它）
     device->assign_interface_numbers();
-    if (auto ec = UacDeviceHelper::setup_microphone(device, 0, string_pool, std::move(source)); ec) {
+    if (auto ec = UacDeviceHelper::setup_microphone(device, 0, std::move(source)); ec) {
         SPDLOG_ERROR("UAC 功能装配失败：{}", ec.message());
         return 1;
     }

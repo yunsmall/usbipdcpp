@@ -45,8 +45,6 @@ Minimal virtual keyboard device (full example in `examples/mock_keyboard`):
 using namespace usbipdcpp;
 
 int main() {
-    StringPool string_pool;
-
     // 1. Build the HID keyboard interface descriptor with KeyboardHandler::make_interface
     //    (class/subclass/protocol + interrupt IN endpoint at the given address).
     //    It does NOT bind the handler — binding must happen after the device is
@@ -56,8 +54,8 @@ int main() {
     //    Bind the interface handler first, then the device-level handler.
     auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
                                   {KeyboardHandler::make_interface(0x81)});
-    device->interfaces[0].with_handler<KeyboardHandler>(string_pool);
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->interfaces[0].with_handler<KeyboardHandler>();
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     // 3. Start the USB/IP server (TCP, listen on port 53240)
     Server server;
@@ -361,7 +359,9 @@ For simple devices, use `SimpleVirtualDeviceHandler` - it provides no-op impleme
 
 ### Customizing USB Strings
 
-Call `change_string_*` on your device handler or interface handler **before** starting the server:
+Call `change_string_*` on your device handler (for the interface name, override
+`interface_string_to_register()` instead) **before** exporting the device, i.e. before
+`setup_interface_handlers()`:
 
 **Device-level strings** (via `VirtualDeviceHandler`):
 ```cpp
@@ -373,10 +373,13 @@ device_handler->change_string_configuration(L"My Configuration");
 
 **Interface string** (via `VirtualInterfaceHandler`):
 ```cpp
-interface_handler->change_string_interface(L"My HID Interface");
+class MyHidHandler : public KeyboardHandler {
+public:
+    std::wstring interface_string_to_register() const override { return L"My HID Interface"; }
+};
 ```
 
-All `change_string_*` methods delegate to `StringPool::change_string()` and will throw if the string index is invalid.
+Device-level `change_string_*` methods delegate to the device's internal `StringPool` and will throw if the string index is invalid.
 
 ---
 
@@ -541,7 +544,7 @@ All `change_string_*` methods delegate to `StringPool::change_string()` and will
 
    ```cpp
    // 1. HID interface descriptor (Boot keyboard, interrupt IN endpoint)
-   auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+   auto pipe = device->with_handler<PipeDeviceHandler>();
    // 2. HID descriptor (0x21) appended after the interface descriptor — required by drivers
    pipe->set_class_specific_descriptor({0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00});
    // 3. Report descriptor (0x22) served on GET_DESCRIPTOR
@@ -651,7 +654,7 @@ If future requirements demand supporting hundreds or thousands of concurrent con
 | `UsbDevice` | USB device descriptor and configuration |
 | `AbstDeviceHandler` | Abstract base class for all device handlers |
 | `LibusbServer` | Server wrapper for physical USB device forwarding via libusb |
-| `StringPool` | Manages USB string descriptors (limited to 255 strings) |
+| `StringPool` | Per-device USB string descriptor table (owned internally by virtual device handlers) |
 
 ### Device Removal Semantics
 

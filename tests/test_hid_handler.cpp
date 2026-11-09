@@ -6,7 +6,6 @@
 #include "test_utils.h"
 
 #include "usbipdcpp/Interface.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/HidVirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -16,7 +15,7 @@ namespace {
 // 测试用 HID handler：返回固定的报告描述符（5 字节示例）
 class TestHidHandler : public HidVirtualInterfaceHandler {
 public:
-    explicit TestHidHandler(UsbInterface &intf, StringPool &pool) : HidVirtualInterfaceHandler(intf, pool) {
+    explicit TestHidHandler(UsbInterface &intf) : HidVirtualInterfaceHandler(intf) {
     }
 
     data_type get_report_descriptor() override {
@@ -48,20 +47,19 @@ public:
     }
 };
 
-// 构造一个最小可用的 UsbInterface 与 StringPool
+// 构造一个最小可用的 UsbInterface
 struct HidTestEnv {
-    StringPool pool;
     // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
     // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放，
     // op 活得比 stub 久才不会有 use-after-scope
     GenericTransferOperator op;
     CaptureResponder stub;
     UsbInterface intf{.interface_class = 3, .interface_subclass = 0, .interface_protocol = 0};
-    TestHidHandler handler{intf, pool};
+    TestHidHandler handler{intf};
     usbipdcpp::error_code ec;
 
     // 连上 stub：通道应答/数据面测试走这里（描述符类测试不受影响）
-    HidTestEnv() : handler(intf, pool) {
+    HidTestEnv() : handler(intf) {
         handler.on_new_connection(stub, ec);
     }
 };
@@ -235,9 +233,8 @@ TEST(VirtualDeviceHandlers, HidSetReportDeliveredToOverride) {
 
 TEST(VirtualDeviceHandlers, HidSendInputReportDisconnectedRejected) {
     // 未建立连接时 send_input_report 被通道断连检查拒绝（数据不会白攒）
-    StringPool pool;
     UsbInterface intf{.interface_class = 3, .interface_subclass = 0, .interface_protocol = 0};
-    TestHidHandler handler(intf, pool); // 未调 on_new_connection
+    TestHidHandler handler(intf); // 未调 on_new_connection
 
     const std::array<std::uint8_t, 2> report = {1, 2};
     handler.send_input_report(asio::buffer(report));

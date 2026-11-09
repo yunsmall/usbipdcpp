@@ -6,9 +6,9 @@
 
 namespace usbipdcpp {
 
-DigitizerHandler::DigitizerHandler(UsbInterface &handle_interface, StringPool &string_pool, std::uint16_t x_max,
+DigitizerHandler::DigitizerHandler(UsbInterface &handle_interface, std::uint16_t x_max,
                                    std::uint16_t y_max) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool), x_max_(x_max), y_max_(y_max) {
+    HidVirtualInterfaceHandler(handle_interface), x_max_(x_max), y_max_(y_max) {
     report_descriptor_ = {
             // Usage Page (Digitizer)
             0x05,

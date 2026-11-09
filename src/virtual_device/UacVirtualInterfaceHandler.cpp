@@ -24,9 +24,12 @@ namespace usbipdcpp {
 
 // ==================== UacAudioControlHandler ====================
 
-UacAudioControlHandler::UacAudioControlHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    VirtualInterfaceHandler(handle_interface, string_pool) {
-    change_string_interface(L"Usbipdcpp Audio Control");
+UacAudioControlHandler::UacAudioControlHandler(UsbInterface &handle_interface) :
+    VirtualInterfaceHandler(handle_interface) {
+}
+
+std::wstring UacAudioControlHandler::interface_string_to_register() const {
+    return L"Usbipdcpp Audio Control";
 }
 
 void UacAudioControlHandler::set_config(const UacDeviceConfig &new_config) {
@@ -321,11 +324,9 @@ data_type UacAudioControlHandler::request_get_descriptor(std::uint8_t type, std:
 
 // ==================== UacAudioStreamingSourceHandler ====================
 
-UacAudioStreamingSourceHandler::UacAudioStreamingSourceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+UacAudioStreamingSourceHandler::UacAudioStreamingSourceHandler(UsbInterface &handle_interface,
                                                    std::unique_ptr<AudioSource> source) :
-    VirtualInterfaceHandler(handle_interface, string_pool), source(std::move(source)) {
-    change_string_interface(L"Usbipdcpp Microphone");
-
+    VirtualInterfaceHandler(handle_interface), source(std::move(source)) {
     // 按初始格式计算包调度参数（采样率/声道数变化时由 SET_CUR 重算）
     update_packet_bytes();
 }
@@ -351,6 +352,10 @@ void UacAudioStreamingSourceHandler::update_packet_bytes() {
     packet_base = packet_framesize * static_cast<std::size_t>(frames_scaled / 1'000'000);
     packet_residue_step = packet_framesize * static_cast<std::size_t>(frames_scaled % 1'000'000);
     packet_residue_acc = 0;
+}
+
+std::wstring UacAudioStreamingSourceHandler::interface_string_to_register() const {
+    return L"Usbipdcpp Microphone";
 }
 
 void UacAudioStreamingSourceHandler::on_setup_interface_handlers() {
@@ -757,10 +762,13 @@ data_type UacAudioStreamingSourceHandler::request_get_descriptor(std::uint8_t ty
 
 // ==================== UacAudioStreamingSinkHandler ====================
 
-UacAudioStreamingSinkHandler::UacAudioStreamingSinkHandler(UsbInterface &handle_interface, StringPool &string_pool,
+UacAudioStreamingSinkHandler::UacAudioStreamingSinkHandler(UsbInterface &handle_interface,
                                                            std::unique_ptr<AudioSink> sink) :
-    VirtualInterfaceHandler(handle_interface, string_pool), sink(std::move(sink)) {
-    change_string_interface(L"Usbipdcpp Speaker");
+    VirtualInterfaceHandler(handle_interface), sink(std::move(sink)) {
+}
+
+std::wstring UacAudioStreamingSinkHandler::interface_string_to_register() const {
+    return L"Usbipdcpp Speaker";
 }
 
 void UacAudioStreamingSinkHandler::on_setup_interface_handlers() {
@@ -1158,7 +1166,7 @@ data_type UacAudioStreamingSinkHandler::request_get_descriptor(std::uint8_t type
 // ==================== UacDeviceHelper ====================
 
 std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> device,
-                                                  std::uint8_t ac_interface_number, StringPool &string_pool,
+                                                  std::uint8_t ac_interface_number,
                                                   std::unique_ptr<AudioSource> source,
                                                   const UacDeviceConfig &config) {
     // 按 interface_number 定位 AC/AS 两个相邻接口（不依赖数组下标：复合设备
@@ -1175,8 +1183,8 @@ std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> dev
     auto *ac_interface = found[0];
     auto *as_interface = found[1];
 
-    auto ac = ac_interface->with_handler<UacAudioControlHandler>(string_pool);
-    auto as = as_interface->with_handler<UacAudioStreamingSourceHandler>(string_pool, std::move(source));
+    auto ac = ac_interface->with_handler<UacAudioControlHandler>();
+    auto as = as_interface->with_handler<UacAudioStreamingSourceHandler>(std::move(source));
 
     // 声道数：config 未指定（0）时从 source 推断
     auto resolved = config;
@@ -1186,6 +1194,14 @@ std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> dev
     ac->set_config(resolved);
     as->set_ac_handler(ac.get());
     ac->set_as_handler(as.get());
+
+    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
+                              : device->with_handler<SimpleVirtualDeviceHandler>();
+    // UAC 走等时帧调度（ISO URB 按帧节奏延迟响应），启用设备级调度器
+    dh->set_use_transfer_scheduler(true);
+    dh->setup_interface_handlers();
+    // IAD 的 iFunction 要用 AC 的 iInterface 索引，接口字符串在
+    // setup_interface_handlers 里才分配到设备字符串池，必须在其后填
     // UAC 功能由 AC 接口声明 IAD（iFunction = AC 的 iInterface，同
     // UvcDeviceHelper 的声明方式，bFirstInterface 由配置描述符生成时按接口号
     // 回填）：复合设备（如 UVC+UAC 一体摄像头）里 usbccgp 只按 IAD 归并接口
@@ -1194,17 +1210,11 @@ std::error_code UacDeviceHelper::setup_microphone(std::shared_ptr<UsbDevice> dev
     // 音频没有 UVC 那种 "interface collection" 子类概念，bFunctionSubClass 填 0
     ac_interface->interface_association_descriptor = IadDesc::make(
             2, CC_AUDIO, 0, 0, ac->get_string_interface_value());
-
-    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
-                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    // UAC 走等时帧调度（ISO URB 按帧节奏延迟响应），启用设备级调度器
-    dh->set_use_transfer_scheduler(true);
-    dh->setup_interface_handlers();
     return {};
 }
 
 std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device, std::uint8_t ac_interface_number,
-                                               StringPool &string_pool, std::unique_ptr<AudioSink> sink,
+                                               std::unique_ptr<AudioSink> sink,
                                                const UacDeviceConfig &config) {
     // 按 interface_number 定位 AC/AS 两个相邻接口（不依赖数组下标，同 setup_microphone）
     auto found = device->find_interfaces_by_number<2>(ac_interface_number);
@@ -1218,8 +1228,8 @@ std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device
     auto *ac_interface = found[0];
     auto *as_interface = found[1];
 
-    auto ac = ac_interface->with_handler<UacAudioControlHandler>(string_pool);
-    auto as = as_interface->with_handler<UacAudioStreamingSinkHandler>(string_pool, std::move(sink));
+    auto ac = ac_interface->with_handler<UacAudioControlHandler>();
+    auto as = as_interface->with_handler<UacAudioStreamingSinkHandler>(std::move(sink));
 
     // 声道数：config 未指定（0）时从 sink 推断
     auto resolved = config;
@@ -1233,22 +1243,19 @@ std::error_code UacDeviceHelper::setup_speaker(std::shared_ptr<UsbDevice> device
     ac->set_config(resolved);
     as->set_ac_handler(ac.get());
     ac->set_as_handler(as.get());
-    // UAC 功能由 AC 接口声明 IAD（iFunction = AC 的 iInterface，同
-    // UvcDeviceHelper 的声明方式，bFirstInterface 由配置描述符生成时按接口号
-    // 回填）：复合设备（如 UVC+UAC 一体摄像头）里 usbccgp 只按 IAD 归并接口
-    // 组，UAC 组无 IAD 时 AC/AS 被拆成两个独立功能分别启动，usbaudio.sys
-    // 凑不齐 AC+AS 组合而启动失败（Windows 实测 CM_PROB_FAILED_START）。
-    // 音频没有 UVC 那种 "interface collection" 子类概念，bFunctionSubClass 填 0
-    ac_interface->interface_association_descriptor = IadDesc::make(
-            2, CC_AUDIO, 0, 0, ac->get_string_interface_value());
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
-                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+                              : device->with_handler<SimpleVirtualDeviceHandler>();
     // 扬声器收流（OUT）同样需要帧调度：立即回 RET 会让主机（usbip-win vhci
     // 的发送节奏被 RET 反馈驱动）以为管道随时空闲而超发（实测 5 倍速灌入），
     // 延迟响应把发送速率限制回 1 倍。Linux vhci 按自己的帧时钟发不受影响
     dh->set_use_transfer_scheduler(true);
     dh->setup_interface_handlers();
+    // IAD 的 iFunction 要用 AC 的 iInterface 索引，接口字符串在
+    // setup_interface_handlers 里才分配到设备字符串池，必须在其后填
+    // 同 setup_microphone：AC 接口声明 IAD，usbccgp 按 IAD 归并 UAC 组
+    ac_interface->interface_association_descriptor = IadDesc::make(
+            2, CC_AUDIO, 0, 0, ac->get_string_interface_value());
     return {};
 }
 

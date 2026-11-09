@@ -18,8 +18,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::info);
 
-    StringPool string_pool;
-
     // vendor 类接口：bulk IN + bulk OUT（通用管道，无类特定协议）
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
@@ -45,7 +43,7 @@ int main(int argc, char **argv) {
 
     // 管道设备没有接口 handler（PipeDeviceHandler 自动管道化所有端点），接口手动定义
     auto device = UsbDevice::make(busid, 0x1234, 0x5690, interfaces, 1, 1, 0, "/usbipdcpp/mock_pipe");
-    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    auto pipe = device->with_handler<PipeDeviceHandler>();
 
     // 标准请求行为配置（可选，默认行为：接受存在的 alt、其余回错误）：
     // 演示拒绝接口级 SET_FEATURE——本设备（vendor 管道）不支持任何接口级

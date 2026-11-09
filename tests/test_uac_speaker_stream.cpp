@@ -12,7 +12,6 @@
 #include "test_utils.h"
 
 #include "usbipdcpp/Device.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
@@ -62,7 +61,7 @@ struct SpeakerFixture {
     GenericTransferOperator op;
 };
 
-SpeakerFixture make_speaker_device(StringPool &string_pool) {
+SpeakerFixture make_speaker_device() {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = CC_AUDIO,
@@ -95,7 +94,7 @@ SpeakerFixture make_speaker_device(StringPool &string_pool) {
     auto sink = std::make_unique<RecordingSink>();
     auto *sink_ptr = sink.get();
     // 装配失败场景不在本测试范围（接口缺失时才报错），错误码留到 EXPECT 兜底
-    EXPECT_FALSE(UacDeviceHelper::setup_speaker(device, 0, string_pool, std::move(sink), {}));
+    EXPECT_FALSE(UacDeviceHelper::setup_speaker(device, 0, std::move(sink), {}));
     auto *dh = dynamic_cast<VirtualDeviceHandler *>(device->handler.get());
     return {device, dh, sink_ptr, device->interfaces[1].endpoints[1][0]};
 }
@@ -127,8 +126,7 @@ void wait_for_sink_data(SpeakerFixture &fx, std::size_t expected,
 
 TEST(TestUacSpeakerStream, IsoOutBeforeStreamingStalls) {
     // 未 SET_INTERFACE（streaming=false，alt0 空端点）时 iso OUT 回 EPIPE
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -151,8 +149,7 @@ TEST(TestUacSpeakerStream, IsoOutWritesSinkThenResponds) {
     // SET_INTERFACE alt=1 后：iso OUT 经调度器按数据时长延迟（4ms）调度，
     // sink 收到紧凑排列的两包 PCM，应答 status 0、actual_length=总数据量、
     // iso 描述符 status 清零（内核驱动要求）
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -203,8 +200,7 @@ TEST(TestUacSpeakerStream, IsoOutWritesSinkThenResponds) {
 
 TEST(TestUacSpeakerStream, SwitchingBackToAlt0StopsStreaming) {
     // 切回 alt0 后 streaming=false：iso OUT 又回 EPIPE（流状态随 SET_INTERFACE 复位）
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -229,8 +225,7 @@ TEST(TestUacSpeakerStream, SwitchingBackToAlt0StopsStreaming) {
 TEST(TestUacSpeakerStream, MuteZeroesReceivedPcm) {
     // AC Feature Unit 静音（SET_CUR(FU_MUTE)）后：收流侧把 PCM 清零再写 sink
     // （Windows 音量滑块路径），sink 收到全 0
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -267,8 +262,7 @@ TEST(TestUacSpeakerStream, MuteZeroesReceivedPcm) {
 TEST(TestUacSpeakerStream, DeclaredIsoLengthExceedsActualData) {
     // iso 描述符声明 length 大于实际数据（异常主机/截断包）：按实际可用数据
     // 消费（take = min(声明, 剩余)），应答 actual_length = 实际收到字节
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -298,8 +292,7 @@ TEST(TestUacSpeakerStream, DeclaredIsoLengthExceedsActualData) {
 TEST(TestUacSpeakerStream, ShortFirstPacketKeepsLaterPacketsEmpty) {
     // 第一包声明长度就超过实际数据：第二包 data_pos 已越过缓冲末尾，
     // 不能用 data.size() - data_pos 计算（无符号下溢会读越界地址）
-    StringPool string_pool;
-    auto fx = make_speaker_device(string_pool);
+    auto fx = make_speaker_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);

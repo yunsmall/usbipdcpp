@@ -2,9 +2,11 @@
 
 #include <cstdio>
 #include <string>
+#include <system_error>
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Session.h"
+#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/EcmConstants.h"
 #include "usbipdcpp/virtual_device/UsbClassConstants.h"
 
@@ -13,15 +15,14 @@ namespace usbipdcpp {
 // ==================== EcmCommunicationInterfaceHandler ====================
 
 EcmCommunicationInterfaceHandler::EcmCommunicationInterfaceHandler(UsbInterface &handle_interface,
-                                                                   StringPool &string_pool,
                                                                    std::array<std::uint8_t, 6> mac_address) :
-    VirtualInterfaceHandler(handle_interface, string_pool), interface_number_(handle_interface.interface_number) {
+    VirtualInterfaceHandler(handle_interface), interface_number_(handle_interface.interface_number) {
     // MAC 地址转 12 个 hex 字符存字符串描述符（cdc_ether 主机驱动按此格式解析，
     // 要求 Unicode 字符为大写 0-9A-F，长度恰好 12）
     char hex[13];
     std::snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X", mac_address[0], mac_address[1], mac_address[2],
                   mac_address[3], mac_address[4], mac_address[5]);
-    mac_string_index_ = string_pool.new_string(std::wstring(hex, hex + 12));
+    mac_string_value_ = std::wstring(hex, hex + 12);
     // 通知通道待发缓存上限 30 条：网络状态通知低频（连接/速率变化才发一条），
     // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
     // 兜底，同时保留足够余量不丢低频通知（超限丢最旧，对齐 CdcAcm 通知通道）
@@ -166,6 +167,14 @@ void EcmCommunicationInterfaceHandler::send_speed_change(std::uint32_t up_speed,
                                                     speed_data, sizeof(speed_data)));
 }
 
+void EcmCommunicationInterfaceHandler::register_strings(StringPool &pool) {
+    VirtualInterfaceHandler::register_strings(pool);
+    // iMACAddress 是接口自己的额外字符串，和 iInterface 同一张池
+    if (mac_string_index_ == 0) {
+        mac_string_index_ = pool.new_string(mac_string_value_);
+    }
+}
+
 void EcmCommunicationInterfaceHandler::on_new_connection(TransferResponder &current_session, std::error_code &ec) {
     // 父类先设 session 指针（通道应答请求要用），再绑定通道并重置断连状态
     VirtualInterfaceHandler::on_new_connection(current_session, ec);
@@ -186,9 +195,9 @@ bool EcmCommunicationInterfaceHandler::cancel_pending_urb(std::uint32_t unlink_s
 
 // ==================== EcmDataInterfaceHandler ====================
 
-EcmDataInterfaceHandler::EcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+EcmDataInterfaceHandler::EcmDataInterfaceHandler(UsbInterface &handle_interface,
                                                  NetworkBackend *backend) :
-    VirtualInterfaceHandler(handle_interface, string_pool), backend_(backend) {
+    VirtualInterfaceHandler(handle_interface), backend_(backend) {
     if (backend_) {
         // 注入发帧回调：后端产生帧时经通道推给主机（通道线程安全，任意线程可调）
         backend_->set_send_to_host([this](const std::uint8_t *data, std::size_t size) {

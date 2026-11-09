@@ -20,7 +20,6 @@
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
 
@@ -69,7 +68,7 @@ private:
     Server &server;
 };
 
-std::shared_ptr<UsbDevice> make_keyboard(StringPool &string_pool) {
+std::shared_ptr<UsbDevice> make_keyboard() {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
@@ -103,8 +102,8 @@ std::shared_ptr<UsbDevice> make_keyboard(StringPool &string_pool) {
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
-    mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>();
+    mock_keyboard->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
     return mock_keyboard;
 }
 
@@ -164,11 +163,10 @@ void expect_closed_by_server(asio::ip::tcp::socket &client) {
 TEST(TestConnectionFilter, AllowsAllWhenNotSet) {
     // 未设置过滤器：行为与引入过滤器之前完全一致（默认全部放行）
     asio::io_context io;
-    StringPool string_pool;
     StartedObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -185,11 +183,10 @@ TEST(TestConnectionFilter, RejectClosesConnectionWithoutSessionOrEvent) {
     // 被拒连接的"什么都没发生"用后一个放行连接 + 过滤器调用计数定序
     // （accept 循环串行，放行连接被处理时被拒连接必然已处理完）
     asio::io_context io;
-    StringPool string_pool;
     StartedObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
 
     const std::uint16_t allowed_port = probe_free_port(io);
@@ -220,11 +217,10 @@ TEST(TestConnectionFilter, NonWhitelistedPortIsRejected) {
     // 只放行指定源端口（Android 同机回环场景：127.0.0.1 被所有 app 共享，
     // 服务器只信任客户端刚占住的那个端口）——白名单外的连接一律拒绝
     asio::io_context io;
-    StringPool string_pool;
     StartedObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
 
     const std::uint16_t allowed_port = probe_free_port(io);
@@ -250,10 +246,9 @@ TEST(TestConnectionFilter, NonWhitelistedPortIsRejected) {
 TEST(TestConnectionFilter, FilterSeesPeerEndpoint) {
     // 过滤器拿到的对端地址就是客户端的来源地址（本用例验证源端口按绑定值）
     asio::io_context io;
-    StringPool string_pool;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
 
     std::atomic<std::uint16_t> seen_port{0};
     std::atomic<int> filter_calls{0};
@@ -275,11 +270,10 @@ TEST(TestConnectionFilter, ThrowingFilterRejectsAndServerStaysUsable) {
     // 过滤器抛异常按"拒绝"处理（fail-closed），且不打死 accept 循环：
     // 之后返回 true 时连接照常建立
     asio::io_context io;
-    StringPool string_pool;
     StartedObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
 
     std::atomic<int> filter_calls{0};
@@ -325,10 +319,9 @@ TEST(TestConnectionFilter, ManyRejectionsThenAllow) {
     // 连续多个被拒连接不破坏 accept 循环（也间接验证 active_sessions 计数
     // 平衡：每次拒绝都会创建又析构一个 Session，计数泄漏会让 stop() 卡住）
     asio::io_context io;
-    StringPool string_pool;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
 
     const std::uint16_t allowed_port = probe_free_port(io);
     std::atomic<int> filter_calls{0};
@@ -359,10 +352,9 @@ TEST(TestConnectionFilter, ManyRejectionsThenAllow) {
 TEST(TestConnectionFilter, PersistsAcrossRestart) {
     // 过滤器是 Server 成员：stop 后再次 start 仍然生效，无需重新设置
     asio::io_context io;
-    StringPool string_pool;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
 
     std::atomic<int> filter_calls{0};
     server.set_connection_filter([&](const asio::ip::tcp::endpoint &) {
@@ -387,10 +379,9 @@ TEST(TestConnectionFilter, PersistsAcrossRestart) {
 TEST(TestConnectionFilter, ClearRestoresAllowAll) {
     // 清除过滤器（传空 std::function）后恢复全部放行
     asio::io_context io;
-    StringPool string_pool;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
 
     std::atomic<int> filter_calls{0};
     server.set_connection_filter([&](const asio::ip::tcp::endpoint &) {
@@ -417,10 +408,9 @@ TEST(TestConnectionFilter, AcceptsLvalueFilter) {
     // 过滤器以左值传入（策略常来自配置对象等左值）：按值形参必须收得下，
     // 且只拷贝不掏空调用方的 std::function（否则调用方无法复用或事后检查）
     asio::io_context io;
-    StringPool string_pool;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
 
     std::atomic<int> filter_calls{0};
     std::function<bool(const asio::ip::tcp::endpoint &)> deny_all = [&](const asio::ip::tcp::endpoint &) {

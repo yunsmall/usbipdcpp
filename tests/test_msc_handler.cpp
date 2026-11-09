@@ -7,7 +7,6 @@
 #include "test_utils.h"
 
 #include "usbipdcpp/Device.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/MscBulkOnlyHandler.h"
 #include "usbipdcpp/virtual_device/storage_backends/MemoryBackend.h"
@@ -30,7 +29,7 @@ struct MscFixture {
 
 // 构造 MSC 设备（对齐 examples/mock_msc）：Mass Storage + SCSI + BOT，
 // bulk IN 0x81 + bulk OUT 0x02，High speed
-MscFixture make_msc_device(StringPool &string_pool, std::unique_ptr<StorageBackend> backend,
+MscFixture make_msc_device(std::unique_ptr<StorageBackend> backend,
                            bool read_only = false, MscConfig config = {}) {
     std::vector<UsbInterface> interfaces = {MscBulkOnlyHandler::make_interface(0x81, 0x02)};
     auto device = std::make_shared<UsbDevice>(UsbDevice{
@@ -51,9 +50,9 @@ MscFixture make_msc_device(StringPool &string_pool, std::unique_ptr<StorageBacke
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::High),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::High),
     });
-    auto msc = device->interfaces[0].with_handler<MscBulkOnlyHandler>(string_pool, std::move(backend),
+    auto msc = device->interfaces[0].with_handler<MscBulkOnlyHandler>(std::move(backend),
                                                                       std::move(config), read_only);
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
     auto &intf = device->interfaces[0];
     return {device, msc.get(), intf.endpoints[0][0], intf.endpoints[0][1]};
 }
@@ -178,14 +177,13 @@ private:
 TEST(TestMscHandler, Read10ServesBlocksThenCsw) {
     // READ10：CBW → DataIn（mmap 零拷贝路径，external_buf 直指后端缓冲）→
     // CSW（status 0、residue 0）。对齐 BOT 协议状态机
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
     data_type pattern(1024);
     for (std::size_t i = 0; i < pattern.size(); i++) {
         pattern[i] = static_cast<std::uint8_t>(i);
     }
     std::memcpy(backend->get_direct_buffer(2), pattern.data(), pattern.size()); // 预填 LBA 2-3
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -222,9 +220,8 @@ TEST(TestMscHandler, Read10ServesBlocksThenCsw) {
 
 TEST(TestMscHandler, Write10WritesBackendThenCsw) {
     // WRITE10：CBW → DataOut（数据入 staging/mmap）→ CSW。写盘后后端内容变化
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -264,8 +261,7 @@ TEST(TestMscHandler, Write10WritesBackendThenCsw) {
 TEST(TestMscHandler, InvalidCbwSignatureReportsFailedCsw) {
     // CBW 签名非法：不进任何命令分支，直接 CSW status=1（command failed），
     // residue = 应传未传字节数（= dCBWDataTransferLength）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -293,8 +289,7 @@ TEST(TestMscHandler, InvalidCbwSignatureReportsFailedCsw) {
 
 TEST(TestMscHandler, TestUnitReadyCompletesWithoutDataStage) {
     // TEST UNIT READY：无数据阶段，直接 Status 出 CSW（passed）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -319,8 +314,7 @@ TEST(TestMscHandler, TestUnitReadyCompletesWithoutDataStage) {
 
 TEST(TestMscHandler, InRequestBeforeCbwStalls) {
     // 未收 CBW（Idle 状态）时的 IN 请求：回 EPIPE（状态机不认这个阶段）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -341,8 +335,7 @@ TEST(TestMscHandler, InRequestBeforeCbwStalls) {
 TEST(TestMscHandler, OutRequestAcknowledgedWithoutData) {
     // 端点 OUT 请求（非 CBW 路径）：只 ack 不消费（BOT 的 OUT 数据处理由
     // prepare_out_buffer/on_out_data_received 走网络收数据回调，不走这里）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -363,8 +356,7 @@ TEST(TestMscHandler, OutRequestAcknowledgedWithoutData) {
 TEST(TestMscHandler, Write10OnReadOnlyDeviceFailsCsw) {
     // 只读设备收 WRITE10：CBW 解析即标记命令失败，CSW status=1（对齐内核
     // fsg 的只读介质拒绝），数据阶段不接收
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8), /*read_only=*/true);
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8), /*read_only=*/true);
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -393,8 +385,7 @@ TEST(TestMscHandler, Write10OnReadOnlyDeviceFailsCsw) {
 TEST(TestMscHandler, RequestSenseReturnsSenseData) {
     // REQUEST SENSE：固定格式 sense 数据（0x70 + 附加长度 10）经 DataIn 返回，
     // 对齐内核 fsg 的响应结构
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -434,8 +425,7 @@ TEST(TestMscHandler, RequestSenseReturnsSenseData) {
 TEST(TestMscHandler, RequestSenseReportsLastCommandFailure) {
     // 不支持的 SCSI 命令 → CSW failed，随后 REQUEST SENSE 必须返回
     // ILLEGAL REQUEST / INVALID COMMAND；sense 取走后再次查询回 NO SENSE
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -483,8 +473,7 @@ TEST(TestMscHandler, RequestSenseReportsLastCommandFailure) {
 TEST(TestMscHandler, InquiryStandardReturnsIdentifiers) {
     // 标准 INQUIRY：固定字段（设备类型/可移动介质/SPC-4）+ 厂商/产品/版本
     // （来自 MscConfig，on_setup_interface_handlers 补全默认值）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8), false,
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8), false,
                                    MscConfig{.vendor = "TestVend", .product = "TestProduct1234",
                                              .revision = "1.2", .serial = "SN001"});
 
@@ -518,8 +507,7 @@ TEST(TestMscHandler, InquiryStandardReturnsIdentifiers) {
 
 TEST(TestMscHandler, InquiryVpdSupportedPagesListsBlockPages) {
     // VPD 0x00：必须列出 0x00/0x80/0xB0/0xB1/0xB2（SPC-4 Supported VPD Pages）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -550,8 +538,7 @@ TEST(TestMscHandler, InquiryVpdUnitSerialNumberHasTwoByteLength) {
     // Unit Serial Number（SPC-4 §7.8.1x）：PAGE LENGTH 在 byte 2-3 大端，
     // 序列号从 byte 4 开始。内核 scsi_get_vpd_page 用 get_unaligned_be16(&buf[2])
     // 取长度，写成 1 字节会让长度字段把首字符算进去
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8), false,
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8), false,
                                    MscConfig{.serial = "SN001"});
 
     CaptureResponder stub;
@@ -583,8 +570,7 @@ TEST(TestMscHandler, InquiryVpdBlockLimitsIsPageB0) {
     // Block Limits 是 0xB0（SBC-4 §5.4.5 Table 450），不是 0xB1。
     // 主机 sd 层按固定偏移解析：byte 6-7 粒度、8-11 最大传输、20-23 最大 UNMAP、
     // 24-27 UNMAP 描述符数、28-31 最优 UNMAP 粒度、32-35 UGAVALID、36-43 WRITE SAME
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -632,8 +618,7 @@ TEST(TestMscHandler, InquiryVpdBlockLimitsIsPageB0) {
 TEST(TestMscHandler, InquiryVpdBlockDeviceCharacteristicsIsPageB1) {
     // Block Device Characteristics 是 0xB1（SBC-4 §5.4.3 Table 439）：
     // byte 4-5 介质旋转速率，0001h = 非旋转介质（Table 440）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -672,8 +657,7 @@ TEST(TestMscHandler, InquiryVpdBlockDeviceCharacteristicsIsPageB1) {
 TEST(TestMscHandler, InquiryVpdLogicalBlockProvisioningIsPageB2) {
     // Logical Block Provisioning（SBC-4 §5.4.13 Table 467）：byte 5 声明
     // LBPU/LBPWS/LBPWS10/LBPRZ，byte 6 bit2-0 = 2h（thin provisioned）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -706,8 +690,7 @@ TEST(TestMscHandler, InquiryVpdLogicalBlockProvisioningIsPageB2) {
 TEST(TestMscHandler, ReadCapacity16ReportsLbpmeAndLbprz) {
     // SBC-4 §3.23.2 Table 122 byte 14：bit7 LBPME、bit6 LBPRZ。
     // 主机看不到 LBPME 就不会读 0xB2/0xB0，discard 永远不会启用
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -738,8 +721,7 @@ TEST(TestMscHandler, ReadCapacity16ReportsLbpmeAndLbprz) {
 TEST(TestMscHandler, ReadFormatCapacitiesUsesShiftedFormatType) {
     // READ FORMAT CAPACITIES：byte 3 = 容量列表长度，byte 8 的 bit7-2
     // 才是 Format Type（2 = 已格式化介质，编码为 0x08）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -770,8 +752,7 @@ TEST(TestMscHandler, ReadFormatCapacitiesUsesShiftedFormatType) {
 
 TEST(TestMscHandler, ReadCapacity10ReportsCapacity) {
     // READ CAPACITY(10)：最后 LBA 与块大小（大端）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -796,8 +777,7 @@ TEST(TestMscHandler, ReadCapacity10ReportsCapacity) {
 TEST(TestMscHandler, ReadCapacityWithoutBackendReportsOneBlock) {
     // backend 为空是设备配置错误：READ CAPACITY 不能解引用空指针，
     // 按 1 个 512 字节块报告（块数 0 时同样不能回绕成 0xFFFFFFFF 个块）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, nullptr);
+    auto fixture = make_msc_device(nullptr);
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -819,8 +799,7 @@ TEST(TestMscHandler, ReadCapacityWithoutBackendReportsOneBlock) {
 
 TEST(TestMscHandler, ReadCapacity16WithoutBackendReportsOneBlock) {
     // READ CAPACITY(16) 同样不能解引用空 backend（12 字节：8 字节 LBA + 4 字节块大小）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, nullptr);
+    auto fixture = make_msc_device(nullptr);
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -844,8 +823,7 @@ TEST(TestMscHandler, ReadCapacity16WithoutBackendReportsOneBlock) {
 TEST(TestMscHandler, ReadCapacityZeroBlockBackendDoesNotWrapLastLba) {
     // 空镜像 block_count()==0：last_lba 必须是 0，不能是 block_count()-1 回绕出的
     // 0xFFFFFFFF（主机会据此建出 2TB 卷）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(0));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(0));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -868,10 +846,9 @@ TEST(TestMscHandler, ReadCapacityZeroBlockBackendDoesNotWrapLastLba) {
 TEST(TestMscHandler, Read10ShortReadFailsCsw) {
     // 后端短读（镜像截断/I/O 错误）：命令失败，CSW status=1，
     // residue = 应传未传字节数（数据阶段一个字节都没发）
-    StringPool string_pool;
     auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
     backend->short_read = true;
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -894,10 +871,9 @@ TEST(TestMscHandler, Read10ShortReadFailsCsw) {
 TEST(TestMscHandler, Write10ShortWriteFailsCsw) {
     // 后端短写（磁盘满/I/O 错误）：数据阶段已完成，但必须回 CHECK CONDITION，
     // 不能让主机误以为数据已落盘
-    StringPool string_pool;
     auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
     backend->short_write = true;
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -920,8 +896,7 @@ TEST(TestMscHandler, Write10ShortWriteFailsCsw) {
 
 TEST(TestMscHandler, Read10BeyondCapacityFails) {
     // READ10 越界（LBA+count > 容量）：命令失败，CSW status=1
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -945,14 +920,13 @@ TEST(TestMscHandler, Read10BeyondCapacityFails) {
 TEST(TestMscHandler, Read10AcrossMultipleInRequests) {
     // 大数据读分多个 IN 请求：staging_offset_ 续传，各段拼接后等于后端内容，
     // 全部发完才转 Status（此场景走 mmap 零拷贝，external_buf 指向后端缓冲）
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
     data_type pattern(2048);
     for (std::size_t i = 0; i < pattern.size(); i++) {
         pattern[i] = static_cast<std::uint8_t>(i * 7);
     }
     std::memcpy(backend->get_direct_buffer(0), pattern.data(), pattern.size());
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -986,9 +960,8 @@ TEST(TestMscHandler, Read10AcrossMultipleInRequests) {
 TEST(TestMscHandler, Write10AcrossMultipleOutRequests) {
     // 大数据写分多个 OUT 请求：数据入 mmap（零拷贝路径），累积到声明长度
     // 才写盘转 Status。后端内容与拼接数据一致
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1017,13 +990,12 @@ TEST(TestMscHandler, Write10AcrossMultipleOutRequests) {
 TEST(TestMscHandler, UnmapPunchesHoles) {
     // UNMAP：DataOut 收描述符列表（8 字节头 + 每 16 字节一个块描述符），
     // 逐段 punch_hole 清零后端
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
     data_type pattern(512, 0xFF);
     for (std::uint64_t lba = 0; lba < 8; lba++) {
         std::memcpy(backend->get_direct_buffer(lba), pattern.data(), 512);
     }
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1060,13 +1032,12 @@ TEST(TestMscHandler, UnmapPunchesHoles) {
 TEST(TestMscHandler, UnmapOutOfRangeFailsWithoutPunching) {
     // UNMAP 描述符越界（LBA + 块数超出介质）：SBC-4 要求回 CHECK CONDITION，
     // 不能把越界范围交给 punch_hole（后端直接写内存，越界即写坏）
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
     data_type pattern(512, 0xFF);
     for (std::uint64_t lba = 0; lba < 8; lba++) {
         std::memcpy(backend->get_direct_buffer(lba), pattern.data(), 512);
     }
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1098,8 +1069,7 @@ TEST(TestMscHandler, UnmapOutOfRangeFailsWithoutPunching) {
 
 TEST(TestMscHandler, WriteSameFillsRange) {
     // WRITE SAME(16)：DataOut 收 1 块填充数据，逐块写入整个范围（LBA=1 起 3 块）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1131,8 +1101,7 @@ TEST(TestMscHandler, WriteSameFillsRange) {
 
 TEST(TestMscHandler, UnsupportedCommandFails) {
     // 未知 SCSI 命令：命令失败，CSW status=1（不产生数据阶段）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1155,8 +1124,7 @@ TEST(TestMscHandler, UnsupportedCommandFails) {
 
 TEST(TestMscHandler, SetInterfaceRejectsNonZeroAlt) {
     // USB 2.0 §9.4.10：MSC 接口只有 alt 0，不存在的 alt 回 Request Error
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     std::uint32_t status = 0;
     fixture.msc->request_set_interface(1, &status);
@@ -1170,8 +1138,7 @@ TEST(TestMscHandler, SetInterfaceRejectsNonZeroAlt) {
 TEST(TestMscHandler, ReadWriteLbaPlusCountOverflowRejected) {
     // lba=0xFFFFFFFF 时 uint32_t 的 lba+count 会回绕成小值，越界 CDB 曾能
     // 绕过容量检查直达后端缓冲区。修复后按 64 位比较回 CHECK CONDITION
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(1024));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(1024));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1203,8 +1170,7 @@ TEST(TestMscHandler, DataResidueDoesNotLeakToNextCommand) {
     // WRITE SAME 的 dCBWDataTransferLength 大于 1 块时 CSW 残留非零；下一条
     // 无数据阶段的命令（TEST UNIT READY）必须从 0 残留开始，不能把上一条
     // 的残留带进 CSW（BOT：dCSWDataResidue = 应传未传字节数）
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, std::make_unique<MemoryBackend>(8));
+    auto fixture = make_msc_device(std::make_unique<MemoryBackend>(8));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1242,7 +1208,6 @@ TEST(TestMscHandler, DataResidueDoesNotLeakToNextCommand) {
 TEST(TestMscHandler, ReadStagingDataSurvivesDisconnection) {
     // staging 路径的 READ 应答由 sender 线程异步发送。RET_SUBMIT 入队后断连
     // （on_disconnection 清空 staging_data_）不能让应答数据变成悬垂指针
-    StringPool string_pool;
     data_type pattern(1024);
     for (std::size_t i = 0; i < pattern.size(); i++) {
         pattern[i] = static_cast<std::uint8_t>(i * 7 + 1);
@@ -1250,7 +1215,7 @@ TEST(TestMscHandler, ReadStagingDataSurvivesDisconnection) {
     // FailingBackend 不提供 direct buffer，强制走 staging 拷贝路径
     auto backend = std::make_unique<FailingBackend>(std::make_unique<MemoryBackend>(8));
     ASSERT_EQ(backend->write(0, 2, pattern.data()), 1024u);
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1272,11 +1237,10 @@ TEST(TestMscHandler, ReadStagingDataSurvivesDisconnection) {
 TEST(TestMscHandler, Write10DataStageLongerThanCbwIsRejected) {
     // 主机声明的数据阶段比 CBW 的 dCBWDataTransferLength 还长：不能让 socket
     // 直读进 mmap（会写出后端缓冲范围），必须丢弃并按 CHECK CONDITION 收尾
-    StringPool string_pool;
     auto backend = std::make_unique<MemoryBackend>(8);
     data_type original(512, 0x11);
     ASSERT_EQ(backend->write(7, 1, original.data()), 512u);
-    auto fixture = make_msc_device(string_pool, std::move(backend));
+    auto fixture = make_msc_device(std::move(backend));
 
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -1314,8 +1278,7 @@ TEST(TestMscHandler, Write10DataStageLongerThanCbwIsRejected) {
 
 TEST(TestMscHandler, UnmapWithoutBackendFailsCsw) {
     // 没装配后端（配置错误）的设备收到 UNMAP：不能解引用空后端，回 CHECK CONDITION
-    StringPool string_pool;
-    auto fixture = make_msc_device(string_pool, nullptr);
+    auto fixture = make_msc_device(nullptr);
     ASSERT_EQ(fixture.msc->get_backend(), nullptr);
 
     CaptureResponder stub;

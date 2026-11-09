@@ -3,7 +3,6 @@
 #include <cstdint>
 
 #include "usbipdcpp/Interface.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/CdcAcmVirtualInterfaceHandler.h"
 
 using namespace usbipdcpp;
@@ -60,9 +59,8 @@ TEST(VirtualDeviceHandlers, CdcControlSignalStateRoundTrip) {
 // ========== CDC ACM 类特定描述符 ==========
 
 TEST(VirtualDeviceHandlers, CdcClassSpecificDescriptor) {
-    StringPool pool;
     UsbInterface intf{.interface_class = 2, .interface_subclass = 2, .interface_protocol = 1};
-    CdcAcmCommunicationInterfaceHandler handler(intf, pool);
+    CdcAcmCommunicationInterfaceHandler handler(intf);
 
     auto desc = handler.get_class_specific_descriptor();
     // Header(5) + CallManagement(5) + ACM(4) + Union(5) = 19 字节
@@ -94,9 +92,8 @@ TEST(VirtualDeviceHandlers, CdcClassSpecificDescriptor) {
 }
 
 TEST(VirtualDeviceHandlers, CdcDataInterfaceHasNoClassDescriptor) {
-    StringPool pool;
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0, .interface_protocol = 0};
-    CdcAcmDataInterfaceHandler handler(intf, pool);
+    CdcAcmDataInterfaceHandler handler(intf);
 
     EXPECT_TRUE(handler.get_class_specific_descriptor().empty());
 }

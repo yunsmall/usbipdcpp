@@ -67,8 +67,8 @@ BTN_MIDDLE = b'\x04\x00\x00\x00'
 class FlipMouseHandler(usbipdcpp.HidVirtualInterfaceHandler):
     """自定义 HID 鼠标：每秒翻转一次左键状态"""
 
-    def __init__(self, interface, string_pool):
-        super().__init__(interface, string_pool)
+    def __init__(self, interface):
+        super().__init__(interface)
         self._running = False
         self._thread = None
         self._left_pressed = False
@@ -104,8 +104,6 @@ class FlipMouseHandler(usbipdcpp.HidVirtualInterfaceHandler):
 
 
 def main():
-    string_pool = usbipdcpp.StringPool()
-
     device = usbipdcpp.UsbDevice()
     device.path = "/usbipdcpp/flip_mouse"
     device.busid = "1-1"
@@ -139,10 +137,10 @@ def main():
 
     # 在 Python 中创建自定义 Handler
     iface_in_device = device.get_interface(0)
-    mouse = FlipMouseHandler(iface_in_device, string_pool)
+    mouse = FlipMouseHandler(iface_in_device)
     iface_in_device.set_handler(mouse)
 
-    device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device, string_pool)
+    device_handler = usbipdcpp.SimpleVirtualDeviceHandler(device)
     device_handler.change_string_manufacturer("Usbipdcpp Python")
     device_handler.change_string_product("Flip Mouse (Python)")
     device_handler.change_string_serial("python-flip-001")

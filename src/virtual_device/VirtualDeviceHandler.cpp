@@ -190,24 +190,23 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
     }
 }
 
-void VirtualDeviceHandler::setup_interface_handlers() {
-    // 将各接口的 TransferOperator 注册到设备级路由表，按端点分发
+void VirtualDeviceHandler::setup_interface_handlers() {    // 将各接口的 TransferOperator 注册到设备级路由表，按端点分发
     auto *device_op = static_cast<VirtualDeviceTransferOperator *>(get_transfer_operator());
 
     for (auto &intf: handle_device.interfaces) {
         if (intf.handler) {
             auto *virtual_handler = intf.handler.get();
-            if (virtual_handler) {
-                virtual_handler->set_device_handler(this);
-                // 把接口级 TransferOperator 注册到该接口所有 alt 的所有端点
-                auto *if_op = virtual_handler->get_transfer_operator();
-                for (auto &alt_eps: intf.endpoints) {
-                    for (auto &ep: alt_eps) {
-                        device_op->register_endpoint_operator(ep.address, if_op);
-                    }
+            virtual_handler->set_device_handler(this);
+            // 接口所需的字符串（iInterface、MAC 等）在这里登记进设备字符串池
+            virtual_handler->register_strings(string_pool);
+            // 把接口级 TransferOperator 注册到该接口所有 alt 的所有端点
+            auto *if_op = virtual_handler->get_transfer_operator();
+            for (auto &alt_eps: intf.endpoints) {
+                for (auto &ep: alt_eps) {
+                    device_op->register_endpoint_operator(ep.address, if_op);
                 }
-                virtual_handler->on_setup_interface_handlers();
             }
+            virtual_handler->on_setup_interface_handlers();
         }
     }
 }
@@ -1115,7 +1114,6 @@ void VirtualDeviceHandler::request_set_interface(std::uint16_t alternate_setting
 
 data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                       std::uint32_t *p_status) {
-    std::shared_lock lock(data_mutex);
     data_type desc;
     auto speed = static_cast<UsbSpeed>(handle_device.speed);
     // USB 3.0 §9.6.1：SuperSpeed 下 bMaxPacketSize0 是指数编码，唯一合法值
@@ -1140,7 +1138,6 @@ data_type VirtualDeviceHandler::get_device_descriptor(std::uint16_t language_id,
 
 data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                    std::uint32_t *p_status) {
-    std::shared_lock lock(data_mutex);
     // USB 3.0 §9.2.6.6：bcdUSB >= 0x0210 的设备才要求支持 BOS。更低版本设备
     // 收到 GET_DESCRIPTOR(BOS) 属于对设备不存在的描述符请求，按规范回 STALL
     auto speed = static_cast<UsbSpeed>(handle_device.speed);
@@ -1187,7 +1184,6 @@ data_type VirtualDeviceHandler::get_bos_descriptor(std::uint16_t language_id, st
 
 data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t language_id, std::uint16_t descriptor_length,
                                                              std::uint32_t *p_status) {
-    std::shared_lock lock(data_mutex);
     const auto speed = static_cast<UsbSpeed>(handle_device.speed);
     const bool superspeed = is_superspeed(speed);
     // USB 3.0 §9.6.3 Table 9-15：SuperSpeed 下 bMaxPower 以 8mA 为单位，
@@ -1283,7 +1279,6 @@ data_type VirtualDeviceHandler::get_configuration_descriptor(std::uint16_t langu
 
 data_type VirtualDeviceHandler::get_string_descriptor(std::uint16_t language_id, std::uint8_t descriptor_index,
                                                       std::uint16_t descriptor_length, std::uint32_t *p_status) {
-    std::shared_lock lock(data_mutex);
     // 先尝试虚函数：允许子类处理特殊字符串索引（如 Microsoft OS 0xEE）
     if (auto special = get_special_string_descriptor(descriptor_index)) {
         if (descriptor_length < special->size())
@@ -1348,7 +1343,6 @@ data_type VirtualDeviceHandler::get_device_qualifier_descriptor(std::uint8_t lan
         return {};
     }
     // 返回全速模式下的设备描述信息（bMaxPacketSize0 等与高速相同）
-    std::shared_lock lock(data_mutex);
     // bcdUSB 用 usb_version 的 operator uint16_t() 编码（BCD：major<<8 |
     // minor<<4 | patch），与 device descriptor 一致，不能只拆 minor/major
     // 漏掉 patch。拆成大小端两字节塞进字节数组描述符

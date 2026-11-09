@@ -5,7 +5,6 @@
 #include <initializer_list>
 
 #include "usbipdcpp/Interface.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/HidConstants.h"
 #include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
 
@@ -14,9 +13,8 @@ using namespace usbipdcpp;
 namespace {
 
 struct KeyboardTestEnv {
-    StringPool pool;
     UsbInterface intf = KeyboardHandler::make_interface(0x81);
-    KeyboardHandler handler{intf, pool};
+    KeyboardHandler handler{intf};
 };
 
 bool contains_sequence(const data_type &data, std::initializer_list<std::uint8_t> seq) {

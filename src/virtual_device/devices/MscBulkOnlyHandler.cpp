@@ -38,9 +38,9 @@ std::string wstr_to_ascii(const std::wstring &ws, const std::string &fallback) {
 }
 } // namespace
 
-MscBulkOnlyHandler::MscBulkOnlyHandler(UsbInterface &handle_interface, StringPool &string_pool,
+MscBulkOnlyHandler::MscBulkOnlyHandler(UsbInterface &handle_interface,
                                        std::unique_ptr<StorageBackend> backend, MscConfig config, bool read_only) :
-    VirtualInterfaceHandler(handle_interface, string_pool, std::make_unique<StorageTransferOperator>(this)),
+    VirtualInterfaceHandler(handle_interface, std::make_unique<StorageTransferOperator>(this)),
     backend_(std::move(backend)), read_only_(read_only), config_(std::move(config)) {
 }
 

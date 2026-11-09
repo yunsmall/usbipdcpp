@@ -10,7 +10,6 @@
 #include "test_utils.h"
 
 #include "usbipdcpp/Interface.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/RndisConstants.h"
 #include "usbipdcpp/virtual_device/RndisVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/network_backends/NetworkBackend.h"
@@ -31,8 +30,8 @@ struct StubBackend : NetworkBackend {
 /// 无 backend 的数据接口：记录回调收到的帧，第 2 帧起返回 false
 ///（模拟业务层当场消费不了、要求挂起）
 struct DeferringDataHandler : RndisDataInterfaceHandler {
-    DeferringDataHandler(UsbInterface &intf, StringPool &pool) :
-        RndisDataInterfaceHandler(intf, pool, nullptr, nullptr) {
+    explicit DeferringDataHandler(UsbInterface &intf) :
+        RndisDataInterfaceHandler(intf, nullptr, nullptr) {
     }
 
     bool on_frame_received(data_type &&frame) override {
@@ -51,7 +50,6 @@ const std::array<std::uint8_t, 6> TEST_MAC = {0x02, 0x10, 0x83, 0x00, 0x00, 0x02
 
 // 最小可用的 RNDIS 双接口（通信 + 数据）+ handler
 struct RndisTestEnv {
-    StringPool pool;
     // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
     // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
     GenericTransferOperator op;
@@ -80,7 +78,7 @@ struct RndisTestEnv {
     usbipdcpp::error_code ec;
 
     explicit RndisTestEnv(UsbSpeed speed = UsbSpeed::Full) :
-        comm(comm_intf, pool, TEST_MAC, speed), data(data_intf, pool, &backend, &comm) {
+        comm(comm_intf, TEST_MAC, speed), data(data_intf, &backend, &comm) {
         // 连接失败场景不在本测试范围（on_new_connection 正常路径不报错），
         // 构造函数里不能 ASSERT（非 void 返回），错误留存在 ec 成员
         comm.on_new_connection(stub, ec);
@@ -455,10 +453,9 @@ TEST(TestRndisHandler, OutMultipacketPartialConsumptionSuspendsRemainder) {
     // 无 backend、一次 bulk OUT 聚合两帧且子类拒绝第二帧：第一帧已交给
     // 子类消费，挂起请求里只能留下第二帧的原始消息——否则业务层从
     // take_frame() 重新解析会把第一帧再收一遍（重复投递）
-    StringPool pool;
     GenericTransferOperator op;
     UsbInterface data_intf = RndisDataInterfaceHandler::make_interface(EP_IN, EP_OUT);
-    DeferringDataHandler data(data_intf, pool);
+    DeferringDataHandler data(data_intf);
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     data.on_new_connection(stub, ec);
@@ -624,11 +621,10 @@ struct ProbeBackend : NetworkBackend {
 TEST(TestRndisDataHandler, DestructorClearsBackendCallback) {
     // backend 生命周期可能比 handler 长：handler 析构必须清除回调，否则
     // 后端再发帧会调用捕获已销毁 this 的 std::function（use-after-free）
-    StringPool pool;
     ProbeBackend backend;
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
     {
-        RndisDataInterfaceHandler handler(intf, pool, &backend, nullptr);
+        RndisDataInterfaceHandler handler(intf, &backend, nullptr);
         const std::uint8_t frame[] = {1, 2, 3};
         backend.push_from_network(frame, sizeof(frame));
         EXPECT_EQ(backend.tx_frames(), 1u);

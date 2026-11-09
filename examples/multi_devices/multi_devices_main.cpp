@@ -1,9 +1,10 @@
 #include <iostream>
 
+#include <spdlog/spdlog.h>
+
 #include "../example_utils.h"
 #include "device_factory.h"
 #include "usbipdcpp/Server.h"
-#include "usbipdcpp/utils/StringPool.h"
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("multi_devices", "USB/IP multi-device server");
@@ -17,11 +18,8 @@ int main(int argc, char **argv) {
 
     SPDLOG_INFO("Starting multi-device USB/IP server");
 
-    // 创建字符串池
-    usbipdcpp::StringPool string_pool;
-
     // 创建虚拟设备
-    auto devices = DeviceFactory::create_devices(count, string_pool);
+    auto devices = DeviceFactory::create_devices(count);
 
     // 创建服务器
     usbipdcpp::Server server;

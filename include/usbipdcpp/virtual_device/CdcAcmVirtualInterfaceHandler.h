@@ -104,7 +104,7 @@ class CdcAcmDataInterfaceHandler;
  */
 class USBIPDCPP_API CdcAcmCommunicationInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface);
 
     /**
      * @brief 创建 CDC ACM 通信接口（描述符模板，未绑定 handler）
@@ -249,7 +249,7 @@ protected:
  */
 class USBIPDCPP_API CdcAcmDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit CdcAcmDataInterfaceHandler(UsbInterface &handle_interface);
 
     /**
      * @brief 创建 CDC ACM 数据接口（描述符模板，未绑定 handler）

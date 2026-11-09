@@ -56,8 +56,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::info);
 
-    StringPool string_pool;
-
     // HID Boot 键盘接口：中断 IN 端点（8 字节报告）
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
@@ -78,7 +76,7 @@ int main(int argc, char **argv) {
     // 管道设备没有接口 handler（PipeDeviceHandler 自动管道化所有端点），接口手动定义
     auto device = UsbDevice::make(busid, 0x1234, 0x5691, interfaces, 1, 1, 0, "/usbipdcpp/mock_pipe_hid");
 
-    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    auto pipe = device->with_handler<PipeDeviceHandler>();
     // HID 描述符（0x21）：追加在配置描述符的接口描述符之后，驱动加载必需
     pipe->set_class_specific_descriptor({
             0x09, // bLength

@@ -68,7 +68,7 @@ struct PipeStandardRequestHandler {
  */
 class USBIPDCPP_API PipeDeviceHandler final : public SimpleVirtualDeviceHandler {
 public:
-    PipeDeviceHandler(UsbDevice &handle_device, StringPool &string_pool);
+    explicit PipeDeviceHandler(UsbDevice &handle_device);
     // 内部管道接口 handler 的绑定在 setup_interface_handlers 里完成（见其声明）
 
     // ===== 标准请求行为配置 =====

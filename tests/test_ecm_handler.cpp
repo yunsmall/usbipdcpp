@@ -11,7 +11,6 @@
 #include "test_utils.h"
 
 #include "usbipdcpp/Interface.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/EcmVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/network_backends/NetworkBackend.h"
 
@@ -40,17 +39,16 @@ public:
 
 // 最小可用的 ECM 数据接口（CDC Data 类）+ handler
 struct EcmTestEnv {
-    StringPool pool;
     // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
     // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
     GenericTransferOperator op;
     StubBackend backend;
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
-    EcmDataInterfaceHandler handler{intf, pool, &backend};
+    EcmDataInterfaceHandler handler{intf, &backend};
     CaptureResponder stub;
     usbipdcpp::error_code ec;
 
-    EcmTestEnv() : handler(intf, pool, &backend) {
+    EcmTestEnv() : handler(intf, &backend) {
         handler.on_new_connection(stub, ec);
     }
 };
@@ -84,10 +82,9 @@ TEST(TestEcmDataHandler, OutFrameDeliveredToBackendAndAcked) {
 TEST(TestEcmDataHandler, OutFrameHangsUntilTakeFrame) {
     // 无消费方（子类 on_frame_received 返回 false）：OUT 挂起（NAK 背压），
     // 业务线程 take_frame 取走时应答
-    StringPool pool;
     GenericTransferOperator op; // 先于 stub 声明（TransferHandle 析构要用它）
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
-    HangingEcmHandler handler(intf, pool, nullptr);
+    HangingEcmHandler handler(intf, nullptr);
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -172,10 +169,9 @@ TEST(TestEcmDataHandler, UnlinkPendingInRequest) {
 
 TEST(TestEcmDataHandler, UnlinkPendingOutRequest) {
     // 挂起的 OUT 请求（无消费方）被 UNLINK 取消：回 RET_UNLINK(-ECONNRESET)
-    StringPool pool;
     GenericTransferOperator op; // 先于 stub 声明（TransferHandle 析构要用它）
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
-    HangingEcmHandler handler(intf, pool, nullptr);
+    HangingEcmHandler handler(intf, nullptr);
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -276,11 +272,10 @@ struct ProbeBackend : NetworkBackend {
 TEST(TestEcmDataHandler, DestructorClearsBackendCallback) {
     // backend 生命周期可能比 handler 长：handler 析构必须清除回调，否则
     // 后端再发帧会调用捕获已销毁 this 的 std::function（use-after-free）
-    StringPool pool;
     ProbeBackend backend;
     UsbInterface intf{.interface_class = 0x0A, .interface_subclass = 0x00, .interface_protocol = 0x00};
     {
-        EcmDataInterfaceHandler handler(intf, pool, &backend);
+        EcmDataInterfaceHandler handler(intf, &backend);
         const std::uint8_t frame[] = {1, 2, 3};
         backend.push_from_network(frame, sizeof(frame));
         EXPECT_EQ(backend.tx_frames(), 1u);

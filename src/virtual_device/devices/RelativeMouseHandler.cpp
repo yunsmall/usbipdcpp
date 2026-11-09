@@ -4,8 +4,8 @@
 
 namespace usbipdcpp {
 
-RelativeMouseHandler::RelativeMouseHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool) {
+RelativeMouseHandler::RelativeMouseHandler(UsbInterface &handle_interface) :
+    HidVirtualInterfaceHandler(handle_interface) {
     // 相对坐标鼠标: 6 字节报告，5 按钮 + X/Y 16位相对移动 + 滚轮
     // [0] 按钮 bit0-4 + 3 位填充, [1-2] X LE, [3-4] Y LE, [5] 滚轮
     report_descriptor = {

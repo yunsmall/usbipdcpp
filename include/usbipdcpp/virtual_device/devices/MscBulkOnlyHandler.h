@@ -29,8 +29,8 @@ struct MscConfig {
  * 等异步产生数据的设备，需要队列暂存 IN 请求等待数据就绪）。 */
 class USBIPDCPP_API MscBulkOnlyHandler : public VirtualInterfaceHandler {
 public:
-    MscBulkOnlyHandler(UsbInterface &handle_interface, StringPool &string_pool, std::unique_ptr<StorageBackend> backend,
-                       MscConfig config = {}, bool read_only = false);
+    explicit MscBulkOnlyHandler(UsbInterface &handle_interface, std::unique_ptr<StorageBackend> backend,
+                                MscConfig config = {}, bool read_only = false);
 
     /**
      * @brief 创建 USB Mass Storage 批量传输接口（描述符模板，未绑定 handler）

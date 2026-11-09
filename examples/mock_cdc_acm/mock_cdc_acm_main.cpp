@@ -15,8 +15,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::debug);
 
-    StringPool string_pool;
-
     // CDC ACM 需要两个接口：通信接口和数据接口（make_interface 只返回描述符模板，
     // 设备创建后绑定示例内的 Mock handler）
     std::vector<UsbInterface> interfaces = {
@@ -30,9 +28,9 @@ int main(int argc, char **argv) {
     // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
     mock_cdc_acm->assign_interface_numbers();
     // 设置接口处理器（with_handler 返回具体类型的 shared_ptr，直接用，无需 cast）
-    auto comm_handler = mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>(string_pool);
-    auto data_handler = mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>(string_pool);
-    mock_cdc_acm->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    auto comm_handler = mock_cdc_acm->interfaces[0].with_handler<MockCdcAcmCommunicationInterfaceHandler>();
+    auto data_handler = mock_cdc_acm->interfaces[1].with_handler<MockCdcAcmDataInterfaceHandler>();
+    mock_cdc_acm->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     // 关联通信接口和数据接口处理器（描述符引用数据接口号 + 数据面状态查询）
     comm_handler->set_data_handler(data_handler.get());

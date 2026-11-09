@@ -17,7 +17,6 @@
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
 
@@ -189,8 +188,7 @@ public:
 };
 
 // 构造测试用虚拟键盘；removed_flag 非空时设备级 handler 可被标记"已物理移除"
-std::shared_ptr<UsbDevice> make_keyboard(StringPool &string_pool,
-                                         std::shared_ptr<std::atomic_bool> removed_flag = nullptr,
+std::shared_ptr<UsbDevice> make_keyboard(std::shared_ptr<std::atomic_bool> removed_flag = nullptr,
                                          const std::string &busid = "1-1") {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
@@ -225,14 +223,14 @@ std::shared_ptr<UsbDevice> make_keyboard(StringPool &string_pool,
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>();
     if (removed_flag) {
-        auto handler = mock_keyboard->with_handler<ToggleRemovedDeviceHandler>(string_pool);
+        auto handler = mock_keyboard->with_handler<ToggleRemovedDeviceHandler>();
         handler->removed_flag = removed_flag;
         handler->setup_interface_handlers();
     }
     else {
-        mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+        mock_keyboard->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
     }
     return mock_keyboard;
 }
@@ -242,11 +240,10 @@ TEST(TestServerObserver, SessionAndDeviceEventsOnClientDisconnect) {
     // 完整一轮：连接 → 导入 → 断开。事件顺序：started 最先、ended 最后，
     // attached / released 居中（导入成功与客户端断开各一次）
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -289,12 +286,11 @@ TEST(TestServerObserver, SessionAndDeviceEventsOnClientDisconnect) {
 TEST(TestServerObserver, DeviceReleasedReasonDeviceRemoved) {
     // 传输期间设备被物理拔出，客户端断开释放时归因 DeviceRemoved
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
     auto removed_flag = std::make_shared<std::atomic_bool>(false);
-    server.add_device(make_keyboard(string_pool, removed_flag));
+    server.add_device(make_keyboard(removed_flag));
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -318,11 +314,10 @@ TEST(TestServerObserver, DeviceReleasedReasonDeviceRemoved) {
 TEST(TestServerObserver, DeviceReleasedReasonServerStopped) {
     // 客户端还连着直接 stop()：设备释放归因 ServerStopped
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -345,12 +340,11 @@ TEST(TestServerObserver, DeviceReleasedReasonServerStopped) {
 
 TEST(TestServerObserver, MultipleObserversAllNotified) {
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer_a;
     RecordingObserver observer_b;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer_a);
     server.add_observer(&observer_b);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
@@ -375,11 +369,10 @@ TEST(TestServerObserver, MultipleObserversAllNotified) {
 TEST(TestServerObserver, AddObserverIsIdempotent) {
     // 同一指针注册两次只保留一个，每个事件仍只通知一次
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
@@ -399,12 +392,11 @@ TEST(TestServerObserver, AddObserverIsIdempotent) {
 TEST(TestServerObserver, RemovedObserverStopsReceiving) {
     // 注销后不再收到任何事件；未注销的观察者不受影响
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer_a;
     RecordingObserver observer_b;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer_a);
     server.add_observer(&observer_b);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
@@ -431,12 +423,11 @@ TEST(TestServerObserver, RemovedObserverStopsReceiving) {
 TEST(TestServerObserver, CallbackExceptionDoesNotAffectServer) {
     // 抛异常的观察者既不影响服务器正常服务，也不影响其他观察者的通知
     asio::io_context io;
-    StringPool string_pool;
     ThrowingObserver thrower;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&thrower);
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
@@ -468,12 +459,11 @@ TEST(TestServerObserver, CallbackExceptionDoesNotAffectServer) {
 TEST(TestServerObserver, CallbackCanQueryServerWithoutDeadlock) {
     // 通知在锁外发出：回调里可以调 Server 的加锁接口（锁内通知会死锁）
     asio::io_context io;
-    StringPool string_pool;
     QueryingObserver observer;
     Server server;
     ServerStopper stopper(server);
     observer.server = &server;
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -493,12 +483,11 @@ TEST(TestServerObserver, CallbackCanQueryServerWithoutDeadlock) {
 TEST(TestServerObserver, CallbackCanRemoveItself) {
     // 回调里注销自己：通知遍历用快照，改注册表不影响本次遍历
     asio::io_context io;
-    StringPool string_pool;
     SelfRemovingObserver observer;
     Server server;
     ServerStopper stopper(server);
     observer.server = &server;
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -524,11 +513,10 @@ TEST(TestServerObserver, ObserverLimitIgnoresExtraRegistrations) {
     // 已有观察者不受影响
     constexpr std::size_t kMaxObservers = 8;
     asio::io_context io;
-    StringPool string_pool;
     std::vector<std::unique_ptr<RecordingObserver>> observers;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     for (std::size_t i = 0; i < kMaxObservers + 1; ++i) {
         observers.push_back(std::make_unique<RecordingObserver>());
         server.add_observer(observers.back().get());
@@ -557,11 +545,10 @@ TEST(TestServerObserver, NoDeviceEventsWhenNeverImported) {
     // 可能的会话收尾，不断言会话事件
     for (bool use_rst: {false, true}) {
         asio::io_context io;
-        StringPool string_pool;
         RecordingObserver observer;
         Server server;
         ServerStopper stopper(server);
-        server.add_device(make_keyboard(string_pool));
+        server.add_device(make_keyboard());
         server.add_observer(&observer);
         ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -591,11 +578,10 @@ TEST(TestServerObserver, FailedImportEmitsNoDeviceEvents) {
     // 导入不存在的 busid 失败（NoDev）：不发 attached；会话断开时也没有过
     // 导入，不发 released
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -616,11 +602,10 @@ TEST(TestServerObserver, FailedImportEmitsNoDeviceEvents) {
 TEST(TestServerObserver, NullObserverIsIgnored) {
     // 空指针注册/注销无害，不影响已有观察者
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(nullptr);
     server.remove_observer(nullptr);
     server.add_observer(&observer);
@@ -642,11 +627,10 @@ TEST(TestServerObserver, NullObserverIsIgnored) {
 TEST(TestServerObserver, ServerRestartKeepsObservers) {
     // 观察者跨 start/stop 保持注册；stop 时若设备未被导入则不发设备事件
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -680,13 +664,12 @@ TEST(TestServerObserver, ConcurrentSessionsAllNotified) {
     // 3 个客户端各自导入一台设备并发活动：事件按会话/设备各自配对，
     // 会话 id 互不相同、每台设备各自 attached/released 一次
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool, nullptr, "1-1"));
-    server.add_device(make_keyboard(string_pool, nullptr, "1-2"));
-    server.add_device(make_keyboard(string_pool, nullptr, "1-3"));
+    server.add_device(make_keyboard(nullptr, "1-1"));
+    server.add_device(make_keyboard(nullptr, "1-2"));
+    server.add_device(make_keyboard(nullptr, "1-3"));
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -727,13 +710,12 @@ TEST(TestServerObserver, ReRegisterAfterRemoveWithinLimit) {
     // 不再收到事件（末位顶替不能顶丢其他观察者）
     constexpr std::size_t kMaxObservers = 8;
     asio::io_context io;
-    StringPool string_pool;
     std::vector<std::unique_ptr<RecordingObserver>> observers;
     RecordingObserver rejected;
     RecordingObserver newcomer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     for (std::size_t i = 0; i < kMaxObservers; ++i) {
         observers.push_back(std::make_unique<RecordingObserver>());
         server.add_observer(observers.back().get());
@@ -766,11 +748,10 @@ TEST(TestServerObserver, DisconnectAndStopRaceDoesNotDuplicateEvents) {
     // 客户端断开后立刻 stop（会话收尾与 stop 并发）：started/attached/
     // released/ended 每个都恰好一次（remove_session 幂等 + 释放只发一次）
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&observer);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -803,14 +784,13 @@ TEST(TestServerObserver, CallbackCanAddObserver) {
     };
 
     asio::io_context io;
-    StringPool string_pool;
     AddingObserver adder;
     RecordingObserver latecomer;
     Server server;
     ServerStopper stopper(server);
     adder.server = &server;
     adder.to_add = &latecomer;
-    server.add_device(make_keyboard(string_pool));
+    server.add_device(make_keyboard());
     server.add_observer(&adder);
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
@@ -831,14 +811,13 @@ TEST(TestServerObserver, CallbackCanAddObserver) {
 TEST(TestServerObserver, DeviceAddedNotifiedOnAddDevice) {
     // 设备进入可用列表（用户 add_device）触发 on_device_added，入参为 busid；
     // 通知是同步的（锁内快照→锁外同步调用），add_device 返回时事件已记录
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
     server.add_observer(&observer);
 
-    server.add_device(make_keyboard(string_pool, nullptr, "2-1"));
-    server.add_device(make_keyboard(string_pool, nullptr, "2-2"));
+    server.add_device(make_keyboard(nullptr, "2-1"));
+    server.add_device(make_keyboard(nullptr, "2-2"));
 
     const auto events = observer.snapshot();
     EXPECT_EQ(count_events(events, "added", "2-1"), 1u);
@@ -856,13 +835,12 @@ TEST(TestServerObserver, DetachAvailableDeviceNotifiesReleasedWithDeviceRemoved)
     // 它当时在哪个列表。真实触发路径在 LibusbServer 的拔出/解绑处理里
     // （handle_device_left / notify_device_removed / try_remove_dead_device /
     // unbind_*），需要真机；这里验证 Server 接口本身的契约
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
     server.add_observer(&observer);
 
-    const auto device = make_keyboard(string_pool);
+    const auto device = make_keyboard();
     EXPECT_EQ(server.add_device(device), AddDeviceStatus::Added);
 
     // 摘除返回被摘除的设备（供后端做 close/unref 等清理），并发出通知
@@ -892,14 +870,13 @@ TEST(TestServerObserver, DetachAvailableDeviceNotifiesReleasedWithDeviceRemoved)
 TEST(TestServerObserver, AddDeviceRejectsDuplicateBusid) {
     // busid 唯一是 Server 内部依赖的不变量：重复添加被拒绝，且不发 added 通知
     asio::io_context io;
-    StringPool string_pool;
     RecordingObserver observer;
     Server server;
     ServerStopper stopper(server);
     server.add_observer(&observer);
 
-    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::Added);
-    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::AlreadyBound);
+    EXPECT_EQ(server.add_device(make_keyboard(nullptr, "2-1")), AddDeviceStatus::Added);
+    EXPECT_EQ(server.add_device(make_keyboard(nullptr, "2-1")), AddDeviceStatus::AlreadyBound);
     EXPECT_EQ(observer.count("added"), 1u) << "被拒绝的添加不得发通知";
 
     // 设备正被会话占用时，同 busid 添加返回 InUse
@@ -907,7 +884,7 @@ TEST(TestServerObserver, AddDeviceRejectsDuplicateBusid) {
     asio::ip::tcp::socket client(io);
     ASSERT_TRUE(connect_with_retry(client, server.endpoint()));
     ASSERT_EQ(import_device(client, "2-1"), 0u);
-    EXPECT_EQ(server.add_device(make_keyboard(string_pool, nullptr, "2-1")), AddDeviceStatus::InUse);
+    EXPECT_EQ(server.add_device(make_keyboard(nullptr, "2-1")), AddDeviceStatus::InUse);
     EXPECT_EQ(observer.count("added"), 1u);
     client.close();
 }

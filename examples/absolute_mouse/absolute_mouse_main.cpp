@@ -44,13 +44,11 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::debug);
 
-    StringPool string_pool;
-
     auto mouse_device = UsbDevice::make(busid, 0x1234, 0x5680,
                                         {AbsoluteMouseHandler::make_interface(0x81)},
                                         1, 1, 0, "/usbipdcpp/absolute_mouse");
-    mouse_device->interfaces[0].with_handler<AbsoluteMouseHandler>(string_pool);
-    mouse_device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    mouse_device->interfaces[0].with_handler<AbsoluteMouseHandler>();
+    mouse_device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     auto mouse = std::static_pointer_cast<AbsoluteMouseHandler>(mouse_device->interfaces[0].handler);
 

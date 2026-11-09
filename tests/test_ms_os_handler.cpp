@@ -14,7 +14,6 @@
 
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/constant.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/MSOSSimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/MsOsConstants.h"
 #include "usbipdcpp/virtual_device/RndisMsOsDeviceHandler.h"
@@ -36,7 +35,6 @@ public:
 struct MsOsFixture {
     // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）
     GenericTransferOperator op;
-    StringPool pool;
     CaptureResponder stub;
     std::shared_ptr<UsbDevice> device;
     TestableMsOsHandler *dev = nullptr;
@@ -50,7 +48,7 @@ struct MsOsFixture {
                  .endpoints = {}}};
         device = UsbDevice::make("1-1", 0x1234, 0x56E2, std::move(interfaces), 1, 1,
                                  static_cast<std::uint8_t>(ClassCode::CDC));
-        dev = device->with_handler<TestableMsOsHandler>(pool).get();
+        dev = device->with_handler<TestableMsOsHandler>().get();
         dev->setup_interface_handlers();
         // 绑定响应器：接口 handler 没挂不碍事（on_new_connection 跳过无
         // handler 的接口），失败场景不在本测试范围，错误留存在 ec 成员
@@ -257,7 +255,7 @@ TEST(TestMsOsHandler, RndisDeviceHandlerPresets) {
     // RNDIS 设备装配一行搞定；完整 Compatible ID 响应字节由
     // CompatIdIncludesSubCompatibleId（基类手配同值）覆盖
     MsOsFixture fx;
-    RndisMsOsDeviceHandler rndis{*fx.device, fx.pool};
+    RndisMsOsDeviceHandler rndis{*fx.device};
     EXPECT_EQ(rndis.get_ms_os_compatible_id(), "RNDIS");
     EXPECT_EQ(rndis.get_ms_os_sub_compatible_id(), "5162001");
     EXPECT_FALSE(CanCallSetCompatibleId<RndisMsOsDeviceHandler>::value);

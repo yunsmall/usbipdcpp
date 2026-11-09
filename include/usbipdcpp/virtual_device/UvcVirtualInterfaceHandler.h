@@ -52,7 +52,7 @@ class UvcVideoStreamingHandler;
 /// VideoControl 接口处理器 — 处理 PU 属性查询/设置 + 与 VS 接口协同
 class USBIPDCPP_API UvcVideoControlHandler : public VirtualInterfaceHandler {
 public:
-    explicit UvcVideoControlHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit UvcVideoControlHandler(UsbInterface &handle_interface);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
     [[nodiscard]] data_type get_class_specific_endpoint_descriptor(const UsbEndpoint &ep) override;
@@ -67,6 +67,7 @@ public:
                                    std::uint32_t transfer_buffer_length, TransferHandle transfer,
                                    std::error_code &ec) override;
     void on_setup_interface_handlers() override;
+    void register_strings(StringPool &pool) override;
     void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;
     bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
@@ -96,7 +97,7 @@ private:
 /// VideoStreaming 接口处理器 — PROBE/COMMIT + ISO 流推送
 class USBIPDCPP_API UvcVideoStreamingHandler : public VirtualInterfaceHandler {
 public:
-    UvcVideoStreamingHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    UvcVideoStreamingHandler(UsbInterface &handle_interface,
                              std::unique_ptr<VideoSource> source);
 
     [[nodiscard]] data_type get_class_specific_descriptor() override;
@@ -114,6 +115,7 @@ public:
     void on_disconnection(error_code &ec) override;
     void request_set_interface(std::uint16_t alternate_setting, std::uint32_t *p_status) override;
     std::uint8_t request_get_interface(std::uint32_t *p_status) override;
+    void register_strings(StringPool &pool) override;
     void on_setup_interface_handlers() override;
 
     VideoSource *get_source() {
@@ -165,12 +167,11 @@ public:
      *        device->interfaces 中查找（IAD 要求功能接口编号连续，与数组
      *        下标无关——复合设备里 UVC 接口可能不在 interfaces 开头）。
      *        设备里其他接口的 handler 不受影响（只绑定 VC/VS 两个接口）
-     * @param string_pool 字符串池
      * @param source 视频源
      * @return 出错时的错误码（如 VC/VS 接口缺失），成功返回默认构造（无错误）
      */
     static std::error_code setup(std::shared_ptr<UsbDevice> device, std::uint8_t vc_interface_number,
-                                 StringPool &string_pool, std::unique_ptr<VideoSource> source);
+                                 std::unique_ptr<VideoSource> source);
 };
 
 } // namespace usbipdcpp

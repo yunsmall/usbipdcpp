@@ -34,9 +34,8 @@ const usbipdcpp::data_type SimpleHidInterfaceHandler::report_descriptor_ = {
         0xC0, //       End Collection (Application)
 };
 
-SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,
-                                                     usbipdcpp::StringPool &string_pool) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool) {
+SimpleHidInterfaceHandler::SimpleHidInterfaceHandler(usbipdcpp::UsbInterface &handle_interface) :
+    HidVirtualInterfaceHandler(handle_interface) {
 }
 
 std::uint16_t SimpleHidInterfaceHandler::get_report_descriptor_size() {
@@ -48,6 +47,6 @@ usbipdcpp::data_type SimpleHidInterfaceHandler::get_report_descriptor() {
 }
 
 // SimpleDeviceHandler 实现
-SimpleDeviceHandler::SimpleDeviceHandler(usbipdcpp::UsbDevice &handle_device, usbipdcpp::StringPool &string_pool) :
-    SimpleVirtualDeviceHandler(handle_device, string_pool) {
+SimpleDeviceHandler::SimpleDeviceHandler(usbipdcpp::UsbDevice &handle_device) :
+    SimpleVirtualDeviceHandler(handle_device) {
 }

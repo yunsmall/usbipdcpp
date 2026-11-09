@@ -36,12 +36,11 @@ class USBIPDCPP_API RndisCommunicationInterfaceHandler : public VirtualInterface
 public:
     /**
      * @param handle_interface 本接口
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param mac_address 设备 MAC 地址（OID_802_3_*_ADDRESS 查询返回）
      * @param speed 设备速度（OID_GEN_LINK_SPEED 按此上报，100bps 单位，对齐
      *        内核 f_rndis.c 的 bitrate()）
      */
-    RndisCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    RndisCommunicationInterfaceHandler(UsbInterface &handle_interface,
                                        std::array<std::uint8_t, 6> mac_address, UsbSpeed speed);
 
     /**
@@ -143,13 +142,12 @@ class USBIPDCPP_API RndisDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
     /**
      * @param handle_interface 本接口
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param backend 网络后端（可空）。非空时主机发来的帧解析剥头后直接交给
      *        backend 消费并立即应答；为空走挂起模式（on_frame_received /
      *        take_frame，取的是原始 RNDIS 消息）
      * @param comm 通信接口处理器（RNDIS 状态机归属方），需活得比本 handler 久
      */
-    RndisDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool, NetworkBackend *backend,
+    RndisDataInterfaceHandler(UsbInterface &handle_interface, NetworkBackend *backend,
                               RndisCommunicationInterfaceHandler *comm);
 
     /**

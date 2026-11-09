@@ -50,7 +50,7 @@ public:
     static constexpr std::uint8_t REPORT_ID_KEYBOARD = 1;
     static constexpr std::uint8_t REPORT_ID_CONSUMER = 2;
 
-    KeyboardHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit KeyboardHandler(UsbInterface &handle_interface);
     ~KeyboardHandler() override = default;
 
     /**

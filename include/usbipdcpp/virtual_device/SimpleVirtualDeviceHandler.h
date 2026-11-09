@@ -5,9 +5,9 @@
 namespace usbipdcpp {
 class USBIPDCPP_API SimpleVirtualDeviceHandler : public VirtualDeviceHandler {
 public:
-    SimpleVirtualDeviceHandler(UsbDevice &handle_device, StringPool &string_pool,
+    SimpleVirtualDeviceHandler(UsbDevice &handle_device,
                                const Version &usb_version = {2, 0, 0}) :
-        VirtualDeviceHandler(handle_device, string_pool, usb_version) {
+        VirtualDeviceHandler(handle_device, usb_version) {
     }
 
 protected:

@@ -88,8 +88,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     // 音频汇：--output 指定文件时写入 WAV 文件，否则本机播放（miniaudio）；
     // 无 miniaudio 且未指定文件时退化为丢弃计数（软失败，设备仍可枚举）
     std::unique_ptr<AudioSink> sink;
@@ -182,7 +180,7 @@ int main(int argc, char **argv) {
 
     // UacDeviceHelper 创建 AC/AS 汇 handler 并注册 + 设置描述符
     UacDeviceConfig config{.channels = static_cast<std::uint8_t>(channels)};
-    if (auto ec = UacDeviceHelper::setup_speaker(device, 0, string_pool, std::move(sink), config); ec) {
+    if (auto ec = UacDeviceHelper::setup_speaker(device, 0, std::move(sink), config); ec) {
         SPDLOG_ERROR("UAC 功能装配失败：{}", ec.message());
         return 1;
     }

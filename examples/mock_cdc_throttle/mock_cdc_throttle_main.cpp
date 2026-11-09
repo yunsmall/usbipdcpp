@@ -31,8 +31,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::debug);
 
-    StringPool string_pool;
-
     // CDC ACM 需要两个接口：通信接口和数据接口（与 mock_cdc_acm 一致的描述符）。
     // 数据接口用限流工厂：窗口内最多收 limit_bytes 字节，超出后 NAK window_ms
     std::vector<UsbInterface> interfaces = {
@@ -45,9 +43,9 @@ int main(int argc, char **argv) {
                                   1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_cdc_throttle");
     // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
     device->assign_interface_numbers();
-    device->interfaces[0].with_handler<CdcAcmCommunicationInterfaceHandler>(string_pool);
-    device->interfaces[1].with_handler<ThrottleCdcAcmDataInterfaceHandler>(string_pool, limit_bytes, window_ms);
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->interfaces[0].with_handler<CdcAcmCommunicationInterfaceHandler>();
+    device->interfaces[1].with_handler<ThrottleCdcAcmDataInterfaceHandler>(limit_bytes, window_ms);
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     // 关联通信接口和数据接口处理器
     auto &comm_handler =

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 #include "usbipdcpp/Endpoint.h"
@@ -58,6 +59,8 @@ struct USBIPDCPP_API UsbInterface {
      *       设备创建完成后（接口已入 device->interfaces、地址稳定）调用
      *       device->interfaces[i].with_handler<T>(...)；make_interface 等工厂
      *       函数内部禁止调用（见 VirtualInterfaceHandler 类文档）
+     * @note 一个接口只在装配时绑定一次 handler，不支持替换：旧 handler 已登记的
+     *       字符串索引和端点路由无法收回，重复绑定会让两者同时留在设备里
      */
     template<typename T, typename... Args>
     std::shared_ptr<T> with_handler(Args &&...args) {

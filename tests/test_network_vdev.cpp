@@ -12,7 +12,6 @@
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/network.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
 
@@ -21,8 +20,7 @@ using namespace usbipdcpp::test;
 
 namespace {
 // 构造一个虚拟键盘设备（与 examples/mock_keyboard 相同的构造方式）。
-// string_pool 必须由调用方持有且生命周期长于设备（handler 内部保存其引用）
-std::shared_ptr<UsbDevice> make_mock_keyboard(StringPool &string_pool) {
+std::shared_ptr<UsbDevice> make_mock_keyboard() {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
@@ -56,8 +54,8 @@ std::shared_ptr<UsbDevice> make_mock_keyboard(StringPool &string_pool) {
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
-    auto device_handler = mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>();
+    auto device_handler = mock_keyboard->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
     return mock_keyboard;
 }
@@ -70,10 +68,8 @@ TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
     // 线程 join 后 stop() 才返回，保证之后析构 Server 时没有线程还在访问它
     asio::io_context io;
 
-    // string_pool 必须先于 server 声明（后于 server 析构），handler 保存其引用
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
     for (int round = 0; round < 2; round++) {
@@ -168,9 +164,8 @@ TEST(TestNetworkVdev, ClientDisconnectsRightAfterImportRequest) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     {
@@ -208,9 +203,8 @@ TEST(TestNetworkVdev, ClientDisconnectsAfterSuccessfulImport) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     for (int round = 0; round < 3; round++) {
         ASSERT_FALSE(server.start(ep));
@@ -231,9 +225,8 @@ TEST(TestNetworkVdev, ClientRstDuringTransfer) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     {
@@ -263,9 +256,8 @@ TEST(TestNetworkVdev, TwoClientsContendForSameDevice) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
 
@@ -320,9 +312,8 @@ TEST(TestNetworkVdev, StopRightAfterImportRequest) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     asio::ip::tcp::socket client(io);
@@ -360,9 +351,8 @@ TEST(TestNetworkVdev, ClientDisconnectsDuringUrbTransfer) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     {
@@ -409,9 +399,8 @@ TEST(TestNetworkVdev, ImportNonexistentDevice) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     {
@@ -442,9 +431,8 @@ TEST(TestNetworkVdev, ClientReconnectLoop) {
     asio::io_context io;
     asio::ip::tcp::endpoint ep(asio::ip::address_v4::loopback(), 0);
 
-    StringPool string_pool;
     usbipdcpp::Server server;
-    server.add_device(make_mock_keyboard(string_pool));
+    server.add_device(make_mock_keyboard());
 
     ASSERT_FALSE(server.start(ep));
     for (int round = 0; round < 10; round++) {

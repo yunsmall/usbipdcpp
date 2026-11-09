@@ -15,7 +15,6 @@
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
@@ -70,16 +69,15 @@ std::shared_ptr<UsbDevice> make_mic_device_shell() {
     return device;
 }
 
-MicFixture make_mic_device_with(StringPool &string_pool, std::unique_ptr<AudioSource> source) {
+MicFixture make_mic_device_with(std::unique_ptr<AudioSource> source) {
     auto device = make_mic_device_shell();
-    EXPECT_FALSE(UacDeviceHelper::setup_microphone(device, 0, string_pool, std::move(source)));
+    EXPECT_FALSE(UacDeviceHelper::setup_microphone(device, 0, std::move(source)));
     auto *dh = dynamic_cast<VirtualDeviceHandler *>(device->handler.get());
     return {device, dh, {}, device->interfaces[1].endpoints[1][0]};
 }
 
-MicFixture make_mic_device(StringPool &string_pool) {
-    return make_mic_device_with(string_pool,
-                                std::make_unique<SineWaveSource>(440, std::vector<std::uint32_t>{48000}, 1, 1.0));
+MicFixture make_mic_device() {
+    return make_mic_device_with(std::make_unique<SineWaveSource>(440, std::vector<std::uint32_t>{48000}, 1, 1.0));
 }
 
 /// 所有采样都为固定值的音频源：验证音量缩放的数值结果
@@ -119,8 +117,7 @@ struct ConstantSource : AudioSource {
 TEST(TestUacMicrophoneStream, FullSpeedPacketSizeFollowsBInterval) {
     // 全速 bInterval=4 → 每 4ms 一包；48kHz 单声道 16bit 每包 192 帧 = 384 字节。
     // 固定按 1000 包/秒算时只填 96 字节，实际送流速率只有标称的 1/4
-    StringPool string_pool;
-    auto fx = make_mic_device(string_pool);
+    auto fx = make_mic_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -156,8 +153,7 @@ TEST(TestUacMicrophoneStream, FullSpeedPacketSizeFollowsBInterval) {
 TEST(TestUacMicrophoneStream, VolumeControlScalesPcm) {
     // AC Feature Unit 音量（SET_CUR(FU_VOLUME)）作用到麦克风送流：每个 16 位
     // 采样按 Q16 增益缩放（与扬声器收流的处理对称）
-    StringPool string_pool;
-    auto fx = make_mic_device_with(string_pool, std::make_unique<ConstantSource>(1000));
+    auto fx = make_mic_device_with(std::make_unique<ConstantSource>(1000));
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fx.dh->on_new_connection(stub, ec);
@@ -237,16 +233,15 @@ public:
 TEST(TestUacMicrophoneStream, SetupRejectsForeignDeviceHandler) {
     // 设备已绑定其它类型的 handler 时，UAC 装配必须报参数错误：
     // dynamic_pointer_cast 得到空指针后直接调用会崩溃
-    StringPool string_pool;
     auto device = make_mic_device_shell();
     device->handler = std::make_shared<ForeignDeviceHandler>(*device);
 
-    auto err = UacDeviceHelper::setup_microphone(device, 0, string_pool, std::make_unique<ConstantSource>(0));
+    auto err = UacDeviceHelper::setup_microphone(device, 0, std::make_unique<ConstantSource>(0));
     EXPECT_EQ(err, make_error_code(ErrorType::INVALID_ARG));
     // 失败发生在装配任何接口之前：不能留下半装配状态
     EXPECT_EQ(device->interfaces[0].handler, nullptr);
     EXPECT_EQ(device->interfaces[1].handler, nullptr);
 
-    auto err_speaker = UacDeviceHelper::setup_speaker(device, 0, string_pool, nullptr);
+    auto err_speaker = UacDeviceHelper::setup_speaker(device, 0, nullptr);
     EXPECT_EQ(err_speaker, make_error_code(ErrorType::INVALID_ARG));
 }

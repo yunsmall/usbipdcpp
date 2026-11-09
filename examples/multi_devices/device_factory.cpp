@@ -6,8 +6,7 @@
 
 #include "usbipdcpp/virtual_device/devices/RelativeMouseHandler.h"
 
-std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int index,
-                                                                          usbipdcpp::StringPool &string_pool) {
+std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int index) {
     // 接口描述与 RelativeMouseHandler 相同（HID 03/00/00 + 中断 IN 8/10），复用其工厂建接口
     std::vector<usbipdcpp::UsbInterface> interfaces = {
             usbipdcpp::RelativeMouseHandler::make_interface(0x81),
@@ -19,10 +18,10 @@ std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int in
                                              1, static_cast<std::uint32_t>(index), 0, generate_path(index));
 
     // 为接口设置示例自己的处理器（覆盖描述符模板语义）
-    device->interfaces[0].with_handler<SimpleHidInterfaceHandler>(string_pool);
+    device->interfaces[0].with_handler<SimpleHidInterfaceHandler>();
 
     // 为设备设置处理器
-    auto device_handler = device->with_handler<SimpleDeviceHandler>(string_pool);
+    auto device_handler = device->with_handler<SimpleDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     SPDLOG_INFO("Created device {}: VID={:04x} PID={:04x} busid={}", index, generate_vendor_id(index),
@@ -31,13 +30,12 @@ std::shared_ptr<usbipdcpp::UsbDevice> DeviceFactory::create_simple_device(int in
     return device;
 }
 
-std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> DeviceFactory::create_devices(int count,
-                                                                                 usbipdcpp::StringPool &string_pool) {
+std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> DeviceFactory::create_devices(int count) {
     std::vector<std::shared_ptr<usbipdcpp::UsbDevice>> devices;
     devices.reserve(count);
 
     for (int i = 1; i <= count; ++i) {
-        devices.push_back(create_simple_device(i, string_pool));
+        devices.push_back(create_simple_device(i));
     }
 
     SPDLOG_INFO("Created {} virtual devices", count);

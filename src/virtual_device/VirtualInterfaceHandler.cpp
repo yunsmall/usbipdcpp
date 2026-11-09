@@ -3,6 +3,8 @@
 #include "usbipdcpp/Session.h"
 #include "usbipdcpp/SetupPacket.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/utils/StringPool.h"
+#include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
 
 using namespace usbipdcpp;
 
@@ -31,6 +33,41 @@ const UsbEndpoint *find_haltable_endpoint(UsbInterface &interface, std::uint8_t 
 }
 
 } // namespace
+
+void VirtualInterfaceHandler::set_device_handler(VirtualDeviceHandler *handler) {
+    device_handler = handler;
+}
+
+void VirtualInterfaceHandler::register_strings(StringPool &pool) {
+    string_pool = &pool;
+    // 索引 0 保留给 Language ID；0 也表示还没登记，重复 setup 不重复占索引
+    if (string_interface == 0) {
+        string_interface = pool.new_string(interface_string_to_register());
+    }
+}
+
+StringPool &VirtualInterfaceHandler::get_string_pool() const {
+    return *string_pool;
+}
+
+std::wstring VirtualInterfaceHandler::get_string_interface() const {
+    if (!string_pool || string_interface == 0) {
+        return interface_string_to_register();
+    }
+    if (auto value = get_string_pool().get_string(string_interface)) {
+        return *value;
+    }
+    return interface_string_to_register();
+}
+
+void VirtualInterfaceHandler::sync_string_interface_from(const VirtualInterfaceHandler &other) {
+    // 只复制索引，不动任何一张池：调用方是同一设备的接口（UVC 的 VC/VS），
+    // 原索引对应的字符串留在池里当空闲槽就行，下次分配会复用。
+    // 对方还没登记时保持原值，等它登记后由它复制过来
+    if (other.string_interface != 0) {
+        string_interface = other.string_interface;
+    }
+}
 
 void VirtualInterfaceHandler::handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep,
                                                    std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,

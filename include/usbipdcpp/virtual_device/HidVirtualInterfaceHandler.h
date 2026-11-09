@@ -19,8 +19,8 @@ namespace usbipdcpp {
  */
 class USBIPDCPP_API HidVirtualInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    HidVirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        VirtualInterfaceHandler(handle_interface, string_pool) {
+    explicit HidVirtualInterfaceHandler(UsbInterface &handle_interface) :
+        VirtualInterfaceHandler(handle_interface) {
         // 报告堆积上限：主机长期不读中断 IN 时防止内存无限增长（超限丢最旧）
         input_channel.set_max_pending_messages(MAX_PENDING_INPUT_REPORTS);
     }

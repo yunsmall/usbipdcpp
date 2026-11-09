@@ -15,6 +15,7 @@
 namespace usbipdcpp {
 
 class VirtualDeviceHandler;
+class StringPool;
 
 /**
  * @brief 虚拟设备接口处理器基类：响应接口级标准/类请求与数据面传输
@@ -28,12 +29,10 @@ class VirtualDeviceHandler;
  */
 class USBIPDCPP_API VirtualInterfaceHandler : public AbstInterfaceHandler {
 public:
-    explicit VirtualInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    explicit VirtualInterfaceHandler(UsbInterface &handle_interface,
                                      std::unique_ptr<TransferOperator> op = nullptr) :
-        AbstInterfaceHandler(handle_interface), string_pool(string_pool),
+        AbstInterfaceHandler(handle_interface),
         transfer_op_(op ? std::move(op) : std::make_unique<GenericTransferOperator>()) {
-
-        string_interface = string_pool.new_string(L"Usbipdcpp Virtual Interface");
     }
 
     // ========== 连接生命周期 API ==========
@@ -41,12 +40,33 @@ public:
     /**
      * @brief 设置所属的 DeviceHandler
      * @param handler DeviceHandler 指针
+     * @note 一个接口 handler 只应绑定一台设备；重复绑定到不同设备会被忽略
      */
-    void set_device_handler(VirtualDeviceHandler *handler) {
-        device_handler = handler;
-    }
+    void set_device_handler(VirtualDeviceHandler *handler);
 
-    /** setup_interface_handlers 末尾回调，此时 device_handler 已设置，子类可在此做初始化 */
+    /**
+     * @brief 把本接口需要的字符串登记到设备字符串池
+     * @param pool 所属设备的字符串描述符池
+     *
+     * setup_interface_handlers 在 set_device_handler 之后、on_setup_interface_handlers
+     * 之前调用。基类实现登记 iInterface；派生类重写时必须先调用父类实现，再登记
+     * 自己额外的字符串（如 ECM 的 iMACAddress）。实现需幂等：重复 setup 不能重复占索引。
+     * 调父类之前可以先做索引同步等准备（UVC 的 VC/VS 共享 iInterface 就是先
+     * sync_string_interface_from 对端，再调基类登记）。
+     *
+     * 登记额外字符串的写法：
+     * @code
+     * void register_strings(StringPool &pool) override {
+     *     VirtualInterfaceHandler::register_strings(pool);
+     *     if (extra_string_index == 0) {
+     *         extra_string_index = pool.new_string(L"Vendor String");
+     *     }
+     * }
+     * @endcode
+     */
+    virtual void register_strings(StringPool &pool);
+
+    /** setup_interface_handlers 末尾回调，此时 device_handler 已设置、字符串已登记，子类可在此做初始化 */
     virtual void on_setup_interface_handlers() {
     }
 
@@ -268,22 +288,36 @@ public:
         return string_interface;
     }
 
-    [[nodiscard]] virtual std::wstring get_string_interface() const {
-        // StringPool 内部自带互斥锁，这里只读索引（原子量），不需要设备级锁
-        return string_pool.get_string(string_interface).value_or(L"");
+    /// 取 iInterface 指向的字符串；还没登记（未 setup）时返回 interface_string_to_register() 的默认名
+    [[nodiscard]] virtual std::wstring get_string_interface() const;
+
+    /**
+     * @brief 登记到设备字符串池的接口名（iInterface 的内容）
+     * @return 默认名字；需要自定义接口名的 handler（如 UAC 各接口、用户自定义 handler）重写本函数
+     * @note 在 register_strings（setup_interface_handlers）时读取一次
+     */
+    [[nodiscard]] virtual std::wstring interface_string_to_register() const {
+        return L"Usbipdcpp Virtual Interface";
     }
 
-    void change_string_interface(const std::wstring &new_str) {
-        // StringPool::change_string 内部加锁；索引本身是原子量
-        string_pool.change_string(string_interface, new_str);
-    }
-
-    /// 使 iInterface 与另一个 handler 一致（USBCCGP 移除 IAD 后，同功能接口靠 iInterface 分组）
-    void sync_string_interface_from(const VirtualInterfaceHandler &other) {
-        string_interface = other.string_interface.load();
-    }
+    /**
+     * @brief 使 iInterface 与另一个 handler 一致（USBCCGP 移除 IAD 后，同功能接口靠 iInterface 分组）
+     * @param other 另一个接口 handler
+     * @note 必须在本 handler 登记字符串之前调用（register_strings 里、基类实现
+     *       之前）。对方已登记则复制其索引；对方尚未登记（索引为 0）时保持原值，
+     *       由先登记的一方分配、后登记的一方复制，因此双方都调用即可与顺序无关。
+     *       登记之后调用会把自己已占用的索引丢掉，别的地方还在用该索引时就对不上了
+     */
+    void sync_string_interface_from(const VirtualInterfaceHandler &other);
 
 protected:
+    /**
+     * @brief 取所属设备的字符串描述符表
+     * @note 只能在 register_strings 之后调用（setup_interface_handlers 之后）
+     * @return 设备字符串池
+     */
+    StringPool &get_string_pool() const;
+
     TransferResponder *responder = nullptr;
     VirtualDeviceHandler *device_handler = nullptr;
     std::unique_ptr<TransferOperator> transfer_op_;
@@ -293,11 +327,12 @@ protected:
     /// 用 atomic 避免数据竞争
     std::array<std::atomic_bool, 256> endpoint_halted{};
 
-    /// 接口字符串索引：构造/配置时写，描述符构造（会话线程）与
-    /// change_string_interface 可能来自不同线程，用原子量避免数据竞争
-    std::atomic<std::uint8_t> string_interface;
+    /// 接口字符串索引：setup 阶段由 register_strings 分配、sync_string_interface_from 复制，
+    /// 导出后只读；0 表示还没登记到设备池
+    std::uint8_t string_interface = 0;
 
-    StringPool &string_pool;
+    /// 设备字符串池（register_strings 时设置）；未登记时为空
+    StringPool *string_pool = nullptr;
 };
 
 } // namespace usbipdcpp

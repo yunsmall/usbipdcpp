@@ -5,9 +5,9 @@
 #include <cmath>
 
 namespace usbipdcpp {
-AbsoluteMouseHandler::AbsoluteMouseHandler(UsbInterface &handle_interface, StringPool &string_pool, int screen_width,
+AbsoluteMouseHandler::AbsoluteMouseHandler(UsbInterface &handle_interface, int screen_width,
                                            int screen_height) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool), screen_x2_(screen_width), screen_y2_(screen_height),
+    HidVirtualInterfaceHandler(handle_interface), screen_x2_(screen_width), screen_y2_(screen_height),
     screen_width_(screen_width), screen_height_(screen_height) {
     // 绝对坐标模式的报告描述符（6字节报告）
     report_descriptor_ = {

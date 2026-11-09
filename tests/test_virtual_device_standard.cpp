@@ -38,16 +38,20 @@ public:
     using VirtualDeviceHandler::request_set_feature;
     using VirtualDeviceHandler::request_set_isoch_delay;
     using VirtualDeviceHandler::request_set_sel;
+
+    /// 供测试直接往设备字符串池里塞一个字符串并拿索引
+    std::uint8_t allocate_test_string(const std::wstring &str) {
+        return get_string_pool().new_string(str);
+    }
 };
 
 struct DeviceEnv {
-    StringPool pool;
     std::shared_ptr<UsbDevice> device;
     std::unique_ptr<ProbeDevice> handler;
 
     explicit DeviceEnv(UsbSpeed speed, Version usb_version = {2, 0, 0}) {
         device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, speed);
-        handler = std::make_unique<ProbeDevice>(*device, pool, usb_version);
+        handler = std::make_unique<ProbeDevice>(*device, usb_version);
     }
 };
 
@@ -59,6 +63,35 @@ public:
     using VirtualInterfaceHandler::request_endpoint_clear_feature;
     using VirtualInterfaceHandler::request_endpoint_get_status;
     using VirtualInterfaceHandler::request_endpoint_set_feature;
+};
+
+/// 自定义 iInterface 名字的接口 handler
+class NamedInterface : public ProbeInterface {
+public:
+    NamedInterface(UsbInterface &intf, std::wstring name) :
+        ProbeInterface(intf), name(std::move(name)) {
+    }
+
+    std::wstring interface_string_to_register() const override {
+        return name;
+    }
+
+    std::wstring name;
+};
+
+/// 验证接口可以往设备池里登记 iInterface 之外的字符串（如厂商自定义字符串）
+class ExtraStringInterface : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    void register_strings(StringPool &pool) override {
+        VirtualInterfaceHandler::register_strings(pool);
+        if (extra_index == 0) {
+            extra_index = pool.new_string(L"Vendor Extra");
+        }
+    }
+
+    std::uint8_t extra_index = 0;
 };
 
 } // namespace
@@ -142,14 +175,13 @@ TEST(VirtualDeviceStandard, FullSpeedDeviceDescriptorUsesActualEp0Size) {
 // ==================== 端点 HALT 状态机 ====================
 
 TEST(VirtualDeviceStandard, EndpointHaltSetGetClear) {
-    StringPool pool;
     UsbInterface intf{};
     // Halt 只对中断/Bulk 端点有效（USB 2.0 §9.4.5），接口里必须声明端点
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                         .max_packet_size = 64,
                         .interval = 0}}};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
@@ -168,9 +200,8 @@ TEST(VirtualDeviceStandard, EndpointHaltSetGetClear) {
 }
 
 TEST(VirtualDeviceStandard, EndpointZeroCannotBeHalted) {
-    StringPool pool;
     UsbInterface intf{};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x00, &status);
@@ -181,13 +212,12 @@ TEST(VirtualDeviceStandard, EndpointZeroCannotBeHalted) {
 TEST(VirtualDeviceStandard, IsochronousEndpointCannotBeHalted) {
     // USB 2.0 §9.4.5：Halt 特性只为中断和 Bulk 端点实现，等时端点
     // SET/CLEAR_FEATURE(ENDPOINT_HALT) 必须回 Request Error
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous),
                         .max_packet_size = 1024,
                         .interval = 1}}};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
@@ -200,9 +230,8 @@ TEST(VirtualDeviceStandard, IsochronousEndpointCannotBeHalted) {
 }
 
 TEST(VirtualDeviceStandard, UnknownEndpointFeatureStalls) {
-    StringPool pool;
     UsbInterface intf{};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(0x0001, 0x81, &status);
@@ -210,7 +239,6 @@ TEST(VirtualDeviceStandard, UnknownEndpointFeatureStalls) {
 }
 
 TEST(VirtualDeviceStandard, HaltedEndpointUrbCompletesWithEpipe) {
-    StringPool pool;
 
     UsbInterface intf{};
     intf.endpoints = {{UsbEndpoint{.address = 0x81,
@@ -218,8 +246,8 @@ TEST(VirtualDeviceStandard, HaltedEndpointUrbCompletesWithEpipe) {
                                    .max_packet_size = 64,
                                    .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     CaptureResponder stub;
@@ -243,7 +271,6 @@ TEST(VirtualDeviceStandard, HaltedEndpointUrbCompletesWithEpipe) {
 }
 
 TEST(VirtualDeviceStandard, ClearHaltAllowsTransferAgain) {
-    StringPool pool;
 
     UsbInterface intf{};
     intf.endpoints = {{UsbEndpoint{.address = 0x81,
@@ -251,8 +278,8 @@ TEST(VirtualDeviceStandard, ClearHaltAllowsTransferAgain) {
                                    .max_packet_size = 64,
                                    .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     CaptureResponder stub;
@@ -350,9 +377,8 @@ void send_control(VirtualDeviceHandler &device, GenericTransferOperator &op, std
 } // namespace
 
 TEST(VirtualDeviceStandard, InterfaceFeatureRequestsStall) {
-    StringPool pool;
     UsbInterface intf{};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     // USB 2.0 Table 9-6：接口级没有合法的标准 feature selector，§9.4 要求 STALL
     std::uint32_t status = 0;
@@ -365,7 +391,6 @@ TEST(VirtualDeviceStandard, InterfaceFeatureRequestsStall) {
 }
 
 TEST(VirtualDeviceStandard, ResetEndpointHaltStateClearsAllAlternates) {
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
@@ -375,7 +400,7 @@ TEST(VirtualDeviceStandard, ResetEndpointHaltStateClearsAllAlternates) {
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                         .max_packet_size = 64,
                         .interval = 0}}};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 0;
     handler.request_endpoint_set_feature(SetupPacket::USB_ENDPOINT_HALT, 0x81, &status);
@@ -393,15 +418,14 @@ TEST(VirtualDeviceStandard, ResetEndpointHaltStateClearsAllAlternates) {
 }
 
 TEST(VirtualDeviceStandard, SetConfigurationResetsEndpointHalt) {
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                         .max_packet_size = 64,
                         .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -424,15 +448,14 @@ TEST(VirtualDeviceStandard, SetConfigurationResetsEndpointHalt) {
 }
 
 TEST(VirtualDeviceStandard, SetInterfaceResetsEndpointHalt) {
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                         .max_packet_size = 64,
                         .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto interface_handler = device->interfaces[0].with_handler<ProbeInterface>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -533,7 +556,6 @@ public:
 
 /// 双接口设备：一条 UNLINK 只能回一条 RET_UNLINK
 struct UnlinkEnv {
-    StringPool pool;
     std::shared_ptr<UsbDevice> device;
     std::unique_ptr<ProbeDevice> handler;
     CaptureResponder stub;
@@ -572,9 +594,9 @@ struct UnlinkEnv {
                 .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
                 .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
         });
-        handler = std::make_unique<ProbeDevice>(*device, pool);
-        first = device->interfaces[0].with_handler<UnlinkProbeHandler>(pool).get();
-        second = device->interfaces[1].with_handler<UnlinkProbeHandler>(pool).get();
+        handler = std::make_unique<ProbeDevice>(*device);
+        first = device->interfaces[0].with_handler<UnlinkProbeHandler>().get();
+        second = device->interfaces[1].with_handler<UnlinkProbeHandler>().get();
         handler->setup_interface_handlers();
         handler->on_new_connection(stub, ec);
     }
@@ -630,9 +652,8 @@ TEST(VirtualDeviceStandard, UnlinkFindsLaterInterface) {
 TEST(VirtualDeviceStandard, SetConfigurationZeroUnconfiguresDevice) {
     // USB 2.0 §9.4.7：SET_CONFIGURATION(0) 让设备回到 Address 状态；
     // §9.4.2：未配置时 GET_CONFIGURATION 必须返回 0
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto device_handler = device->with_handler<ProbeDevice>(pool);
+    auto device_handler = device->with_handler<ProbeDevice>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -690,7 +711,6 @@ public:
 TEST(VirtualDeviceStandard, SetConfigurationResetsAlternateSettings) {
     // USB 2.0 §9.6.5：接口默认设置恒为 alt 0；§9.1.1.5：配置时受影响接口的
     // 端点状态/配置值复位到默认值
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {
             {{.address = 0x81,
@@ -703,8 +723,8 @@ TEST(VirtualDeviceStandard, SetConfigurationResetsAlternateSettings) {
               .interval = 0}},
     };
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto alt_handler = device->interfaces[0].with_handler<AltProbeHandler>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto alt_handler = device->interfaces[0].with_handler<AltProbeHandler>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -734,9 +754,8 @@ TEST(VirtualDeviceStandard, SetConfigurationResetsAlternateSettings) {
 
 TEST(VirtualDeviceStandard, EmptyEndpointInterfaceAcceptsAltZero) {
     // USB 2.0 §9.6.5：bNumEndpoints=0 的接口只接受默认 alt 0
-    StringPool pool;
     UsbInterface intf{};
-    ProbeInterface handler(intf, pool);
+    ProbeInterface handler(intf);
 
     std::uint32_t status = 1;
     handler.request_set_interface(0, &status);
@@ -791,7 +810,6 @@ TEST(VirtualDeviceStandard, InterfaceRequestsRouteByInterfaceNumber) {
     // 接口级控制请求的 wIndex 是 bInterfaceNumber，不是 interfaces 数组下标。
     // 复合设备的接口排列顺序可以与编号不一致（见 UsbInterface::interface_number），
     // 按数组下标路由会把 SET_INTERFACE/GET_INTERFACE/类请求发给错误的 handler
-    StringPool pool;
     UsbInterface number_five{};
     number_five.endpoints = {
             {{.address = 0x81,
@@ -817,11 +835,11 @@ TEST(VirtualDeviceStandard, InterfaceRequestsRouteByInterfaceNumber) {
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {number_five, number_two}, 1, 1, 0, {}, UsbSpeed::Full);
     device->interfaces[0].interface_number = 5;
     device->interfaces[1].interface_number = 2;
-    auto *five = device->interfaces[0].with_handler<RoutingProbeHandler>(pool).get();
+    auto *five = device->interfaces[0].with_handler<RoutingProbeHandler>().get();
     five->interface_marker = 0xA5;
-    auto *two = device->interfaces[1].with_handler<RoutingProbeHandler>(pool).get();
+    auto *two = device->interfaces[1].with_handler<RoutingProbeHandler>().get();
     two->interface_marker = 0x22;
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -892,9 +910,8 @@ public:
 TEST(VirtualDeviceStandard, SetDescriptorTruncatesToReceivedBytes) {
     // 主机声明 wLength=16 但实际只收到 4 字节（控制 OUT 短包）：不能按声明
     // 长度越界构造数据，传给 request_set_descriptor 的只能是从实际数据里截的
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto device_handler = device->with_handler<SetDescriptorProbe>(pool);
+    auto device_handler = device->with_handler<SetDescriptorProbe>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -916,9 +933,8 @@ TEST(VirtualDeviceStandard, SetDescriptorTruncatesToReceivedBytes) {
 
 TEST(VirtualDeviceStandard, UnknownDescriptorTypeStalls) {
     // USB 2.0 §9.4.3：设备不支持请求的描述符时回 Request Error
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -951,15 +967,14 @@ public:
 
 TEST(VirtualDeviceStandard, SynchFrameReturnsFrameNumber) {
     // USB 2.0 §9.4.11：数据阶段返回 2 字节帧号（小端）
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous),
                         .max_packet_size = 64,
                         .interval = 1}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    device->interfaces[0].with_handler<SynchProbeHandler>(pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device->interfaces[0].with_handler<SynchProbeHandler>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -981,7 +996,6 @@ TEST(VirtualDeviceStandard, OtherSpeedConfigurationUsesFullSpeedPacketSizes) {
     // USB 2.0 §9.6.4 / Table 9-11：other_speed_configuration 描述设备在另一
     // 速度下的配置，端点包长必须是那个速度的值（高速设备的另一速度 = 全速：
     // bulk/interrupt 最大 64，ISO 最大 1023，且没有每微帧多事务编码）
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{
             {.address = 0x81,
@@ -998,7 +1012,7 @@ TEST(VirtualDeviceStandard, OtherSpeedConfigurationUsesFullSpeedPacketSizes) {
              .interval = 1},
     }};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto handler = device->with_handler<ProbeDevice>(pool);
+    auto handler = device->with_handler<ProbeDevice>();
 
     std::uint32_t status = 0;
     auto desc = handler->get_other_speed_descriptor(0, 1024, &status);
@@ -1027,7 +1041,7 @@ TEST(VirtualDeviceStandard, OtherSpeedConfigurationUsesFullSpeedPacketSizes) {
 TEST(VirtualDeviceStandard, LongStringDescriptorTruncatesTo255Bytes) {
     // bLength 是单字节（USB 2.0 §9.5）：2 字节头 + 最多 126 个 UTF-16 字符 = 254
     DeviceEnv env(UsbSpeed::High);
-    auto index = env.pool.new_string(std::wstring(200, L'A'));
+    auto index = env.handler->allocate_test_string(std::wstring(200, L'A'));
     ASSERT_NE(index, 0);
 
     // 成功路径沿用调用方初始化的 0（与其它描述符函数一致，只在失败时改写）
@@ -1037,6 +1051,102 @@ TEST(VirtualDeviceStandard, LongStringDescriptorTruncatesTo255Bytes) {
     ASSERT_EQ(desc.size(), 254u);
     EXPECT_EQ(desc[0], 254);
     EXPECT_EQ(desc[1], static_cast<std::uint8_t>(DescriptorType::String));
+}
+
+namespace {
+
+/// 把字符串描述符还原成 wstring（2 字节头 + UTF-16LE 字符）
+std::wstring decode_string_descriptor(const data_type &desc) {
+    std::wstring result;
+    for (std::size_t i = 2; i + 1 < desc.size(); i += 2) {
+        result.push_back(static_cast<wchar_t>(desc[i] | (desc[i + 1] << 8)));
+    }
+    return result;
+}
+
+} // namespace
+
+TEST(VirtualDeviceStandard, InterfaceStringUsesDeviceStringPool) {
+    // 接口字符串由接口 handler 在 register_strings 时写入设备的字符串池
+    UsbInterface intf{};
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf});
+    auto interface_handler = device->interfaces[0].with_handler<NamedInterface>(L"Named Interface");
+    EXPECT_EQ(interface_handler->get_string_interface(), L"Named Interface");
+
+    auto device_handler = device->with_handler<ProbeDevice>();
+    device_handler->setup_interface_handlers();
+
+    auto index = interface_handler->get_string_interface_value();
+    ASSERT_NE(index, 0);
+    EXPECT_EQ(interface_handler->get_string_interface(), L"Named Interface");
+
+    std::uint32_t status = 0;
+    auto desc = device_handler->get_string_descriptor(0x0409, index, 255, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(decode_string_descriptor(desc), L"Named Interface");
+}
+
+TEST(VirtualDeviceStandard, InterfaceCanRegisterExtraStrings) {
+    // 接口除了 iInterface 还可以登记自己的字符串（MAC、厂商自定义字符串等），
+    // 都走 register_strings 进同一张设备池
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {UsbInterface{}});
+    auto interface_handler = device->interfaces[0].with_handler<ExtraStringInterface>();
+    auto device_handler = device->with_handler<ProbeDevice>();
+    device_handler->setup_interface_handlers();
+
+    ASSERT_NE(interface_handler->get_string_interface_value(), 0);
+    ASSERT_NE(interface_handler->extra_index, 0);
+    EXPECT_NE(interface_handler->get_string_interface_value(), interface_handler->extra_index);
+
+    std::uint32_t status = 0;
+    auto desc = device_handler->get_string_descriptor(0x0409, interface_handler->extra_index, 255, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(decode_string_descriptor(desc), L"Vendor Extra");
+
+    // 重复 setup 不能重复占索引
+    auto interface_index = interface_handler->get_string_interface_value();
+    auto extra_index = interface_handler->extra_index;
+    device_handler->setup_interface_handlers();
+    EXPECT_EQ(interface_handler->get_string_interface_value(), interface_index);
+    EXPECT_EQ(interface_handler->extra_index, extra_index);
+}
+
+TEST(VirtualDeviceStandard, EachDeviceOwnsItsStringPool) {
+    // 字符串索引是每设备独立的：两台设备的索引 1 必须解析成各自的字符串，
+    // 不能因为共用一张表而串台
+    auto device_one = UsbDevice::make("1-1", 0x1234, 0x5678, {UsbInterface{}});
+    auto device_two = UsbDevice::make("1-2", 0x1234, 0x5678, {UsbInterface{}});
+    auto interface_one = device_one->interfaces[0].with_handler<NamedInterface>(L"Interface One");
+    auto interface_two = device_two->interfaces[0].with_handler<NamedInterface>(L"Interface Two");
+    auto handler_one = device_one->with_handler<ProbeDevice>();
+    auto handler_two = device_two->with_handler<ProbeDevice>();
+    // 索引 1 是配置字符串（构造顺序：配置、厂商、产品），两台设备改成不同值
+    handler_one->change_string_configuration(L"Config One");
+    handler_two->change_string_configuration(L"Config Two");
+    handler_one->change_string_manufacturer(L"Device One");
+    handler_two->change_string_manufacturer(L"Device Two");
+    handler_one->setup_interface_handlers();
+    handler_two->setup_interface_handlers();
+
+    std::uint32_t status = 0;
+    auto desc_one = handler_one->get_string_descriptor(0x0409, 1, 255, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(decode_string_descriptor(desc_one), L"Config One");
+
+    auto desc_two = handler_two->get_string_descriptor(0x0409, 1, 255, &status);
+    EXPECT_EQ(status, 0u);
+    EXPECT_EQ(decode_string_descriptor(desc_two), L"Config Two");
+
+    // 接口 handler 也各用各设备的池（两台设备的接口字符串索引相同，内容不同）
+    ASSERT_NE(interface_one->get_string_interface_value(), 0);
+    EXPECT_EQ(interface_one->get_string_interface_value(),
+              interface_two->get_string_interface_value());
+    desc_one = handler_one->get_string_descriptor(
+            0x0409, interface_one->get_string_interface_value(), 255, &status);
+    EXPECT_EQ(decode_string_descriptor(desc_one), L"Interface One");
+    desc_two = handler_two->get_string_descriptor(
+            0x0409, interface_two->get_string_interface_value(), 255, &status);
+    EXPECT_EQ(decode_string_descriptor(desc_two), L"Interface Two");
 }
 
 // ==================== SuperSpeed（USB 3.0 §9.6） ====================
@@ -1059,13 +1169,13 @@ std::vector<std::pair<std::uint8_t, data_type>> split_descriptors(const data_typ
 }
 
 /// 构造一个单接口、端点由参数决定的设备并绑定 ProbeDevice
-std::shared_ptr<UsbDevice> make_device_with_endpoints(StringPool &pool, UsbSpeed speed,
+std::shared_ptr<UsbDevice> make_device_with_endpoints(UsbSpeed speed,
                                                       std::vector<UsbEndpoint> endpoints,
                                                       std::unique_ptr<ProbeDevice> &handler) {
     UsbInterface intf{};
     intf.endpoints = {std::move(endpoints)};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, speed);
-    handler = std::make_unique<ProbeDevice>(*device, pool);
+    handler = std::make_unique<ProbeDevice>(*device);
     return device;
 }
 
@@ -1088,9 +1198,8 @@ TEST(VirtualDeviceStandard, SuperSpeedDeviceDescriptorReportsBcdUsb30) {
 TEST(VirtualDeviceStandard, BcdDeviceIsFullBcdValue) {
     // bcdDevice 是完整 BCD（USB 2.0 Table 9-8），不是只拼 major/minor 两字节：
     // 2.3.4 → 0x0234，小端线上字节 34 02
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full, Version{2, 3, 4});
-    auto handler = std::make_unique<ProbeDevice>(*device, pool);
+    auto handler = std::make_unique<ProbeDevice>(*device);
     std::uint32_t status = 0;
     auto desc = handler->get_device_descriptor(0, 18, &status);
     ASSERT_EQ(desc.size(), 18u);
@@ -1116,10 +1225,9 @@ TEST(VirtualDeviceStandard, SuperSpeedConfigurationInsertsBulkCompanion) {
     // USB 3.0 §9.6.5/§9.6.7：每个非 EP0 端点描述符后紧跟 Endpoint Companion，
     // §9.6.6：SuperSpeed 下 Bulk 的 wMaxPacketSize 固定 1024；
     // §9.6.3：bMaxPower 以 8mA 为单位（500mA → 63）
-    StringPool pool;
     std::unique_ptr<ProbeDevice> handler;
     auto device = make_device_with_endpoints(
-            pool, UsbSpeed::Super,
+            UsbSpeed::Super,
             {
                     {.address = 0x81,
                      .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
@@ -1161,10 +1269,9 @@ TEST(VirtualDeviceStandard, SuperSpeedInterruptCompanionReservesServiceIntervalB
     // USB 3.0 §9.6.6：Interrupt 端点 bMaxBurst 大于 0 时 wMaxPacketSize 固定 1024；
     // §9.6.7 Table 9-20：wBytesPerInterval 是每个服务间隔的总字节数，
     // 即 (bMaxBurst+1) * wMaxPacketSize；bMaxBurst 为 0 时就是 wMaxPacketSize
-    StringPool pool;
     std::unique_ptr<ProbeDevice> handler;
     auto device = make_device_with_endpoints(
-            pool, UsbSpeed::Super,
+            UsbSpeed::Super,
             {
                     {.address = 0x81,
                      .attributes = static_cast<std::uint8_t>(EndpointAttributes::Interrupt),
@@ -1194,10 +1301,9 @@ TEST(VirtualDeviceStandard, SuperSpeedInterruptCompanionReservesServiceIntervalB
 
 TEST(VirtualDeviceStandard, HighSpeedConfigurationHasNoCompanion) {
     // SuperSpeed Endpoint Companion 只出现在 SuperSpeed 配置里
-    StringPool pool;
     std::unique_ptr<ProbeDevice> handler;
     auto device = make_device_with_endpoints(
-            pool, UsbSpeed::High,
+            UsbSpeed::High,
             {{.address = 0x81,
               .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
               .max_packet_size = 512,
@@ -1232,9 +1338,8 @@ TEST(VirtualDeviceStandard, SuperSpeedHasNoDeviceQualifierOrOtherSpeed) {
 TEST(VirtualDeviceStandard, SetSelStoresExitLatencies) {
     // USB 3.0 §9.4.12：wValue/wIndex 为 0、wLength 为 6；
     // 数据阶段 U1SEL/U1PEL 各 1 字节、U2SEL/U2PEL 各 2 字节（小端）
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Super, Version{3, 0, 0});
-    auto handler = device->with_handler<ProbeDevice>(pool);
+    auto handler = device->with_handler<ProbeDevice>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -1261,9 +1366,8 @@ TEST(VirtualDeviceStandard, SetSelStoresExitLatencies) {
 TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
     // USB 3.0 §9.4.11/§9.4.12 规定各 Setup 字段的合法值；非法请求按
     // Request Error 处理，不能当作成功
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Super, Version{3, 0, 0});
-    auto handler = device->with_handler<ProbeDevice>(pool);
+    auto handler = device->with_handler<ProbeDevice>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -1444,15 +1548,14 @@ TEST(VirtualDeviceStandard, ReservedSetupFieldsFollowKernelBehavior) {
     // 与内核 gadget（gadget/composite.c）保持一致：
     // SET_CONFIGURATION/SET_INTERFACE 用完整 wValue 匹配配置/alt，高字节非 0
     // 天然会失败（STALL）；GET_STATUS 的 wValue 和端点 wIndex 高字节被忽略
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{{.address = 0x81,
                         .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                         .max_packet_size = 64,
                         .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
-    device->interfaces[0].with_handler<ProbeInterface>(pool);
-    auto handler = device->with_handler<ProbeDevice>(pool);
+    device->interfaces[0].with_handler<ProbeInterface>();
+    auto handler = device->with_handler<ProbeDevice>();
     handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -1538,9 +1641,8 @@ public:
 TEST(VirtualDeviceStandard, DeviceGetDescriptorErrorCarriesNoData) {
     // 子类返回非空描述符并置 EPIPE 时，RET_SUBMIT 不能带数据阶段
     // （USB 2.0 §9.4.3：不支持的描述符回 Request Error，无数据）
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto handler = device->with_handler<FailingDescriptorDevice>(pool);
+    auto handler = device->with_handler<FailingDescriptorDevice>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -1560,11 +1662,10 @@ TEST(VirtualDeviceStandard, DeviceGetDescriptorErrorCarriesNoData) {
 
 TEST(VirtualDeviceStandard, InterfaceGetDescriptorErrorCarriesNoData) {
     // 接口级描述符请求同样不能在 EPIPE 时带数据
-    StringPool pool;
     UsbInterface intf{};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
-    device->interfaces[0].with_handler<FailingDescriptorInterface>(pool);
-    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device->interfaces[0].with_handler<FailingDescriptorInterface>();
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>();
     handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -1587,11 +1688,10 @@ TEST(VirtualDeviceStandard, InterfaceGetDescriptorErrorCarriesNoData) {
 TEST(VirtualDeviceStandard, GetInterfaceErrorCarriesNoData) {
     // 子类 handler 用非零 status 拒绝 GET_INTERFACE 时，RET_SUBMIT 不能带
     // 数据阶段（状态与 actual_length 必须一致）
-    StringPool pool;
     UsbInterface intf{};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::Full);
-    device->interfaces[0].with_handler<FailingGetInterfaceHandler>(pool);
-    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    device->interfaces[0].with_handler<FailingGetInterfaceHandler>();
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>();
     handler->setup_interface_handlers();
 
     GenericTransferOperator op;
@@ -1614,9 +1714,8 @@ TEST(VirtualDeviceStandard, GetInterfaceErrorCarriesNoData) {
 TEST(VirtualDeviceStandard, ControlRequestToMissingEndpointStalls) {
     // USB 2.0 §9.4.1/§9.4.5：引用不存在的端点必须回 Request Error。
     // 控制传输必须有 RET_SUBMIT，漏掉应答会让主机 URB 永久挂起
-    StringPool pool;
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {}, 1, 1, 0, {}, UsbSpeed::Full);
-    auto handler = device->with_handler<ProbeDevice>(pool);
+    auto handler = device->with_handler<ProbeDevice>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;
@@ -1680,14 +1779,13 @@ TEST(VirtualDeviceStandard, NonControlUrbWithoutInterfaceIsFatal) {
     // receive_urb 的约定：非控制传输必须带目标接口。违反约定属于内部错误，
     // 用 ec 交给 Session 结束会话（连接关闭使主机 URB 完成），
     // 而不是提交一条可恢复的 EPIPE 应答
-    StringPool pool;
     UsbInterface intf{};
     intf.endpoints = {{UsbEndpoint{.address = 0x81,
                                    .attributes = static_cast<std::uint8_t>(EndpointAttributes::Bulk),
                                    .max_packet_size = 64,
                                    .interval = 0}}};
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678, {intf}, 1, 1, 0, {}, UsbSpeed::High);
-    auto handler = device->with_handler<SimpleVirtualDeviceHandler>(pool);
+    auto handler = device->with_handler<SimpleVirtualDeviceHandler>();
     GenericTransferOperator op;
     CaptureResponder stub;
     error_code ec;

@@ -103,9 +103,9 @@ std::vector<RndisFrame> unwrap_rndis_packets(const data_type &data) {
 // ==================== RndisCommunicationInterfaceHandler ====================
 
 RndisCommunicationInterfaceHandler::RndisCommunicationInterfaceHandler(
-        UsbInterface &handle_interface, StringPool &string_pool, std::array<std::uint8_t, 6> mac_address,
+        UsbInterface &handle_interface, std::array<std::uint8_t, 6> mac_address,
         UsbSpeed speed) :
-    VirtualInterfaceHandler(handle_interface, string_pool),
+    VirtualInterfaceHandler(handle_interface),
     mac_address_(mac_address), interface_number_(handle_interface.interface_number) {
     // LINK_SPEED 上报（单位 100bps，对齐内核 f_rndis.c 的 bitrate()/100）
     switch (speed) {
@@ -482,10 +482,10 @@ bool RndisCommunicationInterfaceHandler::cancel_pending_urb(std::uint32_t unlink
 
 // ==================== RndisDataInterfaceHandler ====================
 
-RndisDataInterfaceHandler::RndisDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+RndisDataInterfaceHandler::RndisDataInterfaceHandler(UsbInterface &handle_interface,
                                                      NetworkBackend *backend,
                                                      RndisCommunicationInterfaceHandler *comm) :
-    VirtualInterfaceHandler(handle_interface, string_pool), backend_(backend), comm_(comm) {
+    VirtualInterfaceHandler(handle_interface), backend_(backend), comm_(comm) {
     if (backend_) {
         // 注入发帧回调：后端产生帧时包 RNDIS 头再经通道推给主机
         // （通道线程安全，任意线程可调）

@@ -19,8 +19,8 @@ namespace usbipdcpp {
  */
 class PipeInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    PipeInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool, PipeDeviceHandler *pipe) :
-        VirtualInterfaceHandler(handle_interface, string_pool), pipe(pipe) {
+    explicit PipeInterfaceHandler(UsbInterface &handle_interface, PipeDeviceHandler *pipe) :
+        VirtualInterfaceHandler(handle_interface), pipe(pipe) {
     }
 
     void handle_bulk_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
@@ -164,8 +164,8 @@ private:
 
 } // namespace usbipdcpp
 
-PipeDeviceHandler::PipeDeviceHandler(UsbDevice &handle_device, StringPool &string_pool) :
-    SimpleVirtualDeviceHandler(handle_device, string_pool) {
+PipeDeviceHandler::PipeDeviceHandler(UsbDevice &handle_device) :
+    SimpleVirtualDeviceHandler(handle_device) {
 }
 
 void PipeDeviceHandler::setup_interface_handlers() {
@@ -174,7 +174,7 @@ void PipeDeviceHandler::setup_interface_handlers() {
     // 否则 read/write 会漏掉部分端点。创建放在这个阶段而不是构造函数里，
     // 因为接口 handler 持有本对象指针，需等对象完整构造
     for (auto &intf: handle_device.interfaces) {
-        intf.with_handler<PipeInterfaceHandler>(string_pool, this);
+        intf.with_handler<PipeInterfaceHandler>(this);
     }
     VirtualDeviceHandler::setup_interface_handlers();
 }

@@ -11,7 +11,6 @@
 
 #include "usbipdcpp/Interface.h"
 #include "usbipdcpp/SetupPacket.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UacConstants.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/UsbClassConstants.h"
@@ -48,9 +47,8 @@ struct StubSink : public AudioSink {
 TEST(UacAudioControlDesc, SpeakerTopology) {
     // 扬声器：IT(USB streaming 0x0101) → FU → OT(Speaker 0x0301)
     // 布局：Header(9) + IT(12) + FU(7+2+1=10) + OT(9) = 40 字节
-    StringPool pool;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOCONTROL, .interface_protocol = 0};
-    UacAudioControlHandler handler(intf, pool);
+    UacAudioControlHandler handler(intf);
     handler.set_config(UacDeviceConfig{.input_terminal_type = TT_USB_STREAMING, .channels = 2});
     handler.on_setup_interface_handlers();
     auto desc = handler.get_class_specific_descriptor();
@@ -70,9 +68,8 @@ TEST(UacAudioControlDesc, SpeakerTopology) {
 TEST(UacAudioControlDesc, MicrophoneTopology) {
     // 麦克风（默认）：IT(MIC 0x0201) → FU → OT(USB streaming 0x0101)，回归保护
     // 布局：Header(9) + IT(12) + FU(7+1+1=9) + OT(9) = 39 字节
-    StringPool pool;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOCONTROL, .interface_protocol = 0};
-    UacAudioControlHandler handler(intf, pool);
+    UacAudioControlHandler handler(intf);
     handler.set_config(UacDeviceConfig{.channels = 1});
     handler.on_setup_interface_handlers();
     auto desc = handler.get_class_specific_descriptor();
@@ -91,9 +88,8 @@ TEST(UacAudioControlDesc, MicrophoneTopology) {
 TEST(UacAudioStreamingSinkDesc, TerminalLinkPointsToInputTerminal) {
     // 扬声器方向 AS General 的 bTerminalLink 指向 AC 的 Input Terminal（0x01，
     // 数据从 USB 流入），与麦克风（指向 Output Terminal 0x03）相反
-    StringPool pool;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING, .interface_protocol = 0};
-    UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<StubSink>());
+    UacAudioStreamingSinkHandler handler(intf, std::make_unique<StubSink>());
     handler.on_setup_interface_handlers();
     auto desc = handler.get_class_specific_descriptor();
 
@@ -119,11 +115,10 @@ TEST(UacAudioStreamingSinkDesc, SampleRateSetFormatUpdatesSink) {
     // 采样率协商落到汇：SET_CUR 走 handle_sampling_freq_control 前先确认
     // 汇的 supported_formats 与 current_format 同步（协商的其余逻辑与
     // 麦克风共用同一套 GET_CUR/SET_CUR 处理，端到端由 mock_speaker 验证）
-    StringPool pool;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING, .interface_protocol = 0};
     auto sink = std::make_unique<StubSink>();
     auto *sink_ptr = sink.get();
-    UacAudioStreamingSinkHandler handler(intf, pool, std::move(sink));
+    UacAudioStreamingSinkHandler handler(intf, std::move(sink));
     handler.on_setup_interface_handlers();
 
     // 描述符中的采样率来自汇的当前格式
@@ -194,10 +189,9 @@ void send_get_min_max(VirtualInterfaceHandler &handler, GenericTransferOperator 
 TEST(UacAudioStreamingControl, SinkGetMinMaxWithoutSupportedRatesStalls) {
     // 采样率列表为空时 front()/back() 解引用空区间是 UB：GET_MIN/GET_MAX
     // 必须回 EPIPE，让主机按"不支持"处理
-    StringPool pool;
     GenericTransferOperator op;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
-    UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+    UacAudioStreamingSinkHandler handler(intf, std::make_unique<EmptyFormatsSink>());
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -209,10 +203,9 @@ TEST(UacAudioStreamingControl, SinkGetMinMaxWithoutSupportedRatesStalls) {
 
 TEST(UacAudioStreamingControl, SinkSetCurWithoutSupportedRatesStalls) {
     // 列表为空时 min_element 返回 end()，解引用是 UB：SET_CUR 必须回 EPIPE
-    StringPool pool;
     GenericTransferOperator op;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
-    UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+    UacAudioStreamingSinkHandler handler(intf, std::make_unique<EmptyFormatsSink>());
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -237,10 +230,9 @@ TEST(UacAudioStreamingControl, SinkSetCurWithoutSupportedRatesStalls) {
 
 TEST(UacAudioStreamingControl, SourceGetMinMaxWithoutSupportedRatesStalls) {
     // 源侧同一处空列表解引用（GET_MIN/GET_MAX）
-    StringPool pool;
     GenericTransferOperator op;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
-    UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+    UacAudioStreamingSourceHandler handler(intf, std::make_unique<EmptyFormatsSource>());
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -252,10 +244,9 @@ TEST(UacAudioStreamingControl, SourceGetMinMaxWithoutSupportedRatesStalls) {
 
 TEST(UacAudioStreamingControl, SourceSetCurWithoutSupportedRatesStalls) {
     // 源侧 SET_CUR：列表为空时不能解引用 min_element 的 end()
-    StringPool pool;
     GenericTransferOperator op;
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
-    UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+    UacAudioStreamingSourceHandler handler(intf, std::make_unique<EmptyFormatsSource>());
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     handler.on_new_connection(stub, ec);
@@ -285,8 +276,7 @@ TEST(UacAudioStreamingControl, DescriptorFallsBackToCurrentRateWhenListEmpty) {
     UsbInterface intf{.interface_class = CC_AUDIO, .interface_subclass = SC_AUDIOSTREAMING};
 
     {
-        StringPool pool;
-        UacAudioStreamingSinkHandler handler(intf, pool, std::make_unique<EmptyFormatsSink>());
+        UacAudioStreamingSinkHandler handler(intf, std::make_unique<EmptyFormatsSink>());
         handler.on_setup_interface_handlers();
         auto desc = handler.get_class_specific_descriptor();
         ASSERT_EQ(desc.size(), 18u); // General(7) + FormatHead(8) + 1 个采样率(3)
@@ -296,8 +286,7 @@ TEST(UacAudioStreamingControl, DescriptorFallsBackToCurrentRateWhenListEmpty) {
         EXPECT_EQ(desc[17], 0x00);
     }
     {
-        StringPool pool;
-        UacAudioStreamingSourceHandler handler(intf, pool, std::make_unique<EmptyFormatsSource>());
+        UacAudioStreamingSourceHandler handler(intf, std::make_unique<EmptyFormatsSource>());
         handler.on_setup_interface_handlers();
         auto desc = handler.get_class_specific_descriptor();
         ASSERT_EQ(desc.size(), 18u);

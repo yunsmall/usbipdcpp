@@ -26,11 +26,10 @@ public:
 
     /**
      * @param handle_interface USB 接口
-     * @param string_pool 字符串池
      * @param x_max X 轴最大值（默认 32767）
      * @param y_max Y 轴最大值（默认 32767）
      */
-    explicit DigitizerHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    explicit DigitizerHandler(UsbInterface &handle_interface,
                               std::uint16_t x_max = DEFAULT_MAX, std::uint16_t y_max = DEFAULT_MAX);
 
     ~DigitizerHandler() override = default;

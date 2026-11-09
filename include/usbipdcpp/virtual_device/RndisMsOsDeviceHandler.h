@@ -14,8 +14,8 @@ namespace usbipdcpp {
  */
 class USBIPDCPP_API RndisMsOsDeviceHandler final : public MSOSSimpleVirtualDeviceHandler {
 public:
-    RndisMsOsDeviceHandler(UsbDevice &handle_device, StringPool &string_pool) :
-        MSOSSimpleVirtualDeviceHandler(handle_device, string_pool) {
+    explicit RndisMsOsDeviceHandler(UsbDevice &handle_device) :
+        MSOSSimpleVirtualDeviceHandler(handle_device) {
         set_ms_os_compatible_id("RNDIS");
         set_ms_os_sub_compatible_id("5162001");
     }

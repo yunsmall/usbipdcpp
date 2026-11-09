@@ -16,7 +16,6 @@
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/devices/KeyboardHandler.h"
 
@@ -60,8 +59,7 @@ public:
 };
 
 // 构造使用上面两个 handler 的虚拟键盘设备（接口定义与 mock_keyboard 相同）
-std::shared_ptr<UsbDevice> make_removable_keyboard(StringPool &string_pool,
-                                                   std::shared_ptr<std::atomic_bool> removed_flag) {
+std::shared_ptr<UsbDevice> make_removable_keyboard(std::shared_ptr<std::atomic_bool> removed_flag) {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = static_cast<std::uint8_t>(ClassCode::HID),
@@ -95,9 +93,9 @@ std::shared_ptr<UsbDevice> make_removable_keyboard(StringPool &string_pool,
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    auto interface_handler = mock_keyboard->interfaces[0].with_handler<RemovableKeyboardInterfaceHandler>(string_pool);
+    auto interface_handler = mock_keyboard->interfaces[0].with_handler<RemovableKeyboardInterfaceHandler>();
     interface_handler->removed_flag = removed_flag;
-    auto device_handler = mock_keyboard->with_handler<RemovableDeviceHandler>(string_pool);
+    auto device_handler = mock_keyboard->with_handler<RemovableDeviceHandler>();
     device_handler->removed_flag = removed_flag;
     device_handler->setup_interface_handlers();
     return mock_keyboard;
@@ -114,10 +112,9 @@ void expect_discarded(Server &server) {
 // use_rst 选择断开方式（FIN / RST 走 receiver 的不同收尾分支）
 void expect_removed_device_discarded(bool use_rst) {
     asio::io_context io;
-    StringPool string_pool;
     usbipdcpp::Server server;
     auto removed_flag = std::make_shared<std::atomic_bool>(false);
-    server.add_device(make_removable_keyboard(string_pool, removed_flag));
+    server.add_device(make_removable_keyboard(removed_flag));
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
     asio::ip::tcp::socket client(io);
@@ -154,10 +151,9 @@ TEST(TestDeviceRemoval, RemovedDeviceIsNotReturnedToAvailableOnRst) {
 TEST(TestDeviceRemoval, AliveDeviceIsReturnedToAvailable) {
     // 对照组：设备未被移除时断开，照常回可用列表（丢弃逻辑不能误伤正常设备）
     asio::io_context io;
-    StringPool string_pool;
     usbipdcpp::Server server;
     auto removed_flag = std::make_shared<std::atomic_bool>(false);
-    server.add_device(make_removable_keyboard(string_pool, removed_flag));
+    server.add_device(make_removable_keyboard(removed_flag));
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
     asio::ip::tcp::socket client(io);
@@ -179,10 +175,9 @@ TEST(TestDeviceRemoval, ImportRemovedDeviceFailsAndIsDiscarded) {
     // 失败（打开已拔出的设备不可能成功），失败后设备被直接丢弃，不会留在
     // 列表里反复被导入——换个连接再导入只会得到"设备不存在"
     asio::io_context io;
-    StringPool string_pool;
     usbipdcpp::Server server;
     auto removed_flag = std::make_shared<std::atomic_bool>(true); // 拔出后残留在列表里
-    server.add_device(make_removable_keyboard(string_pool, removed_flag));
+    server.add_device(make_removable_keyboard(removed_flag));
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
     asio::ip::tcp::socket client(io);
@@ -205,10 +200,9 @@ TEST(TestDeviceRemoval, StopWithRemovedImportedDevice) {
     // stop() 打断正在传输且已被移除设备的 session：设备同样要从 using 丢弃，
     // 不能在 stop 的收尾路径上被塞回可用列表
     asio::io_context io;
-    StringPool string_pool;
     usbipdcpp::Server server;
     auto removed_flag = std::make_shared<std::atomic_bool>(false);
-    server.add_device(make_removable_keyboard(string_pool, removed_flag));
+    server.add_device(make_removable_keyboard(removed_flag));
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
     asio::ip::tcp::socket client(io);
@@ -226,10 +220,9 @@ TEST(TestDeviceRemoval, SecondClientCannotImportDeviceInUseEvenIfRemoved) {
     // 设备已被移除但第一个客户端还占着（session 未收尾）：第二个客户端导入
     // 必须被拒（设备仍在 using），不能因"已移除"而放行；第一个断开后丢弃
     asio::io_context io;
-    StringPool string_pool;
     usbipdcpp::Server server;
     auto removed_flag = std::make_shared<std::atomic_bool>(false);
-    server.add_device(make_removable_keyboard(string_pool, removed_flag));
+    server.add_device(make_removable_keyboard(removed_flag));
     ASSERT_FALSE(server.start(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), 0)));
 
     asio::ip::tcp::socket client_a(io);

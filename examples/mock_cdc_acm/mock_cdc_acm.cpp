@@ -5,8 +5,8 @@ using namespace usbipdcpp;
 // ==================== MockCdcAcmCommunicationInterfaceHandler ====================
 
 MockCdcAcmCommunicationInterfaceHandler::MockCdcAcmCommunicationInterfaceHandler(
-    UsbInterface &handle_interface, StringPool &string_pool) :
-    CdcAcmCommunicationInterfaceHandler(handle_interface, string_pool) {
+    UsbInterface &handle_interface) :
+    CdcAcmCommunicationInterfaceHandler(handle_interface) {
 }
 
 void MockCdcAcmCommunicationInterfaceHandler::on_set_line_coding(const LineCoding &coding) {
@@ -28,8 +28,8 @@ void MockCdcAcmCommunicationInterfaceHandler::on_set_control_line_state(const Co
 // ==================== MockCdcAcmDataInterfaceHandler ====================
 
 MockCdcAcmDataInterfaceHandler::MockCdcAcmDataInterfaceHandler(
-    UsbInterface &handle_interface, StringPool &string_pool) :
-    CdcAcmDataInterfaceHandler(handle_interface, string_pool) {
+    UsbInterface &handle_interface) :
+    CdcAcmDataInterfaceHandler(handle_interface) {
 }
 
 void MockCdcAcmDataInterfaceHandler::on_new_connection(TransferResponder &current_session, error_code &ec) {

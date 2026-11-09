@@ -58,8 +58,8 @@ void print_usage(const char *program) {
  */
 class IsoInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    IsoInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        VirtualInterfaceHandler(handle_interface, string_pool) {
+    explicit IsoInterfaceHandler(UsbInterface &handle_interface) :
+        VirtualInterfaceHandler(handle_interface) {
     }
 
     void handle_isochronous_transfer(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
@@ -280,8 +280,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::info);
 
-    StringPool string_pool;
-
     // 接口 0 三个 alt：零带宽 / 1024 字节 IN+OUT / 512 字节 IN（bInterval=2）
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
@@ -314,8 +312,8 @@ int main(int argc, char **argv) {
     auto device = UsbDevice::make(busid, e2e::proto::vid, e2e::proto::pid_iso, std::move(interfaces), 1, 1, 0,
                                   "/usbipdcpp/e2e_vdev_iso", UsbSpeed::High);
     device->assign_interface_numbers();
-    device->interfaces[0].with_handler<IsoInterfaceHandler>(string_pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    device->interfaces[0].with_handler<IsoInterfaceHandler>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     // 等时响应（含可取消的延迟）交给设备级调度器，与 vudc 的帧服务语义一致
     device_handler->set_use_transfer_scheduler(true);
     device_handler->setup_interface_handlers();

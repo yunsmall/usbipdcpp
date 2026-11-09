@@ -9,8 +9,8 @@
 using namespace usbipdcpp;
 
 ThrottleCdcAcmDataInterfaceHandler::ThrottleCdcAcmDataInterfaceHandler(
-    UsbInterface &handle_interface, StringPool &string_pool, std::uint32_t limit_bytes, std::uint32_t window_ms) :
-    CdcAcmDataInterfaceHandler(handle_interface, string_pool), limit_bytes(limit_bytes), window_ms(window_ms) {
+    UsbInterface &handle_interface, std::uint32_t limit_bytes, std::uint32_t window_ms) :
+    CdcAcmDataInterfaceHandler(handle_interface), limit_bytes(limit_bytes), window_ms(window_ms) {
     // 防御：limit=0 会导致每一条 OUT 都立刻触发限流，不符合"固定字节数"语义
     if (this->limit_bytes == 0) {
         this->limit_bytes = 1;

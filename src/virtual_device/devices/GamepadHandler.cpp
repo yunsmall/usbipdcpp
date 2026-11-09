@@ -7,8 +7,8 @@
 
 namespace usbipdcpp {
 
-GamepadHandler::GamepadHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    HidVirtualInterfaceHandler(handle_interface, string_pool) {
+GamepadHandler::GamepadHandler(UsbInterface &handle_interface) :
+    HidVirtualInterfaceHandler(handle_interface) {
     report_descriptor_ = {
             // Usage Page (Generic Desktop)
             0x05,

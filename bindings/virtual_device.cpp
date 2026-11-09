@@ -16,6 +16,11 @@ class PyVirtualInterfaceHandler : public usbipdcpp::VirtualInterfaceHandler {
 public:
     using usbipdcpp::VirtualInterfaceHandler::VirtualInterfaceHandler;
 
+    std::wstring interface_string_to_register() const override {
+        PYBIND11_OVERRIDE_NAME(std::wstring, usbipdcpp::VirtualInterfaceHandler,
+                               "interface_string_to_register", interface_string_to_register);
+    }
+
     void on_new_connection(usbipdcpp::TransferResponder &responder, usbipdcpp::error_code &ec) override {
         // 手写转发而不是 PYBIND11_OVERRIDE：ec 是纯输出参数，Python 侧的
         // on_new_connection(self, responder) 只接收 responder（与下面 .def
@@ -146,13 +151,15 @@ void bind_virtual_device(py::module_ &m) {
              "请求停止传输");
 
     // VirtualInterfaceHandler - 支持继承
+    // 注意：Python 侧不暴露 StringPool，register_strings 使用 C++ 基类实现
+    // （iInterface 会自动登记）；Python handler 需要登记额外字符串时目前只能用 C++ 写
     py::class_<usbipdcpp::VirtualInterfaceHandler, PyVirtualInterfaceHandler,
                std::shared_ptr<usbipdcpp::VirtualInterfaceHandler>>(m, "VirtualInterfaceHandler")
-        .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
-             py::arg("handle_interface"), py::arg("string_pool"),
-             // handler 内部保存接口/字符串池的引用：必须把这两个 Python 对象
-             // 的存活期绑到 handler 上，否则临时对象被回收后引用悬垂
-             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
+        .def(py::init<usbipdcpp::UsbInterface &>(),
+             py::arg("handle_interface"),
+             // handler 内部保存接口的引用：必须把接口 Python 对象的存活期
+             // 绑到 handler 上，否则临时对象被回收后引用悬垂
+             py::keep_alive<1, 2>())
         .def("on_new_connection", [](usbipdcpp::VirtualInterfaceHandler &self,
                                      usbipdcpp::TransferResponder &responder) {
             std::error_code ec;
@@ -166,16 +173,16 @@ void bind_virtual_device(py::module_ &m) {
         })
         .def("get_string_interface_value", &usbipdcpp::VirtualInterfaceHandler::get_string_interface_value)
         .def("get_string_interface", &usbipdcpp::VirtualInterfaceHandler::get_string_interface)
-        .def("change_string_interface", &usbipdcpp::VirtualInterfaceHandler::change_string_interface,
-             py::arg("new_str"));
+        .def("interface_string_to_register", &usbipdcpp::VirtualInterfaceHandler::interface_string_to_register,
+             "Python 子类可重写本方法自定义 iInterface 字符串");
 
     // HidVirtualInterfaceHandler - 支持继承
     py::class_<usbipdcpp::HidVirtualInterfaceHandler, PyHidVirtualInterfaceHandler,
                std::shared_ptr<usbipdcpp::HidVirtualInterfaceHandler>>(m, "HidVirtualInterfaceHandler",
                                                                        py::base<usbipdcpp::VirtualInterfaceHandler>())
-        .def(py::init<usbipdcpp::UsbInterface &, usbipdcpp::StringPool &>(),
-             py::arg("handle_interface"), py::arg("string_pool"),
-             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
+        .def(py::init<usbipdcpp::UsbInterface &>(),
+             py::arg("handle_interface"),
+             py::keep_alive<1, 2>())
         // 覆盖基类同名绑定：Python 子类 super().on_new_connection(responder)
         // 必须落到 HID 实现上，否则 input_channel 拿不到会话指针
         .def("on_new_connection", [](usbipdcpp::HidVirtualInterfaceHandler &self,
@@ -198,10 +205,10 @@ void bind_virtual_device(py::module_ &m) {
     py::class_<usbipdcpp::SimpleVirtualDeviceHandler, usbipdcpp::AbstDeviceHandler,
                std::shared_ptr<usbipdcpp::SimpleVirtualDeviceHandler>>(
         m, "SimpleVirtualDeviceHandler")
-        .def(py::init<usbipdcpp::UsbDevice &, usbipdcpp::StringPool &>(),
-             py::arg("handle_device"), py::arg("string_pool"),
-             // 同接口 handler：设备/字符串池的引用由 handler 长期持有
-             py::keep_alive<1, 2>(), py::keep_alive<1, 3>())
+        .def(py::init<usbipdcpp::UsbDevice &>(),
+             py::arg("handle_device"),
+             // 同接口 handler：设备的引用由 handler 长期持有
+             py::keep_alive<1, 2>())
         .def("setup_interface_handlers", &usbipdcpp::SimpleVirtualDeviceHandler::setup_interface_handlers)
         .def("change_string_manufacturer", &usbipdcpp::SimpleVirtualDeviceHandler::change_string_manufacturer,
              py::arg("new_str"))

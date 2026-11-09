@@ -45,8 +45,6 @@
 using namespace usbipdcpp;
 
 int main() {
-    StringPool string_pool;
-
     // 1. 用 KeyboardHandler::make_interface 建 HID 键盘接口描述符模板
     //    （类/子类/协议 + 给定地址的中断 IN 端点）；make_interface 不绑 handler，
     //    绑定须在设备创建后（接口入设备、地址稳定，见下）
@@ -54,8 +52,8 @@ int main() {
     //    （speed=Full、EP0 按它自动生成等）；先绑接口 handler 再绑设备级 handler
     auto device = UsbDevice::make("1-1", 0x1234, 0x5679,
                                   {KeyboardHandler::make_interface(0x81)});
-    device->interfaces[0].with_handler<KeyboardHandler>(string_pool);
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->interfaces[0].with_handler<KeyboardHandler>();
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     // 3. 启动 USB/IP 服务器（TCP，监听 53240 端口）
     Server server;
@@ -352,7 +350,8 @@ target_link_libraries(main PRIVATE usbipdcpp::usbipdcpp usbipdcpp::libusb)
 
 ### 自定义 USB 字符串
 
-在启动服务器**之前**调用 `change_string_*` 修改设备字符串：
+在把设备导出给服务器**之前**（`setup_interface_handlers()` 之前）调用 `change_string_*`
+修改设备字符串；接口名没有 `change_string_*`，重写 `interface_string_to_register()` 即可：
 
 **设备级字符串**（通过 `VirtualDeviceHandler`）：
 ```cpp
@@ -364,10 +363,13 @@ device_handler->change_string_configuration(L"我的配置");
 
 **接口字符串**（通过 `VirtualInterfaceHandler`）：
 ```cpp
-interface_handler->change_string_interface(L"我的 HID 接口");
+class MyHidHandler : public KeyboardHandler {
+public:
+    std::wstring interface_string_to_register() const override { return L"我的 HID 接口"; }
+};
 ```
 
-所有 `change_string_*` 方法最终调用 `StringPool::change_string()`，若字符串索引无效会抛异常。
+设备级的 `change_string_*` 方法最终调用设备内部的 `StringPool`，若字符串索引无效会抛异常。
 
 ---
 
@@ -522,7 +524,7 @@ interface_handler->change_string_interface(L"我的 HID 接口");
 
    ```cpp
    // 1. 构造 HID 接口描述符（Boot 键盘，中断 IN 端点）
-   auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+   auto pipe = device->with_handler<PipeDeviceHandler>();
    // 2. 设置 HID 描述符（0x21）：追加在接口描述符后，驱动加载必需
    pipe->set_class_specific_descriptor({0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00});
    // 3. 设置报告描述符（0x22）：GET_DESCRIPTOR 时返回
@@ -631,7 +633,7 @@ USB 通信和网络通信都是 I/O 密集型任务，本项目的架构组合�
 | `UsbDevice` | USB设备描述符和配置 |
 | `AbstDeviceHandler` | 所有设备处理器的抽象基类 |
 | `LibusbServer` | 物理USB设备转发服务器封装（基于libusb） |
-| `StringPool` | 管理USB字符串描述符（最多255个） |
+| `StringPool` | 每台虚拟设备内部的 USB 字符串描述符表（由设备 handler 自己持有） |
 
 ### 设备被移除后的释放语义
 

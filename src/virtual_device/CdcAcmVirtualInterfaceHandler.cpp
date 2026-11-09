@@ -8,9 +8,8 @@
 namespace usbipdcpp {
 // ==================== CdcAcmCommunicationInterfaceHandler ====================
 
-CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface,
-                                                                         StringPool &string_pool) :
-    VirtualInterfaceHandler(handle_interface, string_pool) {
+CdcAcmCommunicationInterfaceHandler::CdcAcmCommunicationInterfaceHandler(UsbInterface &handle_interface) :
+    VirtualInterfaceHandler(handle_interface) {
     // 通知通道待发缓存上限 30 条：串口状态通知低频（状态变化才发一条），
     // 正常使用缓存几乎不会超过个位数；30 条是防主机长期不读时内存堆积的
     // 兜底，同时保留足够余量不丢低频通知（超限丢最旧）
@@ -192,8 +191,8 @@ bool CdcAcmCommunicationInterfaceHandler::cancel_pending_urb(std::uint32_t unlin
 
 // ==================== CdcAcmDataInterfaceHandler ====================
 
-CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    VirtualInterfaceHandler(handle_interface, string_pool) {
+CdcAcmDataInterfaceHandler::CdcAcmDataInterfaceHandler(UsbInterface &handle_interface) :
+    VirtualInterfaceHandler(handle_interface) {
     // pull 回调：主机请求数据且缓冲/队列都空时调用子类的 on_data_requested
     // 现场生成数据。通道在锁内调用（与原来 handle_bulk_transfer 的双锁内
     // 调用语义一致），故回调里不能调用 send_data 等函数（会死锁）

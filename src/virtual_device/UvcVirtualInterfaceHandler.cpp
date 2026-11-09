@@ -106,8 +106,19 @@ void UvcStreamingControl::deserialize(const std::uint8_t *data, std::size_t len)
 
 // ==================== UvcVideoControlHandler ====================
 
-UvcVideoControlHandler::UvcVideoControlHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-    VirtualInterfaceHandler(handle_interface, string_pool) {
+UvcVideoControlHandler::UvcVideoControlHandler(UsbInterface &handle_interface) :
+    VirtualInterfaceHandler(handle_interface) {
+}
+
+void UvcVideoControlHandler::register_strings(StringPool &pool) {
+    // USBCCGP 会从子 PDO 配置描述符里移除 IAD，usbvideo.sys 靠相同的 iInterface
+    // 把 VC/VS 识别为同一功能。两个接口在 device->interfaces 里的先后不定，所以
+    // 两边都在登记前尝试复制对方的索引：先登记的一方分到索引，后登记的一方复制。
+    // 派生类自定义接口名时 VC/VS 必须返回相同的名字，否则先登记的一方生效
+    if (vs_handler_) {
+        sync_string_interface_from(*vs_handler_);
+    }
+    VirtualInterfaceHandler::register_strings(pool);
 }
 
 void UvcVideoControlHandler::on_setup_interface_handlers() {
@@ -401,13 +412,22 @@ data_type UvcVideoControlHandler::request_get_descriptor(std::uint8_t type, std:
 
 // ==================== UvcVideoStreamingHandler ====================
 
-UvcVideoStreamingHandler::UvcVideoStreamingHandler(UsbInterface &handle_interface, StringPool &string_pool,
+UvcVideoStreamingHandler::UvcVideoStreamingHandler(UsbInterface &handle_interface,
                                                    std::unique_ptr<VideoSource> source) :
-    VirtualInterfaceHandler(handle_interface, string_pool), source_(std::move(source)) {
+    VirtualInterfaceHandler(handle_interface), source_(std::move(source)) {
     probe_data_.dwMaxVideoFrameSize = static_cast<std::uint32_t>(source_->max_frame_size());
     probe_data_.dwMaxPayloadTransferSize = 512; // wMaxPacketSize of ISO endpoint
     probe_data_.dwFrameInterval = source_->frame_interval();
     frame_interval_ = std::chrono::microseconds(source_->frame_interval() / 10); // 100ns → µs
+}
+
+void UvcVideoStreamingHandler::register_strings(StringPool &pool) {
+    // 与 VC 共用 iInterface（同 UvcVideoControlHandler::register_strings 的双向复制；
+    // 自定义接口名时两边必须返回相同的名字）
+    if (vc_handler_) {
+        sync_string_interface_from(*vc_handler_);
+    }
+    VirtualInterfaceHandler::register_strings(pool);
 }
 
 void UvcVideoStreamingHandler::on_setup_interface_handlers() {
@@ -964,7 +984,7 @@ data_type UvcVideoStreamingHandler::request_get_descriptor(std::uint8_t type, st
 // ==================== UvcDeviceHelper ====================
 
 std::error_code UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, std::uint8_t vc_interface_number,
-                                       StringPool &string_pool, std::unique_ptr<VideoSource> source) {
+                                       std::unique_ptr<VideoSource> source) {
     // 按 interface_number 定位 VC/VS 两个相邻接口（不依赖数组下标：复合设备
     // 里 UVC 接口可能不在 interfaces 开头，与其他功能交错）
     auto found = device->find_interfaces_by_number<2>(vc_interface_number);
@@ -979,27 +999,23 @@ std::error_code UvcDeviceHelper::setup(std::shared_ptr<UsbDevice> device, std::u
     auto *vc_interface = found[0];
     auto *vs_interface = found[1];
 
-    auto vc = vc_interface->with_handler<UvcVideoControlHandler>(string_pool);
-    auto vs = vs_interface->with_handler<UvcVideoStreamingHandler>(string_pool, std::move(source));
+    auto vc = vc_interface->with_handler<UvcVideoControlHandler>();
+    auto vs = vs_interface->with_handler<UvcVideoStreamingHandler>(std::move(source));
 
     vc->set_vs_handler(vs.get());
     vs->set_vc_handler(vc.get());
 
-    // VC/VS 用相同 iInterface：USBCCGP 会从子 PDO 配置描述符中移除 IAD，
-    // usbvideo.sys 依靠相同 iInterface 将 VC 和 VS 识别为同一功能
-    vs->sync_string_interface_from(*vc);
+    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
+                              : device->with_handler<SimpleVirtualDeviceHandler>();
+    // UVC 等时 URB 立即响应（虚拟设备不模拟总线等时事务节奏，帧时钟已管住
+    // 帧率），不启用设备级传输调度器（默认关；启用会被 125µs×包节流卡死
+    // 带宽，大帧画面慢放）。UNLINK 走通道自己的 cancel_pending
+    dh->setup_interface_handlers();
 
     // IAD：UVC 功能由 VC 接口声明（iFunction 必须等于 VC 的 iInterface，
     // UVC 1.5 Table 3-1；bFirstInterface 由配置描述符生成时按接口号回填）
     vc_interface->interface_association_descriptor = IadDesc::make(
             2, CC_VIDEO, SC_VIDEO_INTERFACE_COLLECTION, 0, vc->get_string_interface_value());
-
-    auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
-                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
-    // UVC 等时 URB 立即响应（虚拟设备不模拟总线等时事务节奏，帧时钟已管住
-    // 帧率），不启用设备级传输调度器（默认关；启用会被 125µs×包节流卡死
-    // 带宽，大帧画面慢放）。UNLINK 走通道自己的 cancel_pending
-    dh->setup_interface_handlers();
     return {};
 }
 

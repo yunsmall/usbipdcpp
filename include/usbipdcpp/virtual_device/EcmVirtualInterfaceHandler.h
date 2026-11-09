@@ -26,10 +26,9 @@ class USBIPDCPP_API EcmCommunicationInterfaceHandler : public VirtualInterfaceHa
 public:
     /**
      * @param handle_interface 本接口（接口号取通知 wIndex 用）
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param mac_address 设备 MAC 地址（12 个 hex 字符写 iMACAddress 字符串描述符）
      */
-    EcmCommunicationInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
+    EcmCommunicationInterfaceHandler(UsbInterface &handle_interface,
                                      std::array<std::uint8_t, 6> mac_address);
 
     /**
@@ -107,11 +106,15 @@ public:
 
     void on_disconnection(std::error_code &ec) override;
 
+    void register_strings(StringPool &pool) override;
+
     bool cancel_pending_urb(std::uint32_t unlink_seqnum) override;
 
 protected:
     std::uint16_t packet_filter_ = 0;
-    std::uint8_t mac_string_index_;
+    std::uint8_t mac_string_index_ = 0;
+    /// iMACAddress 的字符串内容，register_strings 时写入设备字符串池
+    std::wstring mac_string_value_;
     std::uint8_t interface_number_; // 本接口号（通知 wIndex 用，构造时从接口对象取）
 
     /// 状态通知通道（中断 IN 端点）：一条通知 = 一个完整消息。有挂起请求直接
@@ -136,12 +139,11 @@ class USBIPDCPP_API EcmDataInterfaceHandler : public VirtualInterfaceHandler {
 public:
     /**
      * @param handle_interface 本接口
-     * @param string_pool 字符串池（需活得比 handler 久）
      * @param backend 网络后端（可空）。非空时主机发来的帧直接交给 backend
      *        消费并立即应答；为空走挂起模式（on_frame_received / take_frame）
      */
-    EcmDataInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool,
-                            NetworkBackend *backend = nullptr);
+    explicit EcmDataInterfaceHandler(UsbInterface &handle_interface,
+                                     NetworkBackend *backend = nullptr);
 
     /**
      * @brief 析构时清除后端发帧回调

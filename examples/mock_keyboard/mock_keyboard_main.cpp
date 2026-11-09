@@ -19,13 +19,11 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     auto mock_keyboard = UsbDevice::make(busid, 0x1234, 0x5679,
                                          {KeyboardHandler::make_interface(0x81)},
                                          1, 1, 0, "/usbipdcpp/mock_keyboard", UsbSpeed::Full, 0xABCD);
-    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>(string_pool);
-    mock_keyboard->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    mock_keyboard->interfaces[0].with_handler<KeyboardHandler>();
+    mock_keyboard->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     auto &kb = dynamic_cast<KeyboardHandler &>(*mock_keyboard->interfaces[0].handler);
 

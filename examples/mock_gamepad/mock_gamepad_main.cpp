@@ -21,13 +21,11 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::info);
 
-    StringPool string_pool;
-
     auto mock_gamepad = UsbDevice::make(busid, 0x1234, 0x5680,
                                         {GamepadHandler::make_interface(0x81)},
                                         1, 1, 0, "/usbipdcpp/mock_gamepad");
-    mock_gamepad->interfaces[0].with_handler<GamepadHandler>(string_pool);
-    mock_gamepad->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    mock_gamepad->interfaces[0].with_handler<GamepadHandler>();
+    mock_gamepad->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     auto &gp = dynamic_cast<GamepadHandler &>(*mock_gamepad->interfaces[0].handler);
 

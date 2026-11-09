@@ -14,7 +14,7 @@ namespace usbipdcpp {
 
 class LibevdevMouseInterfaceHandler : public HidVirtualInterfaceHandler {
 public:
-    LibevdevMouseInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool);
+    explicit LibevdevMouseInterfaceHandler(UsbInterface &handle_interface);
 
     void on_new_connection(TransferResponder &current_session, error_code &ec) override;
     void on_disconnection(error_code &ec) override;

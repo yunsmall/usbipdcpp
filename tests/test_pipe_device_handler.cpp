@@ -9,7 +9,6 @@
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/PipeDeviceHandler.h"
 
 using namespace usbipdcpp;
@@ -28,7 +27,7 @@ struct PipeFixture {
 
 // 构造管道设备（与 examples/mock_pipe 相同的构造方式）：
 // vendor 类接口 + bulk IN(0x81) + bulk OUT(0x02)
-PipeFixture make_pipe_device(StringPool &string_pool) {
+PipeFixture make_pipe_device() {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = 0xFF, // vendor specific
@@ -68,14 +67,14 @@ PipeFixture make_pipe_device(StringPool &string_pool) {
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    auto pipe = device->with_handler<PipeDeviceHandler>();
     pipe->setup_interface_handlers();
     return {device, pipe.get()};
 }
 
 // 构造双 OUT 端点管道设备（bulk IN 0x81 + bulk OUT 0x02/0x04），
 // 用于验证 read 的跨端点全局顺序
-PipeFixture make_pipe_device_two_out(StringPool &string_pool) {
+PipeFixture make_pipe_device_two_out() {
     std::vector<UsbInterface> interfaces = {
             UsbInterface{
                     .interface_class = 0xFF,
@@ -121,7 +120,7 @@ PipeFixture make_pipe_device_two_out(StringPool &string_pool) {
             .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
             .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full),
     });
-    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    auto pipe = device->with_handler<PipeDeviceHandler>();
     pipe->setup_interface_handlers();
     return {device, pipe.get()};
 }
@@ -130,8 +129,7 @@ PipeFixture make_pipe_device_two_out(StringPool &string_pool) {
 
 TEST(TestPipeDeviceHandler, OutDataReachesRead) {
     // OUT 传输：数据经 read() 返回，ep 与数据一致，handler 回 OK RET_SUBMIT
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -164,8 +162,7 @@ TEST(TestPipeDeviceHandler, OutDataReachesRead) {
 TEST(TestPipeDeviceHandler, ReadPreservesGlobalRequestOrderAcrossEndpoints) {
     // 跨端点按主机请求的全局到达顺序返回（seqnum 序），不是按端点号：
     // 发 ep2(seq 1) → ep4(seq 2) → ep2(seq 3)，read 必须按 1、2、3 取回
-    StringPool string_pool;
-    auto fixture = make_pipe_device_two_out(string_pool);
+    auto fixture = make_pipe_device_two_out();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -214,8 +211,7 @@ TEST(TestPipeDeviceHandler, ReadPreservesGlobalRequestOrderAcrossEndpoints) {
 TEST(TestPipeDeviceHandler, InWriteServesPendingRequests) {
     // IN 请求先挂起（FIFO 无数据），write 后按请求长度分片应答：
     // 两个 8 字节请求各取走 16 字节数据的一半
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -250,8 +246,7 @@ TEST(TestPipeDeviceHandler, InWriteServesPendingRequests) {
 TEST(TestPipeDeviceHandler, ControlRequestDeliveredToRead) {
     // 非标准控制请求（Vendor+Interface+IN）：read() 拿到 setup_req 后
     // write({ep=0}) 应答，handler 回带数据的 RET_SUBMIT
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -296,8 +291,7 @@ TEST(TestPipeDeviceHandler, ControlRequestDeliveredToRead) {
 
 TEST(TestPipeDeviceHandler, DisconnectUnblocksReadWrite) {
     // 断连（on_disconnection）唤醒阻塞的 read（返回 false）与 write（返回 0）
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -317,8 +311,7 @@ TEST(TestPipeDeviceHandler, DisconnectUnblocksReadWrite) {
 TEST(TestPipeDeviceHandler, FifoFullBlocksWriteUntilHostConsumes) {
     // FIFO 满时 write 阻塞（对齐内核 FIFO 语义），宿主 IN 请求取走数据后
     // 继续写完剩余部分；分两次取走的字节拼接后与原始数据一致
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     fixture.pipe->set_in_fifo_capacity(16); // 连接前设置，FIFO 只装得下 16 字节
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -366,8 +359,7 @@ TEST(TestPipeDeviceHandler, FifoFullBlocksWriteUntilHostConsumes) {
 TEST(TestPipeDeviceHandler, CustomDescriptorServedToHost) {
     // set_custom_descriptor 设置的报告描述符经 GET_DESCRIPTOR(0x22) 返回
     // （标准请求 recipient=接口）：HID 设备用此 API 提供报告描述符
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     // 简版键盘报告描述符（验证机制，内容不限）
     const data_type report_desc = {0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0xC0};
     fixture.pipe->set_custom_descriptor(0x22, report_desc);
@@ -399,8 +391,7 @@ TEST(TestPipeDeviceHandler, CustomDescriptorServedToHost) {
 
 TEST(TestPipeDeviceHandler, ControlOutRequestDeliveredToRead) {
     // 控制请求 OUT 方向：read() 同时拿到 setup_req 与数据阶段
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -441,8 +432,7 @@ TEST(TestPipeDeviceHandler, ControlOutRequestDeliveredToRead) {
 
 TEST(TestPipeDeviceHandler, ReadWriteTimeout) {
     // read/write 超时语义：无数据/无空间时按 timeout_ms 返回（不无限阻塞）
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     fixture.pipe->set_in_fifo_capacity(8); // 小 FIFO 让 write 快速填满
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -467,8 +457,7 @@ TEST(TestPipeDeviceHandler, DisconnectWhileWriteBlockedIsSafe) {
     // 写者阻塞在满 FIFO 时断连：on_disconnection 清空通道 map，写者仍持有
     // shared_ptr，通道对象不能在写期间被销毁（否则 use-after-free）；
     // 唤醒后返回已写入量
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     fixture.pipe->set_in_fifo_capacity(4);
     CaptureResponder stub;
     usbipdcpp::error_code ec;
@@ -488,8 +477,7 @@ TEST(TestPipeDeviceHandler, DisconnectWhileWriteBlockedIsSafe) {
 TEST(TestPipeDeviceHandler, UnlinkPendingRequest) {
     // 挂起的 IN 请求被 UNLINK 取消：回 RET_UNLINK 且状态为 -ECONNRESET
     // （对齐内核 stub_tx.c 对取消 URB 的处理）
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -516,8 +504,7 @@ TEST(TestPipeDeviceHandler, UnlinkControlInAlsoClearsSetupNotification) {
     // 控制 IN 请求同时在 IN 通道挂请求、在 OUT 通道挂纯 setup 通知。UNLINK
     // 必须两处一起清：否则 read() 会取到已取消的 setup，业务层按它应答的
     // 数据会被错配给后续控制请求
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -550,8 +537,7 @@ TEST(TestPipeDeviceHandler, UnlinkControlInAlsoClearsSetupNotification) {
 TEST(TestPipeDeviceHandler, UnlinkCompletedRequestReportsSuccess) {
     // UNLINK 目标已正常完成（RET_SUBMIT 已发出）：请求不在挂起队列里，
     // RET_UNLINK 回 0（URB 已完成，对齐 stub_tx.c：找不到目标回 0）
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);
@@ -579,8 +565,7 @@ TEST(TestPipeDeviceHandler, UnlinkCompletedRequestReportsSuccess) {
 TEST(TestPipeDeviceHandler, TriggerSessionStopNotifiesResponder) {
     // 设备拔出/异常时 trigger_session_stop → responder->stop_transfer()
     // （通知 Session 立即停止，接口解耦的停止链路）
-    StringPool string_pool;
-    auto fixture = make_pipe_device(string_pool);
+    auto fixture = make_pipe_device();
     CaptureResponder stub;
     usbipdcpp::error_code ec;
     fixture.pipe->on_new_connection(stub, ec);

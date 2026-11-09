@@ -24,13 +24,11 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     auto mock_mouse = UsbDevice::make(busid, 0x1234, 0x5678,
                                       {RelativeMouseHandler::make_interface(0x81)},
                                       1, 1, 0, "/usbipdcpp/mock_mouse", UsbSpeed::Low, 0xabcd);
-    mock_mouse->interfaces[0].with_handler<RelativeMouseHandler>(string_pool);
-    mock_mouse->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    mock_mouse->interfaces[0].with_handler<RelativeMouseHandler>();
+    mock_mouse->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     auto &mouse = *std::static_pointer_cast<RelativeMouseHandler>(mock_mouse->interfaces[0].handler);
 

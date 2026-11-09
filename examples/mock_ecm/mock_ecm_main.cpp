@@ -4,9 +4,10 @@
 #include <iostream>
 #include <thread>
 
+#include <spdlog/spdlog.h>
+
 #include "../example_utils.h"
 #include "usbipdcpp/Server.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/EcmVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/SimpleVirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/network_backends/EthernetEchoBackend.h"
@@ -84,8 +85,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     // 后端：默认 echo 模式纯用户态应答 ARP/ICMP/TCP（无需 root）；--tun 模式把
     // 虚拟网卡接入本机内核协议栈（需 root，仅 Linux）。handler 持有其指针，
     // 须活得比设备久
@@ -115,11 +114,11 @@ int main(int argc, char **argv) {
                                   1, 1, static_cast<std::uint8_t>(ClassCode::CDC), "/usbipdcpp/mock_ecm");
     // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
     device->assign_interface_numbers();
-    auto comm = device->interfaces[0].with_handler<EcmCommunicationInterfaceHandler>(string_pool, mac);
-    auto data = device->interfaces[1].with_handler<EcmDataInterfaceHandler>(string_pool, backend.get());
+    auto comm = device->interfaces[0].with_handler<EcmCommunicationInterfaceHandler>(mac);
+    auto data = device->interfaces[1].with_handler<EcmDataInterfaceHandler>(backend.get());
     // 通信接口描述符的 Union 引用数据接口号（bSlaveInterface0），装配时关联
     comm->set_data_handler(data.get());
-    device->with_handler<SimpleVirtualDeviceHandler>(string_pool)->setup_interface_handlers();
+    device->with_handler<SimpleVirtualDeviceHandler>()->setup_interface_handlers();
 
     Server server;
     server.add_device(std::move(device));

@@ -4,9 +4,10 @@
 #include <iostream>
 #include <thread>
 
+#include <spdlog/spdlog.h>
+
 #include "../example_utils.h"
 #include "usbipdcpp/Server.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/RndisMsOsDeviceHandler.h"
 #include "usbipdcpp/virtual_device/RndisVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/network_backends/EthernetEchoBackend.h"
@@ -84,8 +85,6 @@ int main(int argc, char **argv) {
 
     spdlog::set_level(spdlog::level::trace);
 
-    StringPool string_pool;
-
     // 后端：默认 echo 模式纯用户态应答 ARP/ICMP/TCP（无需 root）；--tun 模式把
     // 虚拟网卡接入本机内核协议栈（需 root，仅 Linux）。handler 持有其指针，
     // 须活得比设备久
@@ -123,16 +122,16 @@ int main(int argc, char **argv) {
                                   UsbSpeed::Full, Version{1, 0, 0}, 0x04 /* CDC RNDIS 子类 */, 0x01);
     // 接口从 0 连续编号：按下标依次填 interface_number（多接口设备的 bInterfaceNumber 依赖它）
     device->assign_interface_numbers();
-    auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(string_pool, mac,
+    auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(mac,
                                                                                         UsbSpeed::Full);
-    auto data = device->interfaces[1].with_handler<RndisDataInterfaceHandler>(string_pool, backend.get(), comm.get());
+    auto data = device->interfaces[1].with_handler<RndisDataInterfaceHandler>(backend.get(), comm.get());
     // 通信接口描述符的 CallManagement/Union 引用数据接口号（bDataInterface），
     // 装配时关联（数据接口号从数据 handler 的 get_interface() 取）
     comm->set_data_handler(data.get());
     // MS OS Compatible ID "RNDIS" + SubCompatibleID "5162001" 由
     // RndisMsOsDeviceHandler 预设（Windows rndismp 按 MS_COMP_RNDIS&
     // MS_SUBCOMP_5162001 匹配，见 rndiscmp.inf；空值匹配失败退回 usbser）
-    auto dev_handler = device->with_handler<RndisMsOsDeviceHandler>(string_pool);
+    auto dev_handler = device->with_handler<RndisMsOsDeviceHandler>();
     dev_handler->setup_interface_handlers();
 
     Server server;

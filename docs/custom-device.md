@@ -49,16 +49,72 @@ UsbDevice（设备描述符 + 接口列表）
 > `UsbDevice` 则没有此约束——想更灵活地配置时完全可以手动构造（所有成员都可改）。
 > 下面的手写 `UsbInterface`/`UsbEndpoint` 仅用于理解底层结构。
 
+> 字符串描述符表（`StringPool`）由设备级 handler 自己持有，每台设备一张；
+> 接口 handler 在 `setup_interface_handlers()` 里通过 `register_strings(StringPool&)`
+> 把 iInterface 和接口自己的额外字符串（MAC、厂商自定义字符串等）登记进这张表，
+> 调用方不需要创建或传递它。重写 `register_strings` 时必须先调用基类实现；
+> iInterface 的内容由 `interface_string_to_register()` 决定，需要自定义接口名时重写它。
+
+自定义 handler 需要额外字符串（比如厂商自定义字符串、MAC 地址）时这样登记：
+
+```cpp
+#include "usbipdcpp/utils/StringPool.h"
+
+class MyInterfaceHandler : public VirtualInterfaceHandler {
+public:
+    using VirtualInterfaceHandler::VirtualInterfaceHandler;
+
+    void register_strings(StringPool &pool) override {
+        VirtualInterfaceHandler::register_strings(pool); // 先登记 iInterface
+        if (vendor_string_index == 0) {                  // 幂等：重复 setup 不重复占索引
+            vendor_string_index = pool.new_string(L"Vendor String");
+        }
+    }
+
+    std::uint8_t vendor_string_index = 0; // 厂家控制请求里用它回 iInterface 之外的字符串
+};
+```
+
+字符串所在的 `StringPool` 由设备 handler 持有，主机按 `GET_DESCRIPTOR(STRING, index)`
+取回；索引 0 是 Language ID，1–255 可分配给任意自定义字符串。
+
+### 改设备名和接口名
+
+**设备级字符串**（制造商、产品名、序列号、配置名）由 `VirtualDeviceHandler` 的
+`change_string_manufacturer()` / `change_string_product()` / `change_string_serial()` /
+`change_string_configuration()` 修改。要在把设备导出给 Server 之前改完：
+
+```cpp
+auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
+device_handler->change_string_manufacturer(L"我的公司");
+device_handler->change_string_product(L"我的设备");
+device_handler->change_string_serial(L"0001");     // 默认没有序列号，设置时新分配一个索引
+device_handler->change_string_configuration(L"我的配置");
+device_handler->setup_interface_handlers();
+```
+
+**接口名（iInterface）**不是成员变量，要换名字就派生自己的 handler，重写
+`interface_string_to_register()`（在 `setup_interface_handlers()` 登记时读一次）：
+
+```cpp
+class MyHidHandler : public KeyboardHandler {
+public:
+    using KeyboardHandler::KeyboardHandler;
+
+    std::wstring interface_string_to_register() const override {
+        return L"我的 HID 接口";
+    }
+};
+```
+
+
 所有设备都从定义描述符结构开始：
 
 ```cpp
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/Device.h"
-#include "usbipdcpp/utils/StringPool.h"
 
 using namespace usbipdcpp;
-
-StringPool string_pool;
 
 // 接口定义：class/subclass/protocol 是 USB 类标识（0xFF = vendor 自定义类）
 std::vector<UsbInterface> interfaces = {
@@ -117,7 +173,7 @@ auto device = std::make_shared<UsbDevice>(UsbDevice{
 
 ```cpp
 // 1. 绑定设备级 handler（关键一步）
-auto handler = device->with_handler<XXXDeviceHandler>(string_pool);
+auto handler = device->with_handler<XXXDeviceHandler>();
 handler->setup_interface_handlers();   // 把接口 handler 的端点注册进设备级路由表
 
 // 2. 注册到服务器并启动
@@ -162,18 +218,15 @@ std::size_t write(const PipeXfer &xfer, std::uint32_t timeout_ms = 0); // 发数
 #include <thread>
 
 #include "usbipdcpp/Server.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/PipeDeviceHandler.h"
 
 using namespace usbipdcpp;
 
 int main() {
-    StringPool string_pool;
-
     // （第一步里的 interfaces 定义，bulk IN 0x81 + bulk OUT 0x02，vendor 类）
 
     auto device = std::make_shared<UsbDevice>(UsbDevice{ /* 第一步里的设备定义 */ });
-    auto pipe = device->with_handler<PipeDeviceHandler>(string_pool);
+    auto pipe = device->with_handler<PipeDeviceHandler>();
     pipe->setup_interface_handlers();
 
     Server server;
@@ -344,12 +397,12 @@ USB 设备协议是**异步**的：主机发 IN 请求时设备可能没有数�
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 // 以上是接口 handler 类所需的 includes；整个程序还需要第一步的 includes
-// （StringPool / Device / Server）
+// （Device / Server）
 
 class EchoInterfaceHandler : public VirtualInterfaceHandler {
 public:
-    EchoInterfaceHandler(UsbInterface &handle_interface, StringPool &string_pool) :
-        VirtualInterfaceHandler(handle_interface, string_pool) {
+    explicit EchoInterfaceHandler(UsbInterface &handle_interface) :
+        VirtualInterfaceHandler(handle_interface) {
         // 缓冲上限：主机长期不读时丢最旧保最新，防止内存无限增长
         echo_channel.set_max_pending_messages(1024);
     }
@@ -361,7 +414,7 @@ public:
      * 形参 = 该接口每类端点一个地址（参数名即用途，调用方可显式指定任意地址），
      * 端点属性/方向由工厂给定合理默认，只暴露地址可变。
      * handler 不在工厂里绑定：handler 构造持接口引用，须等接口入设备（地址稳定）
-     * 后由调用方 device->interfaces[i].with_handler<EchoInterfaceHandler>(string_pool) 绑定。
+     * 后由调用方 device->interfaces[i].with_handler<EchoInterfaceHandler>() 绑定。
      * @param in_ep Bulk IN 端点地址（设备→主机）
      * @param out_ep Bulk OUT 端点地址（主机→设备）
      */
@@ -490,7 +543,7 @@ static UsbInterface make_interface(std::uint8_t in_ep, std::uint8_t out_ep);
 
 - **工厂只描述接口，不绑定 handler**：handler 构造持接口引用，接口对象入设备
   （`UsbDevice::make` 完成）后地址才稳定，此时调用
-  `device->interfaces[i].with_handler<T>(string_pool, ...)` 绑定
+  `device->interfaces[i].with_handler<T>(...)` 绑定
 - **端点地址必须显式传**（不能省）——外界要能控制端点号，参数名即该端点的用途
 - **handler 构造带业务参数**（如 AbsoluteMouseHandler 的屏幕尺寸、DigitizerHandler 的
   坐标上限）：绑定 handler 时传给 with_handler，工厂不接收
@@ -515,7 +568,6 @@ static UsbInterface make_interface(std::uint8_t in_ep, std::uint8_t out_ep);
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
 #include "usbipdcpp/Session.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/VirtualDeviceHandler.h"
 #include "usbipdcpp/virtual_device/VirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/InEndpointChannel.h"
@@ -525,15 +577,13 @@ using namespace usbipdcpp;
 // 这里放上面定义的 EchoInterfaceHandler 类
 
 int main() {
-    StringPool string_pool;
-
     // EchoInterfaceHandler::make_interface 返回描述符模板（vendor 类，bulk IN
     // 0x81 + bulk OUT 0x02）；接口 handler 须在设备创建后绑定（handler 持接口
     // 引用，接口入设备后地址才稳定）
     auto device = UsbDevice::make("1-1", 0x1234, 0x5678,
                                   {EchoInterfaceHandler::make_interface(0x81, 0x02)});
-    device->interfaces[0].with_handler<EchoInterfaceHandler>(string_pool);
-    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+    device->interfaces[0].with_handler<EchoInterfaceHandler>();
+    auto device_handler = device->with_handler<SimpleVirtualDeviceHandler>();
     device_handler->setup_interface_handlers();   // 必须：注册端点路由 + 接口 handler
 
     Server server;
@@ -654,8 +704,7 @@ intf.interface_association_descriptor = IadDesc::make(
 
 ```cpp
 std::error_code MyFeatureHelper::setup(std::shared_ptr<UsbDevice> device,
-                                       std::uint8_t first_interface_number,
-                                       StringPool &string_pool, ...) {
+                                       std::uint8_t first_interface_number, ...) {
     // 1. 按编号定位相邻两个接口
     auto found = device->find_interfaces_by_number<2>(first_interface_number);
     if (!found[0] || !found[1]) {
@@ -665,21 +714,21 @@ std::error_code MyFeatureHelper::setup(std::shared_ptr<UsbDevice> device,
     auto *intf1 = found[1];
 
     // 2. with_handler 绑定（非破坏：只动这两个接口的 handler）
-    auto h0 = intf0->with_handler<FeatureControlHandler>(string_pool);
-    auto h1 = intf1->with_handler<FeatureDataHandler>(string_pool, h0.get()); // 3. 互持引用
+    auto h0 = intf0->with_handler<FeatureControlHandler>();
+    auto h1 = intf1->with_handler<FeatureDataHandler>(h0.get()); // 3. 互持引用
 
     // 3. IAD 声明（功能首个接口）
     intf0->interface_association_descriptor = IadDesc::make(
             2, static_cast<std::uint8_t>(ClassCode::CDC), 0x06);
 
     auto dh = device->handler ? std::dynamic_pointer_cast<VirtualDeviceHandler>(device->handler)
-                              : device->with_handler<SimpleVirtualDeviceHandler>(string_pool);
+                              : device->with_handler<SimpleVirtualDeviceHandler>();
     dh->setup_interface_handlers(); // 必须：注册端点路由 + 接口 handler
     return {};
 }
 
 // 调用方：
-if (auto ec = MyFeatureHelper::setup(device, 0, string_pool, ...); ec) {
+if (auto ec = MyFeatureHelper::setup(device, 0, ...); ec) {
     SPDLOG_ERROR("功能装配失败：{}", ec.message());
     return 1;
 }
@@ -701,12 +750,12 @@ auto device = UsbDevice::make(busid, 0x1234, 0x56E3, std::move(interfaces),
 device->assign_interface_numbers(); // interface_number 按 0, 1 填好
 
 // 装配：数据 handler 持通信 handler 指针（状态机归属方）
-auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(string_pool, mac, UsbSpeed::Full);
-device->interfaces[1].with_handler<RndisDataInterfaceHandler>(string_pool, backend.get(), comm.get());
+auto comm = device->interfaces[0].with_handler<RndisCommunicationInterfaceHandler>(mac, UsbSpeed::Full);
+device->interfaces[1].with_handler<RndisDataInterfaceHandler>(backend.get(), comm.get());
 
 // MS OS 1.0 Compatible ID "RNDIS"：Windows 按它加载内置 rndismp 网卡驱动
 // （配合 IAD 才能触发探测；没有则被 usbser 误绑成串口）
-auto dev_handler = device->with_handler<MSOSSimpleVirtualDeviceHandler>(string_pool);
+auto dev_handler = device->with_handler<MSOSSimpleVirtualDeviceHandler>();
 dev_handler->set_ms_os_compatible_id("RNDIS");
 dev_handler->setup_interface_handlers();
 ```

@@ -13,7 +13,6 @@
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Interface.h"
 #include "usbipdcpp/protocol.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UvcConstants.h"
 #include "usbipdcpp/virtual_device/UvcVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/video_sources/VideoSource.h"
@@ -78,18 +77,17 @@ struct StubSource : VideoSource {
 };
 
 struct UvcTestEnv {
-    StringPool pool;
     // 传输分配器：必须声明在 stub 之前（成员逆序析构，op 后死）——
     // submits 里的 RetSubmit 持 TransferHandle，析构时要用 op 释放
     GenericTransferOperator op;
     UsbInterface intf{.interface_class = 0x0E, .interface_subclass = 0x02, .interface_protocol = 0x00};
     StubSource *source = nullptr;
-    UvcVideoStreamingHandler handler{intf, pool, std::unique_ptr<StubSource>()};
+    UvcVideoStreamingHandler handler{intf, std::unique_ptr<StubSource>()};
     CaptureResponder stub;
     usbipdcpp::error_code ec;
 
     explicit UvcTestEnv(std::size_t frame_size = 64) :
-        source(new StubSource(frame_size)), handler(intf, pool, std::unique_ptr<StubSource>(source)) {
+        source(new StubSource(frame_size)), handler(intf, std::unique_ptr<StubSource>(source)) {
         handler.on_new_connection(stub, ec);
     }
 
@@ -346,7 +344,6 @@ TEST(UvcDescriptors, H264FormatAndFrameDescriptorFollowPayloadSpec) {
     // UVC 1.5 H.264 Payload Table 3-1/3-2：格式描述符固定 52 字节且没有
     // guidFormat 字段（GUID 只属于 Uncompressed/Frame-Based 格式）；
     // 帧描述符的 wWidth 从 offset 4 开始，帧间隔数量/列表在 43/44
-    StringPool pool;
     UsbInterface intf{.interface_class = 0x0E, .interface_subclass = 0x02, .interface_protocol = 0x00};
     auto src = std::make_unique<StubSource>(64);
     src->fmt = {.fourcc = UvcFourCC::H264,
@@ -357,7 +354,7 @@ TEST(UvcDescriptors, H264FormatAndFrameDescriptorFollowPayloadSpec) {
                 .min_frame_interval = 333333,
                 .max_frame_interval = 666666,
                 .bits_per_pixel = 0};
-    UvcVideoStreamingHandler handler(intf, pool, std::move(src));
+    UvcVideoStreamingHandler handler(intf, std::move(src));
     handler.on_setup_interface_handlers();
     auto desc = handler.get_class_specific_descriptor();
 
@@ -434,7 +431,6 @@ public:
 TEST(TestUvcHandler, SetupRejectsForeignDeviceHandler) {
     // 设备已绑定其它类型的 handler 时，UVC 装配必须报参数错误，不能
     // dynamic_pointer_cast 得到空指针后直接解引用
-    StringPool pool;
     std::vector<UsbInterface> interfaces = {
             {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOCONTROL, .interface_protocol = 0x00},
             {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOSTREAMING, .interface_protocol = 0x00},
@@ -443,8 +439,29 @@ TEST(TestUvcHandler, SetupRejectsForeignDeviceHandler) {
     device->assign_interface_numbers();
     device->handler = std::make_shared<ForeignDeviceHandler>(*device);
 
-    auto err = UvcDeviceHelper::setup(device, 0, pool, std::make_unique<StubSource>());
+    auto err = UvcDeviceHelper::setup(device, 0, std::make_unique<StubSource>());
     EXPECT_EQ(err, make_error_code(ErrorType::INVALID_ARG));
     EXPECT_EQ(device->interfaces[0].handler, nullptr);
     EXPECT_EQ(device->interfaces[1].handler, nullptr);
+}
+
+TEST(TestUvcHandler, SharedInterfaceStringIndependentOfArrayOrder) {
+    // USBCCGP 移除 IAD 后 usbvideo.sys 靠相同 iInterface 认出 VC/VS 是同一功能。
+    // 复合设备里接口在数组中的顺序与接口编号顺序无关：这里刻意把 VS 放在数组
+    // 前面（编号仍是 VC=0、VS=1），两者也必须拿到同一个字符串索引
+    std::vector<UsbInterface> interfaces = {
+            {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOSTREAMING, .interface_protocol = 0x00},
+            {.interface_class = CC_VIDEO, .interface_subclass = SC_VIDEOCONTROL, .interface_protocol = 0x00},
+    };
+    interfaces[0].interface_number = 1;
+    interfaces[1].interface_number = 0;
+    auto device = UsbDevice::make("1-1", 0x1234, 0x5678, std::move(interfaces));
+
+    auto err = UvcDeviceHelper::setup(device, 0, std::make_unique<StubSource>());
+    ASSERT_FALSE(err) << err.message();
+
+    auto vs_index = device->interfaces[0].handler->get_string_interface_value();
+    auto vc_index = device->interfaces[1].handler->get_string_interface_value();
+    ASSERT_NE(vs_index, 0);
+    EXPECT_EQ(vs_index, vc_index);
 }

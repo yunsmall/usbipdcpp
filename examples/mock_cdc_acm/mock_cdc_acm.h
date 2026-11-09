@@ -10,8 +10,7 @@
  */
 class MockCdcAcmCommunicationInterfaceHandler : public usbipdcpp::CdcAcmCommunicationInterfaceHandler {
 public:
-    MockCdcAcmCommunicationInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,
-                                             usbipdcpp::StringPool &string_pool);
+    explicit MockCdcAcmCommunicationInterfaceHandler(usbipdcpp::UsbInterface &handle_interface);
 
     void on_set_line_coding(const usbipdcpp::LineCoding &coding) override;
     void on_set_control_line_state(const usbipdcpp::ControlSignalState &state) override;
@@ -23,8 +22,7 @@ public:
  */
 class MockCdcAcmDataInterfaceHandler : public usbipdcpp::CdcAcmDataInterfaceHandler {
 public:
-    MockCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface,
-                                    usbipdcpp::StringPool &string_pool);
+    explicit MockCdcAcmDataInterfaceHandler(usbipdcpp::UsbInterface &handle_interface);
 
     void on_new_connection(usbipdcpp::TransferResponder &current_session, usbipdcpp::error_code &ec) override;
     void on_disconnection(usbipdcpp::error_code &ec) override;

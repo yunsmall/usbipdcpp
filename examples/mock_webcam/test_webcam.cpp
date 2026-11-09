@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "usbipdcpp/Device.h"
-#include "usbipdcpp/utils/StringPool.h"
 #include "usbipdcpp/virtual_device/UacVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/UvcVirtualInterfaceHandler.h"
 #include "usbipdcpp/virtual_device/audio_sources/SineWaveSource.h"
@@ -21,7 +20,6 @@ namespace {
 
 // 与 mock_webcam_main 相同的装配流程：UVC(VC/VS) 接口 0-1 + UAC 麦克风(AC/AS) 接口 2-3
 struct WebcamTestEnv {
-    StringPool pool;
     std::shared_ptr<UsbDevice> device;
 
     WebcamTestEnv() {
@@ -65,9 +63,9 @@ struct WebcamTestEnv {
         // 装配顺序同 mock_webcam_main：先 UVC 后 UAC（UAC 打开设备级调度器，
         // UVC 等时 URB 不走调度器，互不影响，见 UvcDeviceHelper::setup 注释）。
         // 构造函数里不能用 ASSERT（非 void 返回），装配失败用 EXPECT 报出
-        auto ec_uvc = UvcDeviceHelper::setup(device, 0, pool, std::make_unique<ColorBarSource>(320, 240, 15));
+        auto ec_uvc = UvcDeviceHelper::setup(device, 0, std::make_unique<ColorBarSource>(320, 240, 15));
         EXPECT_EQ(ec_uvc, std::error_code());
-        auto ec_uac = UacDeviceHelper::setup_microphone(device, 2, pool,
+        auto ec_uac = UacDeviceHelper::setup_microphone(device, 2,
                                                         std::make_unique<SineWaveSource>(440, std::vector<std::uint32_t>{48000}, 1, 0.5));
         EXPECT_EQ(ec_uac, std::error_code());
     }
