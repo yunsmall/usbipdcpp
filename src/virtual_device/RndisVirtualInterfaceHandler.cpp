@@ -4,6 +4,7 @@
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 #include "usbipdcpp/Session.h"
+#include "usbipdcpp/utils/SmallVector.h"
 #include "usbipdcpp/virtual_device/CdcAcmConstants.h"
 #include "usbipdcpp/virtual_device/RndisConstants.h"
 
@@ -68,8 +69,9 @@ struct RndisFrame {
     std::size_t message_offset;
 };
 
-std::vector<RndisFrame> unwrap_rndis_packets(const data_type &data) {
-    std::vector<RndisFrame> frames;
+// 常见的 bulk OUT 只聚合 1–2 帧，栈上容量覆盖常见情况；聚合更多时自动转堆
+SmallVector<RndisFrame, 4> unwrap_rndis_packets(const data_type &data) {
+    SmallVector<RndisFrame, 4> frames;
     std::size_t pos = 0;
     // 主机方向头 24 字节（RNDIS_HOST_HEADER_LEN）：不足则本条及之后都是残渣
     while (pos + RNDIS_HOST_HEADER_LEN <= data.size()) {

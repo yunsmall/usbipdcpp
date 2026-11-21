@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "usbipdcpp/Session.h"
+#include "usbipdcpp/utils/SmallVector.h"
 
 namespace usbipdcpp {
 
@@ -281,7 +282,9 @@ void TransferScheduler::on_timer(const asio::error_code &ec) {
         PendingUrb urb;
         std::uint8_t ep_address;
     };
-    std::vector<DueUrb> due;
+    // 到期 URB 数上限就是活动端点数（USB 设备最多 32 个端点），栈上缓冲
+    // 覆盖常见设备，避免每个定时器周期分配一次
+    SmallVector<DueUrb, 16> due;
     {
         std::lock_guard lock(mutex);
         timer_pending = false;
