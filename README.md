@@ -9,6 +9,7 @@ A C++ library for creating usbip servers
 - ✅ **USBIP server**: Platform-independent implementation via libusb (works wherever libusb is supported)
 - ✅ **All four USB transfer types** (control, bulk, interrupt, isochronous) tested and working via libusb backend
 - ✅ **Virtual devices**: HID (mouse, keyboard, gamepad, digitizer), MSC (USB flash drive), CDC ACM (serial port), CDC ECM/RNDIS (ethernet), UVC (camera), UAC (microphone, speaker), webcam (UVC camera + UAC microphone composite) — no libusb dependency
+- 📦 **Ready-to-run examples**: every built-in device has a complete program under [`examples/`](examples) — `mock_keyboard`, `mock_mouse`, `mock_msc`, `mock_cdc_acm`, `mock_ecm`, `mock_rndis`, `mock_uvc`, `mock_audio`, `mock_speaker`, `mock_webcam`, … (details in [Examples](#examples))
 - 🔌 **Hot-plug support**: Automatic device insertion/removal detection (LibusbServer)
 - 🧩 **Extensible design**: well-defined abstract interfaces for developers to extend
 

@@ -9,6 +9,7 @@
 - ✅ **USBIP 服务器**: 基于 libusb 实现，支持所有 libusb 兼容平台
 - ✅ **四种 USB 传输类型**（控制、批量、中断、同步）均通过 libusb 后端测试
 - ✅ **虚拟设备**: HID（鼠标、键盘、手柄、触摸屏）、MSC（U盘）、CDC ACM（串口）、CDC ECM/RNDIS（网卡）、UVC（摄像头）、UAC（麦克风、扬声器）、webcam（UVC 摄像头 + UAC 麦克风复合设备）—— 无需 libusb
+- 📦 **开箱即用的示例**: 每个内置设备在 [`examples/`](examples) 下都有完整可运行的程序——`mock_keyboard`、`mock_mouse`、`mock_msc`、`mock_cdc_acm`、`mock_ecm`、`mock_rndis`、`mock_uvc`、`mock_audio`、`mock_speaker`、`mock_webcam`……（详见[例子](#例子)）
 - 🔌 **热插拔支持**: 自动检测设备插入/拔出（LibusbServer）
 - 🧩 **可扩展设计**: 提供完善的抽象接口供开发者扩展
 
