@@ -131,7 +131,7 @@ bash tests/e2e/linux/run_all.sh
 | test_keyboard.sh | HID keyboard | evtest captures KEY_A events |
 | test_keyboard_led.sh | HID keyboard LED | host writes capslock brightness → SET_REPORT(Output) → server-side LED state changes |
 | test_mouse.sh | HID mouse | evtest captures REL motion events |
-| test_absolute_mouse.sh | HID absolute mouse | enum only by default; with `HID_EVENTS=1` sends movement and captures EV_ABS (moves the host cursor) |
+| test_absolute_mouse.sh | HID absolute mouse | enum only by default; with `HID_EVENTS=1` sends movement and captures EV_ABS (events stay inside the WSL VM and do not affect Windows; on bare-metal Linux they would move the local cursor) |
 | test_gamepad.sh | HID gamepad | evtest captures gamepad events |
 | test_cdc_throttle.sh | Serial (throttled) | ttyACM count report |
 | test_pipe.sh | vendor pipe | pyusb bulk OUT→IN echo + periodic-send logs |

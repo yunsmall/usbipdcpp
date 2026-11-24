@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # keyboard 端到端：attach 后键盘输入设备出现。
 # 默认只验证枚举，不注入按键；设 HID_EVENTS=1 才启动示例的自动按键并用
-# evtest 捕获（会向宿主机输入 A 键，必须确认没人在用这台机器）。
+# evtest 捕获（事件只进 WSL 虚拟机，不影响 Windows；裸机 Linux 上跑则会
+# 向本机输入 A 键，必须确认没人在用那台机器）。
 set -e
 source "$(dirname "$0")/common.sh"
 

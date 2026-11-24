@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # gamepad 端到端：attach 后手柄输入设备出现。
 # 默认只验证枚举，不注入事件；设 HID_EVENTS=1 才启动示例的周期状态变化
-# 并用 evtest 捕获（会影响宿主机的手柄输入设备）。
+# 并用 evtest 捕获（事件只进 WSL 虚拟机，不影响 Windows；裸机 Linux 上跑
+# 则会影响本机的手柄输入设备）。
 set -e
 source "$(dirname "$0")/common.sh"
 

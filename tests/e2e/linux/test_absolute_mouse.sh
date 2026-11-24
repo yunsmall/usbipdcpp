@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 绝对坐标鼠标：attach 后主机出现鼠标输入设备。
 # 默认只验证枚举，不发送移动命令；设 HID_EVENTS=1 才通过示例的命令管道
-# 发送移动并用 evtest 捕获 EV_ABS（会移动宿主机光标）。
+# 发送移动并用 evtest 捕获 EV_ABS（事件只进 WSL 虚拟机，不影响 Windows；
+# 裸机 Linux 上跑则会影响本机光标）。
 #
 # absolute_mouse 从 stdin 读命令，stdin EOF 会直接退出；start_server 把 stdin
 # 接到 /dev/null 无法使用，这里自己起进程并用 FIFO 保持命令通道。

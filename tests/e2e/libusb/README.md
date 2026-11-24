@@ -1,28 +1,31 @@
 # libusb 后端真机 e2e（WSL2，不用 Windows）
 
 这套流程用内核自带的 `dummy_hcd` + configfs 造一个“真 USB 设备”，让 libusb 后端像访问物理
-设备一样访问它，再由另一个 WSL 发行版通过 USB/IP 导入并做读写验证。全程不经过 Windows 的
+设备一样访问它，再在同一个 WSL2 发行版里通过 USB/IP 导入并做读写验证。全程不经过 Windows 的
 usbip-win2（那个驱动 bug 多、容易蓝屏）。
 
 ## 拓扑
 
 ```
-Ubuntu 24.04（导出侧）                         Kali（导入侧）
-┌──────────────────────────────┐              ┌──────────────────────────────┐
-│ dummy_hcd + libcomposite     │              │ vhci_hcd                     │
-│   gadget: mass_storage       │              │   usbip client               │
-│   host 侧枚举成 /dev/sdg     │              │   导入后 usbcore 再枚举      │
-│                              │              │                              │
-│ libusb_server -d -p 53241 ───┼── TCP ──────>│ usbip --tcp-port 53241        │
-│   (打开 /dev/bus/usb/...)    │  127.0.0.1   │   attach -r 127.0.0.1 -b 3-1 │
-└──────────────────────────────┘              └──────────────────────────────┘
+同一个 WSL2 发行版（导出和导入都在这里）
+┌──────────────────────────────────────────────────┐
+│ dummy_hcd + libcomposite                         │
+│   gadget: mass_storage → host 侧枚举成 /dev/sdg  │
+│                                                  │
+│ libusb_server -d -p 53241                        │
+│   (打开 /dev/bus/usb/...)                        │
+│        │ USB/IP 127.0.0.1:53241                  │
+│        ▼                                         │
+│ usbip attach -r 127.0.0.1 -b 3-1                 │
+│   → vhci_hcd 导入后 usbcore 重新枚举             │
+└──────────────────────────────────────────────────┘
 ```
 
 关键前提：**所有 WSL2 发行版运行在同一个轻量 VM、同一个内核实例里**，网络命名空间和内核
 对象（模块、`/sys`、`/dev`、`dmesg`）都是共享的。因此：
 
-- 一个发行版里 `modprobe dummy_hcd`、创建 gadget，另一个发行版立刻能看到同一个 UDC 和设备
-- 导出侧监听 `127.0.0.1`，导入侧就能直接连上（两边 `hostname -I` 相同）
+- 一个发行版就够了：服务端监听 `127.0.0.1`，`usbip attach` 连同一个地址即可
+- 想分成两个发行版跑也可以（它们看到的是同一套 UDC 和设备），但不是必需的
 - 这测试的是 libusb 后端 + USB/IP + vhci 链路，**不能**用来测不同内核版本的兼容性
 
 ## 自动化用例（FunctionFS 设备 + libusb 客户端）
@@ -126,7 +129,8 @@ libusb 客户端在本地就会拒绝的请求（当前 alt 不存在的端点�
 - iso 用例另需 `CONFIG_USBIP_VHCI_NR_HCS>=2`（两个以上 vhci 控制器，见“iso 用例”）
 - `/sys/kernel/config` 已挂载（configfs）
 - 导出侧有 `libusb_server`（默认在 `<构建目录>/libusb_server`）
-- 导入侧有 usbip 客户端（Kali：`apt install usbip`，端口参数是 `--tcp-port`）
+- 有 usbip 客户端（和导出同一个发行版即可；自行编译的内核 userland 版用 `-t`，
+  发行版自带包用 `--tcp-port`）
 - root 权限（创建 gadget、libusb 打开设备、vhci attach/detach 都需要）
 
 ## 步骤
@@ -232,14 +236,15 @@ rm -f /tmp/gadget_msc.img
 - attach 时服务端会 detach host 侧的内核驱动（如 `usb-storage`），导出侧原来的 `/dev/sdX`
   会消失；导入设备随后接管同一个空闲的 sd 名字。`dmesg` 里能看到旧设备
   `Synchronizing SCSI cache` 和新设备枚举，这是正常现象，不是两个独立设备
-- 两端共享同一个内核：一侧的 `/sys`、`/dev`、`dmesg` 变化另一侧也能看到，排查时不要误判
+- 所有 WSL2 发行版共享同一个内核（如果你确实开了两个发行版）：一侧的 `/sys`、`/dev`、
+  `dmesg` 变化另一侧也能看到，排查时不要误判
 
 ## 已知现象
 
 - vhci 枚举阶段服务端可能打印几条 `error on endpoint 129`（0x81 Bulk IN），属于 Bulk-Only
   传输的短包路径，设备仍能正常枚举和读写；如果后续出现真实 I/O 失败再单独排查
-- 导入侧 `usbip` 的端口参数：发行版自带包（如 Kali）用 `--tcp-port`；自行编译的新版
-  usbip 用 `-t`，两者不要混用
+- `usbip` 的端口参数：自行编译的内核 userland 版用 `-t`，发行版自带包（如 apt 的
+  usbip）用 `--tcp-port`，两者不要混用
 
 ### dummy_hcd 的行为限制（写用例时必须知道）
 

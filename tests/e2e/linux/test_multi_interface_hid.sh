@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 复合 HID：一个配置里同时有相对鼠标（接口 0）和键盘（接口 1）。
 # 默认用 --no-demo 只验证两个接口各自枚举成正确设备类型；设 HID_EVENTS=1
-# 才启动示例的输入线程并并发跑 evtest（会移动宿主机鼠标、敲键盘）。
+# 才启动示例的输入线程并并发跑 evtest（事件只进 WSL 虚拟机，不影响
+# Windows；裸机 Linux 上跑则会移动本机鼠标、敲键盘）。
 set -e
 source "$(dirname "$0")/common.sh"
 

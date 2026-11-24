@@ -102,7 +102,7 @@ bash tests/e2e/linux/run_all.sh
 | test_keyboard.sh | HID 键盘 | evtest 捕获 KEY_A 事件 |
 | test_keyboard_led.sh | HID 键盘 LED | 主机写 capslock brightness → SET_REPORT(Output) → 服务器侧 LED 状态变化 |
 | test_mouse.sh | HID 鼠标 | evtest 捕获 REL 移动事件 |
-| test_absolute_mouse.sh | HID 绝对坐标鼠标 | 默认只验证枚举；`HID_EVENTS=1` 时发送移动并捕获 EV_ABS（会移动宿主机光标） |
+| test_absolute_mouse.sh | HID 绝对坐标鼠标 | 默认只验证枚举；`HID_EVENTS=1` 时发送移动并捕获 EV_ABS（事件只进 WSL 虚拟机，不影响 Windows；裸机 Linux 上跑会影响本机光标） |
 | test_gamepad.sh | HID 手柄 | evtest 捕获手柄事件 |
 | test_cdc_throttle.sh | 串口（节流） | ttyACM 计数上报 |
 | test_pipe.sh | vendor 管道 | pyusb bulk OUT→IN 回显 + 周期发送日志 |

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # mouse 端到端：attach 后鼠标输入设备出现。
 # 默认只验证枚举，不注入移动；设 HID_EVENTS=1 才启动示例的周期移动并用
-# evtest 捕获（会移动宿主机光标，必须确认没人在用这台机器）。
+# evtest 捕获（事件只进 WSL 虚拟机，不影响 Windows；裸机 Linux 上跑则会
+# 移动本机光标）。
 set -e
 source "$(dirname "$0")/common.sh"
 

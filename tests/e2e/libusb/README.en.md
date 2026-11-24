@@ -1,29 +1,32 @@
 # libusb backend real-device e2e (WSL2, no Windows)
 
 This procedure uses the kernel's `dummy_hcd` plus configfs to create a "real USB device", lets the
-libusb backend access it exactly like physical hardware, and imports it from another WSL distro
-over USB/IP for read/write verification. The Windows usbip-win2 client is not involved.
+libusb backend access it exactly like physical hardware, and imports it over USB/IP in the same
+WSL2 distro for read/write verification. The Windows usbip-win2 client is not involved.
 
 ## Topology
 
 ```
-Ubuntu 24.04 (exporter)                        Kali (importer)
-┌──────────────────────────────┐              ┌──────────────────────────────┐
-│ dummy_hcd + libcomposite     │              │ vhci_hcd                     │
-│   gadget: mass_storage       │              │   usbip client               │
-│   host side enumerates /dev/sdg             │   usbcore re-enumerates      │
-│                              │              │                              │
-│ libusb_server -d -p 53241 ───┼── TCP ──────>│ usbip --tcp-port 53241        │
-│   (opens /dev/bus/usb/...)   │  127.0.0.1   │   attach -r 127.0.0.1 -b 3-1 │
-└──────────────────────────────┘              └──────────────────────────────┘
+One WSL2 distro (both exporter and importer)
+┌──────────────────────────────────────────────────┐
+│ dummy_hcd + libcomposite                         │
+│   gadget: mass_storage → host side /dev/sdg      │
+│                                                  │
+│ libusb_server -d -p 53241                        │
+│   (opens /dev/bus/usb/...)                       │
+│        │ USB/IP 127.0.0.1:53241                  │
+│        ▼                                         │
+│ usbip attach -r 127.0.0.1 -b 3-1                 │
+│   → vhci_hcd imports, usbcore re-enumerates      │
+└──────────────────────────────────────────────────┘
 ```
 
 Key premise: **all WSL2 distros run in the same lightweight VM and share one kernel instance**,
 including the network namespace and kernel objects (`/sys`, `/dev`, `dmesg`, modules). Therefore:
 
-- Loading `dummy_hcd` or creating a gadget in one distro is immediately visible in another
-- A server listening on `127.0.0.1` in one distro is reachable from another
-  (`hostname -I` is identical)
+- One distro is enough: the server listens on `127.0.0.1` and `usbip attach` connects to the
+  same address
+- Splitting into two distros also works (they see the same UDC and devices), but it is not required
 - This validates the libusb backend + USB/IP + vhci path; it does **not** validate different
   kernel versions
 
@@ -143,7 +146,8 @@ It only needs the virtual device, not a second vhci controller.
 - the iso case additionally needs `CONFIG_USBIP_VHCI_NR_HCS>=2` (see "iso case")
 - `/sys/kernel/config` mounted (configfs)
 - `libusb_server` on the exporter (normally `<build dir>/libusb_server`)
-- usbip client on the importer (Kali: `apt install usbip`, port option is `--tcp-port`)
+- a usbip client (the same distro as the exporter is enough; a self-built kernel-usertool build
+  uses `-t`, distro packages use `--tcp-port`)
 - root privileges (gadget creation, libusb device access, vhci attach/detach)
 
 ## Steps
@@ -252,15 +256,16 @@ rm -f /tmp/gadget_msc.img
 - On attach, the server detaches the host-side kernel driver (e.g. `usb-storage`), so the
   exporter's original `/dev/sdX` disappears; the imported device then takes the same free sd
   name. The `Synchronizing SCSI cache` and re-enumeration entries in `dmesg` are expected
-- Both distros share the same kernel: `/sys`, `/dev`, `dmesg` changes are visible on both sides
+- All WSL2 distros share the same kernel (if you do run two): `/sys`, `/dev`, `dmesg` changes
+  are visible on both sides
 
 ## Known observations
 
 - During vhci enumeration the server may log a few `error on endpoint 129` (0x81 Bulk IN)
   messages. They belong to the Bulk-Only short-packet path; enumeration and I/O still work.
   Investigate only if real I/O failures appear
-- Port option differs by usbip build: distro packages (e.g. Kali) use `--tcp-port`, a
-  self-built newer usbip uses `-t`
+- Port option differs by usbip build: a self-built kernel-usertool usbip uses `-t`, distro
+  packages (e.g. apt's usbip) use `--tcp-port`
 
 ### dummy_hcd behavioural limits (important when writing cases)
 

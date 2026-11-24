@@ -6,7 +6,7 @@ set -e
 source "$(dirname "$0")/common.sh"
 
 setup_workdir keyboard_led
-echo "== keyboard_led: 启动服务器（--no-demo，避免向宿主机注入按键）+ attach"
+echo "== keyboard_led: 启动服务器（--no-demo，不自动发送按键）+ attach"
 start_server mock_keyboard --no-demo || { report keyboard_led; exit 1; }
 attach_device 1-1
 
