@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <cxxopts.hpp>
+
 namespace usbipdcpp::e2e {
 
 namespace {
@@ -19,32 +21,42 @@ void transfer_callback(libusb_transfer *transfer) {
 }  // namespace
 
 Args parse_args(int argc, char **argv, std::uint16_t default_vid, std::uint16_t default_pid) {
-    Args args;
-    args.vid = default_vid;
-    args.pid = default_pid;
+    cxxopts::Options options(argv[0] != nullptr ? argv[0] : "e2e_client",
+                             "usbipdcpp libusb e2e client");
+    options.add_options()
+            ("bus", "总线号", cxxopts::value<int>())
+            ("addr", "设备地址", cxxopts::value<int>())
+            ("vid", "厂商 ID（支持 0x 前缀）",
+             cxxopts::value<std::uint16_t>()->default_value(std::to_string(default_vid)))
+            ("pid", "产品 ID（支持 0x 前缀）",
+             cxxopts::value<std::uint16_t>()->default_value(std::to_string(default_pid)))
+            ("chunked", "服务器启用了 bulk OUT 分块（运行分块专项用例）",
+             cxxopts::value<bool>()->default_value("false"))
+            ("mps", "端点 wMaxPacketSize（高速 512 / 全速 64 / 超速 1024）",
+             cxxopts::value<std::size_t>()->default_value("512"))
+            ("h,help", "打印帮助");
 
-    for (int i = 1; i < argc; ++i) {
-        const char *option = argv[i];
-        const bool has_value = i + 1 < argc;
-        if (std::strcmp(option, "--bus") == 0 && has_value) {
-            args.bus = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
-        }
-        else if (std::strcmp(option, "--addr") == 0 && has_value) {
-            args.address = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
-        }
-        else if (std::strcmp(option, "--vid") == 0 && has_value) {
-            args.vid = static_cast<std::uint16_t>(std::strtoul(argv[++i], nullptr, 0));
-        }
-        else if (std::strcmp(option, "--pid") == 0 && has_value) {
-            args.pid = static_cast<std::uint16_t>(std::strtoul(argv[++i], nullptr, 0));
-        }
-        else if (std::strcmp(option, "--help") == 0 || std::strcmp(option, "-h") == 0) {
-            std::printf("用法: %s [--bus N] [--addr N] [--vid 0xVID] [--pid 0xPID]\n", argv[0]);
+    Args args;
+    try {
+        const auto result = options.parse(argc, argv);
+        if (result.count("help")) {
+            std::printf("%s\n", options.help().c_str());
             std::exit(0);
         }
-        else {
-            std::fprintf(stderr, "忽略未知参数: %s\n", option);
+        if (result.count("bus")) {
+            args.bus = result["bus"].as<int>();
         }
+        if (result.count("addr")) {
+            args.address = result["addr"].as<int>();
+        }
+        args.vid = result["vid"].as<std::uint16_t>();
+        args.pid = result["pid"].as<std::uint16_t>();
+        args.chunked = result["chunked"].as<bool>();
+        args.mps = result["mps"].as<std::size_t>();
+    }
+    catch (const std::exception &error) {
+        std::fprintf(stderr, "%s\n%s\n", error.what(), options.help().c_str());
+        std::exit(2);
     }
     return args;
 }
@@ -244,7 +256,7 @@ bool check_endpoint_descriptors(libusb_device_handle *handle, int interface_numb
 
 libusb_transfer *submit_async(libusb_device_handle *handle, std::uint8_t endpoint,
                               std::size_t length, int timeout, bool interrupt,
-                              AsyncResult *result) {
+                              AsyncResult *result, unsigned char flags) {
     if (result->data.size() != length) {
         result->data.resize(length);
     }
@@ -265,6 +277,7 @@ libusb_transfer *submit_async(libusb_device_handle *handle, std::uint8_t endpoin
         libusb_fill_bulk_transfer(transfer, handle, endpoint, result->data.data(),
                                   static_cast<int>(length), transfer_callback, result, timeout);
     }
+    transfer->flags = flags;
     if (libusb_submit_transfer(transfer) != 0) {
         libusb_free_transfer(transfer);
         return nullptr;

@@ -142,7 +142,7 @@ TEST(TestPipeDeviceHandler, OutDataReachesRead) {
     PipeXfer xfer;
     std::thread reader([&]() { ASSERT_TRUE(fixture.pipe->read(xfer, 2000)); });
 
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x02, UsbIpDirection::Out, payload.size(), {}, payload),
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x02, UsbIpDirection::Out, payload.size(), {}, payload),
                               intf.endpoints[0][1], intf, ec);
     ASSERT_FALSE(ec);
 
@@ -184,9 +184,9 @@ TEST(TestPipeDeviceHandler, ReadPreservesGlobalRequestOrderAcrossEndpoints) {
     });
 
     // 交错发：ep 0x02 → ep 0x04 → ep 0x02
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x02, UsbIpDirection::Out, 1, {}, {0x01}), ep_out2, intf, ec);
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 2, 0x04, UsbIpDirection::Out, 1, {}, {0x02}), ep_out4, intf, ec);
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 3, 0x02, UsbIpDirection::Out, 1, {}, {0x03}), ep_out2, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x02, UsbIpDirection::Out, 1, {}, {0x01}), ep_out2, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(2, 0x04, UsbIpDirection::Out, 1, {}, {0x02}), ep_out4, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(3, 0x02, UsbIpDirection::Out, 1, {}, {0x03}), ep_out2, intf, ec);
     ASSERT_FALSE(ec);
 
     reader.join();
@@ -221,8 +221,8 @@ TEST(TestPipeDeviceHandler, InWriteServesPendingRequests) {
     const UsbEndpoint ep_in = intf.endpoints[0][0];
 
     // 先挂两个 IN 请求（每个期望 8 字节）
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 2, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(2, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
     ASSERT_FALSE(ec);
 
     // 16 字节数据一次写入，两个挂起请求各取 8 字节
@@ -263,7 +263,7 @@ TEST(TestPipeDeviceHandler, ControlRequestDeliveredToRead) {
     PipeXfer xfer;
     std::thread reader([&]() { ASSERT_TRUE(fixture.pipe->read(xfer, 2000)); });
 
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x00, UsbIpDirection::In, 4, setup), fixture.device->ep0_in,
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x00, UsbIpDirection::In, 4, setup), fixture.device->ep0_in,
                               std::nullopt, ec);
     ASSERT_FALSE(ec);
     reader.join();
@@ -334,7 +334,7 @@ TEST(TestPipeDeviceHandler, FifoFullBlocksWriteUntilHostConsumes) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 确保 write 已阻塞在 FIFO 满
 
     // 宿主取走前 16 字节：write 腾出空间后写完剩余
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x01, UsbIpDirection::In, 16), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x01, UsbIpDirection::In, 16), ep_in, intf, ec);
     ASSERT_FALSE(ec);
 
     ASSERT_EQ(stub.submits.size(), 1u);
@@ -346,7 +346,7 @@ TEST(TestPipeDeviceHandler, FifoFullBlocksWriteUntilHostConsumes) {
     EXPECT_EQ(written, payload.size());
 
     // 再取走剩余 16 字节
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 2, 0x01, UsbIpDirection::In, 16), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(2, 0x01, UsbIpDirection::In, 16), ep_in, intf, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 2u);
     EXPECT_EQ(stub.submits[1].header.seqnum, 2u);
@@ -376,7 +376,7 @@ TEST(TestPipeDeviceHandler, CustomDescriptorServedToHost) {
             .index = 0,
             .length = static_cast<std::uint16_t>(report_desc.size()),
     };
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x00, UsbIpDirection::In, report_desc.size(), setup),
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x00, UsbIpDirection::In, report_desc.size(), setup),
                               fixture.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
 
@@ -410,7 +410,7 @@ TEST(TestPipeDeviceHandler, ControlOutRequestDeliveredToRead) {
     PipeXfer xfer;
     std::thread reader([&]() { ASSERT_TRUE(fixture.pipe->read(xfer, 2000)); });
 
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x00, UsbIpDirection::Out, payload.size(), setup, payload),
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x00, UsbIpDirection::Out, payload.size(), setup, payload),
                               fixture.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
     reader.join();
@@ -487,7 +487,7 @@ TEST(TestPipeDeviceHandler, UnlinkPendingRequest) {
     const UsbEndpoint ep_in = intf.endpoints[0][0];
 
     // IN 请求挂起（FIFO 无数据）
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
     ASSERT_FALSE(ec);
     // 取消该请求
     fixture.pipe->handle_unlink_seqnum(1, 2);
@@ -517,7 +517,7 @@ TEST(TestPipeDeviceHandler, UnlinkControlInAlsoClearsSetupNotification) {
             .index = 0,
             .length = 4,
     };
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x00, UsbIpDirection::In, 4, setup),
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x00, UsbIpDirection::In, 4, setup),
                               fixture.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
 
@@ -547,7 +547,7 @@ TEST(TestPipeDeviceHandler, UnlinkCompletedRequestReportsSuccess) {
     const UsbEndpoint ep_in = intf.endpoints[0][0];
 
     // IN 请求挂起后 write 应答（传输已完成）
-    fixture.pipe->receive_urb(make_cmd_submit(fixture.op, 1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
+    deliver_urb(fixture.pipe, make_cmd_submit(1, 0x01, UsbIpDirection::In, 8), ep_in, intf, ec);
     ASSERT_FALSE(ec);
     const data_type payload = {1, 2, 3, 4};
     EXPECT_EQ(fixture.pipe->write(PipeXfer{.ep = 0x81, .data = payload}, 2000), payload.size());

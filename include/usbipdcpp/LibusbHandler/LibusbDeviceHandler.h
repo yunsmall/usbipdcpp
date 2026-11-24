@@ -61,8 +61,25 @@ public:
     }
 
 public:
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
-                     usbipdcpp::error_code &ec) override;
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, TransferSource &source, UsbEndpoint ep,
+                     std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) override;
+
+    /**
+     * @brief 分块 bulk OUT：按块从字节源读、流水线提交给设备
+     *
+     * 固定两块缓冲轮转：读第 N+1 块时第 N 块已经在设备侧传输，总分配与
+     * transfer_buffer_length 无关。设备侧看到多个 URB，客户端仍只收到
+     * 一条 RET_SUBMIT。
+     *
+     * 本路径在 receiver 线程同步完成（返回前等待所有在途块完成），不登记
+     * 到 transfers_：UNLINK 只会在返回后被处理（此时 URB 已完成）。
+     * @param cmd 命令（seqnum/长度/标志）
+     * @param source 线上字节源
+     * @param ep bulk OUT 端点
+     * @param ec 错误码（socket 读失败或按策略断开时置位）
+     */
+    void receive_chunked_bulk_out(const UsbIpCommand::UsbIpCmdSubmit &cmd, TransferSource &source,
+                                  const UsbEndpoint &ep, usbipdcpp::error_code &ec);
 
     int tweak_clear_halt_cmd(const SetupPacket &setup_packet);
     int tweak_set_interface_cmd(const SetupPacket &setup_packet);
@@ -82,6 +99,18 @@ public:
     int tweak_special_requests(const SetupPacket &setup_packet);
 
     static uint8_t get_libusb_transfer_flags(uint32_t in);
+
+    /**
+     * @brief 把配置的 bulk OUT 分块大小对齐到 wMaxPacketSize 的整数倍
+     *
+     * 不对齐会在每个分块末尾产生短包，设备固件会把分块边界误当成一次
+     * 传输的结束。这里向下取整；小于一个包时按一个包分块。
+     * @param chunk_size 配置的块大小
+     * @param max_packet_size 端点 wMaxPacketSize（0 表示描述符拿不到，
+     *        此时无法对齐，原样返回）
+     * @return 对齐后的块大小（chunk_size 为 0 时返回 0，表示未启用分块）
+     */
+    static std::size_t align_bulk_out_chunk(std::size_t chunk_size, std::size_t max_packet_size);
 
     /**
      * @brief 判断一次 libusb_submit_transfer 失败是否应断开会话

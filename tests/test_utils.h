@@ -12,6 +12,7 @@
 
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 #include "usbipdcpp/Server.h"
+#include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/network.h"
 #include "usbipdcpp/protocol.h"
 #include "usbipdcpp/type.h"
@@ -144,12 +145,15 @@ inline std::uint32_t import_device(asio::ip::tcp::socket &client, const std::str
     }
     std::uint16_t version = 0;
     std::uint16_t command = 0;
-    std::uint32_t status = 0;
-    data_read_from_socket(client, version, command, status);
+    data_read_from_socket(client, version, command);
     if (command != OP_REP_IMPORT) {
         return std::numeric_limits<std::uint32_t>::max();
     }
-    return status;
+    // 成功响应还带设备描述符（312 字节结构），必须一起读掉，否则后续
+    // 读 RET_SUBMIT 会先读到这段残留
+    UsbIpResponse::OpRepImport rep;
+    rep.from_socket(client);
+    return rep.status;
 }
 
     template<usbipdcpp::Serializable T>
@@ -255,11 +259,55 @@ inline std::uint16_t read_le16_at(const data_type &d, std::size_t offset) {
     return v;
 }
 
-// 构造 CMD_SUBMIT（对齐 CmdSubmit::from_socket 的分配：IN/OUT 都分配
-// transfer，IN 请求不读数据阶段、OUT 请求带数据）。op 由调用方持有，
-// 必须活得比 submit 长（TransferHandle 析构时用它释放）
-inline UsbIpCommand::UsbIpCmdSubmit make_cmd_submit(GenericTransferOperator &op, std::uint32_t seqnum,
-                                                    std::uint8_t ep_num, std::uint32_t direction,
+// 内存版 TransferSource：测试里把命令的 payload 当字节源喂给 handler
+class MemoryTransferSource : public TransferSource {
+public:
+    MemoryTransferSource(data_type payload, std::vector<UsbIpIsoPacketDescriptor> iso = {}) :
+        payload_(std::move(payload)), iso_(std::move(iso)) {
+    }
+
+    [[nodiscard]] std::size_t remaining() const noexcept override { return payload_.size() - pos_; }
+    [[nodiscard]] int iso_packets_remaining() const noexcept override {
+        return static_cast<int>(iso_.size()) - iso_pos_;
+    }
+
+    std::size_t read(std::span<std::byte> dst, std::error_code &ec) override {
+        (void) ec;
+        auto n = std::min(dst.size(), remaining());
+        std::memcpy(dst.data(), payload_.data() + pos_, n);
+        pos_ += n;
+        return n;
+    }
+
+    std::size_t read_some(std::span<std::byte> dst, std::error_code &ec) override { return read(dst, ec); }
+
+    void read_iso_descriptors(std::span<UsbIpIsoPacketDescriptor> out, std::error_code &ec) override {
+        (void) ec;
+        auto n = std::min(out.size(), iso_.size() - iso_pos_);
+        std::copy_n(iso_.begin() + static_cast<std::ptrdiff_t>(iso_pos_), n, out.begin());
+        iso_pos_ += n;
+    }
+
+    void skip_remaining(std::error_code &ec) override {
+        (void) ec;
+        pos_ = payload_.size();
+    }
+
+    [[nodiscard]] asio::ip::tcp::socket *socket() noexcept override { return nullptr; }
+
+    void mark_consumed(std::size_t n) noexcept override { pos_ += std::min(n, remaining()); }
+
+private:
+    data_type payload_;
+    std::size_t pos_ = 0;
+    std::vector<UsbIpIsoPacketDescriptor> iso_;
+    std::size_t iso_pos_ = 0;
+};
+
+// 构造 CMD_SUBMIT 的固定部分与 payload（客户端发送 / 直接喂 handler 用）。
+// OUT 方向把 out_data 放进 cmd.data；等时描述符由调用方填 cmd.iso_descriptors
+inline UsbIpCommand::UsbIpCmdSubmit make_cmd_submit(std::uint32_t seqnum, std::uint8_t ep_num,
+                                                    std::uint32_t direction,
                                                     std::uint32_t transfer_buffer_length,
                                                     const SetupPacket &setup = {}, const data_type &out_data = {},
                                                     int num_iso = 0) {
@@ -275,15 +323,31 @@ inline UsbIpCommand::UsbIpCmdSubmit make_cmd_submit(GenericTransferOperator &op,
     submit.number_of_packets = num_iso;
     submit.interval = 0;
     submit.setup = setup;
+    if (direction == UsbIpDirection::Out) {
+        submit.data = out_data;
+    }
+    return submit;
+}
+
+// 为接口 handler 直接构造 TransferHandle（模拟 receive_urb 里 alloc + 读数据）
+inline TransferHandle make_transfer(GenericTransferOperator &op, std::uint32_t direction,
+                                    std::uint32_t transfer_buffer_length, const SetupPacket &setup = {},
+                                    const data_type &out_data = {}, int num_iso = 0) {
     UsbIpHeaderBasic header{};
     header.direction = direction;
     auto *trx = GenericTransfer::from_handle(op.alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup));
     if (direction == UsbIpDirection::Out && !out_data.empty()) {
         trx->data = out_data;
     }
-    TransferHandle handle(trx, &op);
-    submit.transfer = std::move(handle);
-    return submit;
+    return TransferHandle(trx, &op);
+}
+
+// 把一条 CMD_SUBMIT 连同它的 payload 交给设备 handler（设备层入口测试用）
+template<typename HandlerPtr>
+void deliver_urb(HandlerPtr handler, UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep,
+                 std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) {
+    MemoryTransferSource source(cmd.data, cmd.iso_descriptors);
+    handler->receive_urb(std::move(cmd), source, std::move(ep), std::move(interface), ec);
 }
 
 }

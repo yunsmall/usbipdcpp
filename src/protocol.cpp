@@ -430,15 +430,16 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
                 ec);
     if (ec)
         return;
-    if (transfer) {
-        auto *op = transfer.get_operator();
-        void *raw_handle = transfer.get();
-        // 数据阶段只在 OUT 方向携带，方向只取协议头——与 from_socket 对称。
-        // 不能用 transfer_is_in()：它读的是后端传输对象里的方向字段，而本函数
-        // 发送时对象刚由 alloc_transfer_handle 分配、尚未经过 fill_*_transfer
-        // （libusb 后端此时 type/endpoint 都未初始化），读出来的是残留值
-        op->send_transfer_data(raw_handle, sock,
-                               header.direction == UsbIpDirection::In ? 0 : transfer_buffer_length, ec);
+    // 数据阶段只存在于 OUT 方向；IN 方向不发送 payload
+    if (header.direction != UsbIpDirection::In && !data.empty()) {
+        asio::write(sock, asio::buffer(data), ec);
+        if (ec)
+            return;
+    }
+    for (const auto &iso: iso_descriptors) {
+        asio::write(sock, asio::buffer(iso.to_bytes()), ec);
+        if (ec)
+            return;
     }
 }
 
@@ -473,35 +474,8 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     if (number_of_packets != 0xFFFFFFFF && number_of_packets > USBIPDCPP_MAX_ISO_PACKETS) [[unlikely]] {
         throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "number_of_packets too large");
     }
-
-    // 从路由 op 拿到对应端点的 leaf op，用它创建 transfer_handle
-    // header.ep 是 USB/IP 线格式（不带方向位），需还原真实端点地址再查表
-    int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
-    auto *routing_op = transfer.get_operator();
-    std::uint8_t real_ep = static_cast<std::uint8_t>(header.ep);
-    // direction 不显式校验（非 0/1 值按 Out 处理）：与内核 usbip 模块和
-    // usbipd-libusb 一致（都只判断 == USBIP_DIR_IN），非法值还原出的
-    // 端点地址不会命中任何真实端点，后续 find_ep 失败自然拒绝，无内存
-    // 安全影响
-    if (header.direction == UsbIpDirection::In)
-        real_ep |= 0x80;
-    auto *leaf_op = routing_op->get_operator_for_ep(real_ep);
-    auto *raw_handle = leaf_op->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
-    if (!raw_handle) [[unlikely]] {
-        // 分配失败（内存耗尽等），抛 std::system_error 由 get_cmd_from_socket 捕获后
-        // 优雅断开本会话，而不是空指针解引用崩溃整个进程
-        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "alloc_transfer_handle failed");
-    }
-    // 将 handle 绑定到 leaf op，后续 I/O 操作直接走 leaf op，无需 map 查找
-    transfer.set_handle(raw_handle, leaf_op);
-
-    // 数据传输统一由 recv_transfer_data 处理（数据 + iso 描述符）
-    // IN 方向 client 不发送数据，长度传 0
-    std::error_code ec;
-    leaf_op->recv_transfer_data(raw_handle, sock, header.direction == UsbIpDirection::In ? 0 : transfer_buffer_length,
-                                ec);
-    if (ec)
-        throw std::system_error(ec);
+    // payload 与等时描述符不在这里读：只解析固定部分，由 TransferSource 按需
+    // 读取。调用方负责在 receive_urb 返回后把剩余字节收尾，保持流边界
 }
 
 array_data_type<calculate_total_size_with_array<decltype(UsbIpHeaderBasic{}.to_bytes()),
@@ -565,7 +539,6 @@ usbipdcpp::UsbIpCommand::OpCmdVariant usbipdcpp::UsbIpCommand::get_op_from_socke
 }
 
 usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket(asio::ip::tcp::socket &sock,
-                                                                                 AbstDeviceHandler *handler,
                                                                                  usbipdcpp::error_code &ec) {
 
     try {
@@ -575,11 +548,8 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
         switch (command) {
             case USBIP_CMD_SUBMIT: {
                 auto cmd = UsbIpCmdSubmit{};
-                // 提前设置operator防止空指针
-                cmd.transfer.set_operator(handler->get_transfer_operator());
                 cmd.from_socket(sock);
                 return cmd;
-                break;
             }
             case USBIP_CMD_UNLINK: {
                 auto cmd = UsbIpCmdUnlink{};

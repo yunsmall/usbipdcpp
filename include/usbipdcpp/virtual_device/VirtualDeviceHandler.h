@@ -25,8 +25,8 @@ public:
 
     ~VirtualDeviceHandler() override = default;
 
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
-                     usbipdcpp::error_code &ec) override;
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, TransferSource &source, UsbEndpoint ep,
+                     std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) override;
     /**
      * @brief 新的客户端连接时会调这个函数
      * @param current_session
@@ -97,7 +97,8 @@ protected:
     // 由 receive_urb 调用，分发给具体的 handle_xxx_transfer
     void dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum, const UsbEndpoint &ep,
                       std::optional<UsbInterface> &interface, std::uint32_t transfer_flags,
-                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet, usbipdcpp::error_code &ec);
+                      std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet, TransferHandle transfer,
+                      usbipdcpp::error_code &ec);
 
     void handle_control_urb(std::uint32_t seqnum, const UsbEndpoint &ep, std::uint32_t transfer_flags,
                             std::uint32_t transfer_buffer_length, const SetupPacket &setup_packet,

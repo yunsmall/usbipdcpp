@@ -6,6 +6,7 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 find_package(Threads REQUIRED)
+find_package(cxxopts REQUIRED)
 
 add_library(usbipdcpp_e2e_ffs STATIC ffs/ffs_helper.cpp)
 target_include_directories(usbipdcpp_e2e_ffs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -19,7 +20,8 @@ foreach(profile control bulk interrupt)
             clients/client_common.cpp)
     target_include_directories(e2e_libusb_${profile}_client
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(e2e_libusb_${profile}_client PRIVATE usbipdcpp_libusb)
+    target_link_libraries(e2e_libusb_${profile}_client PRIVATE usbipdcpp_libusb
+            cxxopts::cxxopts)
 endforeach()
 
 # iso：dummy_hcd 不支持等时端点，改用项目自己的虚拟设备框架造设备，
@@ -31,5 +33,5 @@ if (TARGET usbipdcpp_virtual_device)
 
     add_executable(e2e_libusb_iso_client clients/iso_client.cpp clients/client_common.cpp)
     target_include_directories(e2e_libusb_iso_client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(e2e_libusb_iso_client PRIVATE usbipdcpp_libusb)
+    target_link_libraries(e2e_libusb_iso_client PRIVATE usbipdcpp_libusb cxxopts::cxxopts)
 endif()

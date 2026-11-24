@@ -195,7 +195,7 @@ TEST(VirtualDeviceHandlers, HidInterruptInServedBySendInputReport) {
     const std::array<std::uint8_t, 4> report = {0x11, 0x22, 0x33, 0x44};
     env.handler.handle_interrupt_transfer(
             1, UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
-            0, report.size(), make_cmd_submit(env.op, 1, 0x01, UsbIpDirection::In, report.size()).transfer, env.ec);
+            0, report.size(), make_transfer(env.op, UsbIpDirection::In, report.size()), env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 无报告：请求挂起未应答
 
@@ -222,7 +222,7 @@ TEST(VirtualDeviceHandlers, HidSetReportDeliveredToOverride) {
     const data_type payload = {'L', 'E', 'D'};
     env.handler.handle_non_standard_request_type_control_urb(
             2, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, payload.size(), setup,
-            make_cmd_submit(env.op, 2, 0x00, UsbIpDirection::Out, payload.size(), setup, payload).transfer, env.ec);
+            make_transfer(env.op, UsbIpDirection::Out, payload.size(), setup, payload), env.ec);
     ASSERT_FALSE(env.ec);
 
     EXPECT_EQ(env.handler.last_output_report, payload);
@@ -254,7 +254,7 @@ TEST(VirtualDeviceHandlers, HidInputReportQueueDropsOldestOverLimit) {
 
     env.handler.handle_interrupt_transfer(
             1, UsbEndpoint{.address = 0x81, .attributes = 0x03, .max_packet_size = 8, .interval = 10},
-            0, 2, make_cmd_submit(env.op, 1, 0x01, UsbIpDirection::In, 2).transfer, env.ec);
+            0, 2, make_transfer(env.op, UsbIpDirection::In, 2), env.ec);
     ASSERT_FALSE(env.ec);
 
     ASSERT_EQ(env.stub.submits.size(), 1u);
@@ -273,7 +273,7 @@ TEST(VirtualDeviceHandlers, HidUnknownClassInRequestStalls) {
     };
     env.handler.handle_non_standard_request_type_control_urb(
             3, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, 8, setup,
-            make_cmd_submit(env.op, 3, 0x00, UsbIpDirection::In, 8, setup).transfer, env.ec);
+            make_transfer(env.op, UsbIpDirection::In, 8, setup), env.ec);
     ASSERT_FALSE(env.ec);
 
     ASSERT_EQ(env.stub.submits.size(), 1u);

@@ -48,8 +48,7 @@ public:
 
     void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                             std::error_code &ec) override;
-    void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                            std::error_code &ec) override;
+    void recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) override;
 
 private:
     GenericTransferOperator generic_op_;

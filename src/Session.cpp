@@ -14,6 +14,7 @@
 
 #include "usbipdcpp/DeviceHandler/DeviceHandler.h"
 
+#include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/utils/utils.h"
 #include "usbipdcpp/Device.h"
 #include "usbipdcpp/Server.h"
@@ -511,7 +512,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
 
-        auto command = UsbIpCommand::get_cmd_from_socket(socket, current_handler.get(), ec);
+        auto command = UsbIpCommand::get_cmd_from_socket(socket, ec);
         if (ec) [[unlikely]] {
             if (ec.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
                 SPDLOG_DEBUG("连接关闭");
@@ -543,6 +544,13 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                         SPDLOG_TRACE("传输的真实端口为 {:02x}", real_ep);
                         [[maybe_unused]] auto current_seqnum = cmd2.header.seqnum;
 
+                        // 线上 payload 只在 OUT 方向存在；等时描述符紧随其后
+                        const int num_iso =
+                                (cmd2.number_of_packets != 0 && cmd2.number_of_packets != 0xFFFFFFFF)
+                                        ? static_cast<int>(cmd2.number_of_packets)
+                                        : 0;
+                        SocketTransferSource source(socket, out ? cmd2.transfer_buffer_length : 0, num_iso);
+
                         auto ep_find_ret = current_import_device->find_ep(real_ep);
                         if (ep_find_ret.has_value()) [[likely]] {
                             auto &ep = ep_find_ret->first;
@@ -555,11 +563,13 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                             usbipdcpp::error_code ec_during_handling_urb;
                             // start_processing_urb();
                             LATENCY_TRACK(latency_tracker, cmd2.header.seqnum, "准备传入设备receive_urb");
-                            current_handler->receive_urb(std::move(cmd2), ep, std::move(intf), ec_during_handling_urb);
+                            current_handler->receive_urb(std::move(cmd2), source, ep, std::move(intf),
+                                                         ec_during_handling_urb);
 
                             if (ec_during_handling_urb) [[unlikely]] {
                                 SPDLOG_ERROR("Error during handling urb : {}", ec_during_handling_urb.message());
-                                // 发生错误代表已经不能继续通信了
+                                // 发生错误代表已经不能继续通信了，连接即将关闭，
+                                // 不再把剩余 payload 读完
                                 receiver_ec = ec_during_handling_urb;
                                 should_immediately_stop = true;
                                 return;
@@ -573,6 +583,15 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
                             // 正常客户端只发设备配置描述符里真实存在的端点，
                             // 找不到说明是异常/非法输入的兜底，丢弃即可
                             SPDLOG_WARN("找不到端点{}，静默丢弃该 CMD_SUBMIT", real_ep);
+                        }
+
+                        // handler 没读完的 payload 必须丢弃，否则下一条命令的
+                        // 解析会从错误位置开始；端点不存在时同样要丢
+                        source.drain(ec);
+                        if (ec) [[unlikely]] {
+                            SPDLOG_ERROR("丢弃 CMD_SUBMIT 剩余数据失败：{}", ec.message());
+                            receiver_ec = ec;
+                            should_immediately_stop = true;
                         }
                     }
                     else if constexpr (std::is_same_v<UsbIpCommand::UsbIpCmdUnlink, T>) {

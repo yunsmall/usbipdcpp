@@ -22,6 +22,7 @@ public:
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {}
 
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd,
+                     TransferSource &source,
                      UsbEndpoint ep,
                      std::optional<UsbInterface> interface,
                      usbipdcpp::error_code &ec) override {}
@@ -113,28 +114,7 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
     });
 
     // 创建测试设备（必须先声明，因为 mock_handler 引用它）
-    auto test_device = UsbDevice{
-        .path = "/test",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = 0,
-        .vendor_id = 0,
-        .product_id = 0,
-        .device_bcd = 0,
-        .device_class = 0,
-        .device_subclass = 0,
-        .device_protocol = 0,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
-    };
-    MockDeviceHandlerForTest mock_handler(test_device);
-
     {
-        // 使用作用域确保 received 在 mock_handler 之前析构
         UsbIpCommand::UsbIpCmdSubmit received{};
         asio::ip::tcp::socket server_socket(io_context);
         asio::error_code ec;
@@ -143,7 +123,6 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
         [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
         [[maybe_unused]] auto op_command = usbipdcpp::read_u16(server_socket);
 
-        received.transfer.set_operator(mock_handler.get_transfer_operator());
         received.from_socket(server_socket);
         received.header.command = op_command;
 
@@ -154,16 +133,13 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
         EXPECT_EQ(received.transfer_flags, 0x1234);
         EXPECT_EQ(received.start_frame, 0x8765);
         EXPECT_EQ(received.interval, 0x1111);
-    }  // received 在这里析构，此时 mock_handler 还有效
-
-    // mock_handler 和 test_device 在这里析构
+    }
 }
 
 namespace {
 // 模拟客户端发送一个 IN 方向的 CMD_SUBMIT（无数据阶段），
-// 用 get_cmd_from_socket 接收。handler 必须由调用方持有，
-// 且活得比 out 里的 transfer 久（transfer 析构时要用到 handler 的 operator）。
-void send_cmd_submit_with_packets(std::uint32_t number_of_packets, AbstDeviceHandler &handler,
+// 用 get_cmd_from_socket 接收
+void send_cmd_submit_with_packets(std::uint32_t number_of_packets,
                                   UsbIpCommand::CmdVariant &out, usbipdcpp::error_code &out_ec) {
     asio::io_context io_context;
     asio::ip::tcp::acceptor acceptor(io_context);
@@ -206,7 +182,7 @@ void send_cmd_submit_with_packets(std::uint32_t number_of_packets, AbstDeviceHan
         return;
     }
 
-    out = UsbIpCommand::get_cmd_from_socket(server_socket, &handler, out_ec);
+    out = UsbIpCommand::get_cmd_from_socket(server_socket, out_ec);
     server_socket.close();
     sender.join();
 }
@@ -214,63 +190,23 @@ void send_cmd_submit_with_packets(std::uint32_t number_of_packets, AbstDeviceHan
 
 TEST(TestProtocol, UsbIpCmdSubmitRejectsTooManyIsoPackets) {
     // 恶意客户端发送超限 number_of_packets：应返回错误断开本会话，而不是异常崩溃
-    auto test_device = UsbDevice{
-        .path = "/test",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = 0,
-        .vendor_id = 0,
-        .product_id = 0,
-        .device_bcd = 0,
-        .device_class = 0,
-        .device_subclass = 0,
-        .device_protocol = 0,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
-    };
-    MockDeviceHandlerForTest mock_handler(test_device);
     UsbIpCommand::CmdVariant ret;
     usbipdcpp::error_code ec;
-    send_cmd_submit_with_packets(USBIPDCPP_MAX_ISO_PACKETS + 1, mock_handler, ret, ec);
+    send_cmd_submit_with_packets(USBIPDCPP_MAX_ISO_PACKETS + 1, ret, ec);
 
     EXPECT_TRUE(ec);
     EXPECT_EQ(ec.value(), static_cast<int>(ErrorType::SOCKET_ERR));
-    // ret 在 mock_handler 之前析构，transfer 释放时 operator 仍有效
 }
 
 TEST(TestProtocol, UsbIpCmdSubmitAcceptsAllOnesPacketsPlaceholder) {
     // 0xFFFFFFFF 是协议中非等时传输的占位值，必须放行，不能误判为超限
-    auto test_device = UsbDevice{
-        .path = "/test",
-        .busid = "1-1",
-        .bus_num = 1,
-        .dev_num = 1,
-        .speed = 0,
-        .vendor_id = 0,
-        .product_id = 0,
-        .device_bcd = 0,
-        .device_class = 0,
-        .device_subclass = 0,
-        .device_protocol = 0,
-        .configuration_value = 1,
-        .num_configurations = 1,
-        .interfaces = {},
-        .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::Full),
-        .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::Full)
-    };
-    MockDeviceHandlerForTest mock_handler(test_device);
     UsbIpCommand::CmdVariant ret;
     usbipdcpp::error_code ec;
-    send_cmd_submit_with_packets(0xFFFFFFFF, mock_handler, ret, ec);
+    send_cmd_submit_with_packets(0xFFFFFFFF, ret, ec);
 
     ASSERT_FALSE(ec);
     ASSERT_TRUE(std::holds_alternative<UsbIpCommand::UsbIpCmdSubmit>(ret));
     EXPECT_EQ(std::get<UsbIpCommand::UsbIpCmdSubmit>(ret).number_of_packets, 0xFFFFFFFFu);
-    // ret 在 mock_handler 之前析构，transfer 释放时 operator 仍有效
 }
 
 TEST(TestProtocol, UsbIpCmdUnlinkReadSocket) {

@@ -130,11 +130,12 @@ TEST(TestUacMicrophoneStream, FullSpeedPacketSizeFollowsBInterval) {
     ASSERT_EQ(status, 0u);
 
     // 两包各 512 字节的请求：设备按 384 字节/包填充（iso.length 是上限）
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::In, 1024, {}, {}, 2);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 512, .actual_length = 0, .status = 0};
-    trx->iso_descriptors[1] = {.offset = 512, .length = 512, .actual_length = 0, .status = 0};
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_in, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::In, 1024, {}, {}, 2);
+    submit.iso_descriptors = {
+            {.offset = 0, .length = 512, .actual_length = 0, .status = 0},
+            {.offset = 512, .length = 512, .actual_length = 0, .status = 0},
+    };
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_in, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     // 调度器按数据时长（1024B / 96000B/s ≈ 10.7ms）延迟应答。等待期间不能
@@ -176,15 +177,16 @@ TEST(TestUacMicrophoneStream, VolumeControlScalesPcm) {
     };
     const data_type vol_data = {static_cast<std::uint8_t>(target_db & 0xFF),
                                 static_cast<std::uint8_t>((target_db >> 8) & 0xFF)};
-    fx.dh->receive_urb(make_cmd_submit(fx.op, 101, 0x00, UsbIpDirection::Out, 2, vol_setup, vol_data),
+    deliver_urb(fx.dh, make_cmd_submit(101, 0x00, UsbIpDirection::Out, 2, vol_setup, vol_data),
                        fx.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
 
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::In, 1024, {}, {}, 2);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 512, .actual_length = 0, .status = 0};
-    trx->iso_descriptors[1] = {.offset = 512, .length = 512, .actual_length = 0, .status = 0};
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_in, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::In, 1024, {}, {}, 2);
+    submit.iso_descriptors = {
+            {.offset = 0, .length = 512, .actual_length = 0, .status = 0},
+            {.offset = 512, .length = 512, .actual_length = 0, .status = 0},
+    };
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_in, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     // 等调度线程填充完再断连（join 调度线程后才能安全读 stub）
@@ -221,7 +223,7 @@ namespace {
 class ForeignDeviceHandler : public AbstDeviceHandler {
 public:
     using AbstDeviceHandler::AbstDeviceHandler;
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit, UsbEndpoint, std::optional<UsbInterface>,
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit, TransferSource &, UsbEndpoint, std::optional<UsbInterface>,
                      usbipdcpp::error_code &) override {
     }
     void handle_unlink_seqnum(std::uint32_t, std::uint32_t) override {

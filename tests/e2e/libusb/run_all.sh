@@ -11,8 +11,8 @@ usage() {
 用法: $0
 
 依次运行全部 libusb 后端 e2e 用例（需要 root）：
-control、bulk、interrupt、iso、raw。iso 用例需要
-CONFIG_USBIP_VHCI_NR_HCS>=2（详见 README.md）。
+control、bulk、interrupt、chunk、chunk-serial、chunk-align、chunk-raw、chunk-fs、iso、raw。
+iso 用例需要 CONFIG_USBIP_VHCI_NR_HCS>=2（详见 README.md）。
 
 环境变量:
   BUILD_DIR  构建目录（默认自动查找 build，再尝试 build_wsl2）
@@ -34,7 +34,7 @@ case "${1:-}" in
 esac
 
 FAILED=()
-for profile in control bulk interrupt iso raw; do
+for profile in control bulk interrupt chunk chunk-serial chunk-align chunk-raw chunk-fs iso raw; do
     echo "==================== $profile ===================="
     if ! "$SCRIPT_DIR/run_one.sh" "$profile"; then
         FAILED+=("$profile")

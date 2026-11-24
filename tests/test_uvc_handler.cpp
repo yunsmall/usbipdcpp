@@ -114,7 +114,7 @@ struct UvcTestEnv {
         };
         handler.handle_non_standard_request_type_control_urb(
                 1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 26, setup,
-                make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 26, setup, commit).transfer, ec);
+                make_transfer(op, UsbIpDirection::Out, 26, setup, commit), ec);
         EXPECT_FALSE(ec);
         EXPECT_EQ(stub.submits.back().header.seqnum, 1u); // commit ack
 
@@ -124,8 +124,8 @@ struct UvcTestEnv {
 
     // 发一个 iso IN URB（默认 4 包 × 512 字节）
     void deliver_iso_in(std::uint32_t seqnum, int num_packets = 4) {
-        auto submit = make_cmd_submit(op, seqnum, 0x01, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
-        auto *trx = GenericTransfer::from_handle(submit.transfer.get());
+        auto transfer = make_transfer(op, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
+        auto *trx = GenericTransfer::from_handle(transfer.get());
         for (int i = 0; i < num_packets; i++) {
             trx->iso_descriptors[i] = {.offset = static_cast<std::uint32_t>(i * 512),
                                        .length = 512,
@@ -134,7 +134,7 @@ struct UvcTestEnv {
         }
         handler.handle_isochronous_transfer(seqnum,
                                             UsbEndpoint{.address = 0x81, .attributes = 0x05, .max_packet_size = 512},
-                                            0, num_packets * 512, std::move(submit.transfer), num_packets, ec);
+                                            0, num_packets * 512, std::move(transfer), num_packets, ec);
         EXPECT_FALSE(ec);
     }
 };
@@ -194,8 +194,8 @@ TEST(TestUvcHandler, IsoPacketOutsideTransferBufferIsSkipped) {
     env.start_streaming();
 
     const int num_packets = 4;
-    auto submit = make_cmd_submit(env.op, 6, 0x01, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
+    auto transfer = make_transfer(env.op, UsbIpDirection::In, num_packets * 512, {}, {}, num_packets);
+    auto *trx = GenericTransfer::from_handle(transfer.get());
     for (int i = 0; i < num_packets; i++) {
         trx->iso_descriptors[i] = {.offset = static_cast<std::uint32_t>(i * 512),
                                    .length = 512,
@@ -206,7 +206,7 @@ TEST(TestUvcHandler, IsoPacketOutsideTransferBufferIsSkipped) {
     trx->iso_descriptors[0].offset = num_packets * 512;
     env.handler.handle_isochronous_transfer(
             6, UsbEndpoint{.address = 0x81, .attributes = 0x05, .max_packet_size = 512}, 0, num_packets * 512,
-            std::move(submit.transfer), num_packets, env.ec);
+            std::move(transfer), num_packets, env.ec);
     ASSERT_FALSE(env.ec);
 
     const auto *ret = &env.stub.submits.back();
@@ -326,7 +326,7 @@ TEST(TestUvcHandler, ShortCommitFallsBackToDefaults) {
     };
     env.handler.handle_non_standard_request_type_control_urb(
             1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 10, setup,
-            make_cmd_submit(env.op, 1, 0x00, UsbIpDirection::Out, 10, setup, commit).transfer, env.ec);
+            make_transfer(env.op, UsbIpDirection::Out, 10, setup, commit), env.ec);
     EXPECT_FALSE(env.ec);
     EXPECT_EQ(env.stub.submits.back().status, 0u); // commit ack 成功
 
@@ -405,7 +405,7 @@ TEST(TestUvcHandler, ShortProbeCommitTolerated) {
         const data_type short_data(4, 0);
         env.handler.handle_non_standard_request_type_control_urb(
                 1, UsbEndpoint::get_ep0_in(UsbSpeed::High), 0, 4, setup,
-                make_cmd_submit(env.op, 1, 0x00, UsbIpDirection::Out, 4, setup, short_data).transfer, env.ec);
+                make_transfer(env.op, UsbIpDirection::Out, 4, setup, short_data), env.ec);
         ASSERT_FALSE(env.ec);
         ASSERT_EQ(env.stub.submits.size(), 1u);
         EXPECT_EQ(env.stub.submits[0].status, 0u);
@@ -419,7 +419,7 @@ namespace {
 class ForeignDeviceHandler : public AbstDeviceHandler {
 public:
     using AbstDeviceHandler::AbstDeviceHandler;
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit, UsbEndpoint, std::optional<UsbInterface>,
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit, TransferSource &, UsbEndpoint, std::optional<UsbInterface>,
                      usbipdcpp::error_code &) override {
     }
     void handle_unlink_seqnum(std::uint32_t, std::uint32_t) override {

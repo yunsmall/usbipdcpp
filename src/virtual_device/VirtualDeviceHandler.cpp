@@ -120,27 +120,47 @@ SsEndpointCompanionDesc make_ss_endpoint_companion(const UsbEndpoint &endpoint, 
 
 } // namespace
 
-void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep,
+void VirtualDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, TransferSource &source, UsbEndpoint ep,
                                        std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) {
     auto seqnum = cmd.header.seqnum;
     auto transfer_flags = cmd.transfer_flags;
     auto transfer_buffer_length = cmd.transfer_buffer_length;
     const auto &setup_packet = cmd.setup;
 
-    dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet, ec);
+    // 按端点找接口级 operator，由它在自己的缓冲上读取 payload（虚拟设备默认
+    // 整块读入；自定义 operator 可以分块拉取）
+    const int num_iso = (cmd.number_of_packets != 0 && cmd.number_of_packets != 0xFFFFFFFF)
+                                ? static_cast<int>(cmd.number_of_packets)
+                                : 0;
+    auto *leaf_op = get_transfer_operator()->get_operator_for_ep(ep.address);
+    auto *raw_handle =
+            leaf_op->alloc_transfer_handle(transfer_buffer_length, num_iso, cmd.header, setup_packet);
+    if (!raw_handle) [[unlikely]] {
+        ec = std::make_error_code(std::errc::no_buffer_space);
+        return;
+    }
+    TransferHandle transfer(raw_handle, leaf_op);
+    leaf_op->recv_transfer_data(raw_handle, source, ec);
+    if (ec) {
+        return;
+    }
+
+    dispatch_urb(cmd, seqnum, ep, interface, transfer_flags, transfer_buffer_length, setup_packet,
+                 std::move(transfer), ec);
 }
 
 void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd, std::uint32_t seqnum,
                                         const UsbEndpoint &ep, std::optional<UsbInterface> &interface,
                                         std::uint32_t transfer_flags, std::uint32_t transfer_buffer_length,
-                                        const SetupPacket &setup_packet, usbipdcpp::error_code &ec) {
+                                        const SetupPacket &setup_packet, TransferHandle transfer,
+                                        usbipdcpp::error_code &ec) {
     // 控制传输较少，Bulk/Interrupt 更常见
     // bmAttributes 只取 bit0-1 传输类型，bit2-3 是 ISO sync type，bit4-5 是 usage type
     const auto xfer_type = ep.attributes & 0x03;
     if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Control)) [[unlikely]] {
         SPDLOG_TRACE("控制传输: type={:02x} req={:02x} val={:04x} idx={:04x} len={}", setup_packet.request_type,
                     setup_packet.request, setup_packet.value, setup_packet.index, setup_packet.length);
-        handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(cmd.transfer),
+        handle_control_urb(seqnum, ep, transfer_flags, transfer_buffer_length, setup_packet, std::move(transfer),
                            ec);
     }
     else if (interface.has_value()) [[likely]] {
@@ -157,11 +177,11 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
         // Bulk 和 Interrupt 最常见
         if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Bulk)) [[likely]] {
             SPDLOG_TRACE("块传输 ep={:02x} len={}", ep.address, transfer_buffer_length);
-            handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer), ec);
+            handle_bulk_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(transfer), ec);
         }
         else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Interrupt)) {
             SPDLOG_TRACE("中断传输 ep={:02x} len={}", ep.address, transfer_buffer_length);
-            handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(cmd.transfer),
+            handle_interrupt_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length, std::move(transfer),
                                       ec);
         }
         else if (xfer_type == static_cast<std::uint8_t>(EndpointAttributes::Isochronous)) {
@@ -171,7 +191,7 @@ void VirtualDeviceHandler::dispatch_urb(const UsbIpCommand::UsbIpCmdSubmit &cmd,
                                   ? static_cast<int>(cmd.number_of_packets)
                                   : 0;
             handle_isochronous_transfer(seqnum, ep, intf, transfer_flags, transfer_buffer_length,
-                                        std::move(cmd.transfer), num_iso, ec);
+                                        std::move(transfer), num_iso, ec);
         }
         else [[unlikely]] {
             // attributes & 0x03 已穷举 0..3，走到这里说明端点字段被破坏。

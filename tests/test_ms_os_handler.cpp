@@ -68,9 +68,9 @@ struct MsOsFixture {
 
 // 投递一个 IN 方向设备级控制请求（MS OS Compatible ID 请求的形状）
 void deliver_ms_os_request(MsOsFixture &fx, std::uint32_t seqnum, const SetupPacket &setup) {
-    auto submit = make_cmd_submit(fx.op, seqnum, 0x80, UsbIpDirection::In, setup.length, setup);
+    auto transfer = make_transfer(fx.op, UsbIpDirection::In, setup.length, setup);
     fx.dev->handle_non_standard_request_type_control_urb(
-            seqnum, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, setup.length, setup, std::move(submit.transfer),
+            seqnum, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, setup.length, setup, std::move(transfer),
             fx.ec);
     ASSERT_FALSE(fx.ec);
 }

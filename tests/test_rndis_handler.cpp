@@ -152,7 +152,7 @@ void send_command(RndisTestEnv &env, const data_type &msg, std::uint32_t seqnum 
     };
     env.comm.handle_non_standard_request_type_control_urb(
             seqnum, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, msg.size(), setup,
-            make_cmd_submit(env.op, seqnum, 0x00, UsbIpDirection::Out, msg.size(), setup, msg).transfer, env.ec);
+            make_transfer(env.op, UsbIpDirection::Out, msg.size(), setup, msg), env.ec);
     ASSERT_FALSE(env.ec);
 }
 
@@ -165,9 +165,9 @@ data_type get_response(RndisTestEnv &env, std::uint32_t seqnum) {
             .index = 0,
             .length = 1558, // 主机缓冲（对齐 RNDIS_MAX_TOTAL_SIZE）
     };
-    auto submit = make_cmd_submit(env.op, seqnum, 0x00, UsbIpDirection::In, 1558, setup);
+    auto transfer = make_transfer(env.op, UsbIpDirection::In, 1558, setup);
     env.comm.handle_non_standard_request_type_control_urb(
-            seqnum, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, 1558, setup, std::move(submit.transfer), env.ec);
+            seqnum, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, 1558, setup, std::move(transfer), env.ec);
     EXPECT_FALSE(env.ec);
     if (env.ec) {
         return {};
@@ -215,7 +215,7 @@ TEST(TestRndisHandler, SendEncapsulatedInitQueuesInitCmpltAndNotification) {
     // 先挂中断 IN 请求：通知应直接应答
     env.comm.handle_interrupt_transfer(9, UsbEndpoint{.address = EP_NOTIFY, .attributes = 0x03,
                                                       .max_packet_size = 8, .interval = 32},
-                                       0, 8, make_cmd_submit(env.op, 9, 0x83, UsbIpDirection::In, 8).transfer, env.ec);
+                                       0, 8, make_transfer(env.op, UsbIpDirection::In, 8), env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 无通知：请求挂起
 
@@ -377,9 +377,9 @@ TEST(TestRndisHandler, HaltResetsStateNoResponse) {
     const SetupPacket setup{
             .request_type = 0xA1, .request = 0x01, .value = 0, .index = 0, .length = 1558,
     };
-    auto submit = make_cmd_submit(env.op, 5, 0x00, UsbIpDirection::In, 1558, setup);
+    auto transfer = make_transfer(env.op, UsbIpDirection::In, 1558, setup);
     env.comm.handle_non_standard_request_type_control_urb(
-            5, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, 1558, setup, std::move(submit.transfer), env.ec);
+            5, UsbEndpoint::get_ep0_in(UsbSpeed::Full), 0, 1558, setup, std::move(transfer), env.ec);
     ASSERT_FALSE(env.ec);
     const auto *ret = env.find_submit(5);
     ASSERT_NE(ret, nullptr);
@@ -411,8 +411,7 @@ TEST(TestRndisHandler, OutPacketStrippedHeaderDeliveredToBackend) {
     auto payload = make_host_packet(frame);
     env.data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
                                   0, payload.size(),
-                                  make_cmd_submit(env.op, 1, EP_OUT, UsbIpDirection::Out, payload.size(), {}, payload)
-                                          .transfer,
+                                  make_transfer(env.op, UsbIpDirection::Out, payload.size(), {}, payload),
                                   env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -440,7 +439,7 @@ TEST(TestRndisHandler, OutMultipacketAggregation) {
 
     env.data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
                                   0, p1.size(),
-                                  make_cmd_submit(env.op, 1, EP_OUT, UsbIpDirection::Out, p1.size(), {}, p1).transfer,
+                                  make_transfer(env.op, UsbIpDirection::Out, p1.size(), {}, p1),
                                   env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -471,7 +470,7 @@ TEST(TestRndisHandler, OutMultipacketPartialConsumptionSuspendsRemainder) {
 
     data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64}, 0,
                               payload.size(),
-                              make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out, payload.size(), {}, payload).transfer,
+                              make_transfer(op, UsbIpDirection::Out, payload.size(), {}, payload),
                               ec);
     ASSERT_FALSE(ec);
 
@@ -501,8 +500,7 @@ TEST(TestRndisHandler, OutToleratesOobAndPadding) {
 
     env.data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
                                   0, payload.size(),
-                                  make_cmd_submit(env.op, 1, EP_OUT, UsbIpDirection::Out, payload.size(), {}, payload)
-                                          .transfer,
+                                  make_transfer(env.op, UsbIpDirection::Out, payload.size(), {}, payload),
                                   env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -519,7 +517,7 @@ TEST(TestRndisHandler, InFrameWrappedWithRndisHeader) {
     EXPECT_EQ(env.data.send_frame(frame), frame.size());
 
     env.data.handle_bulk_transfer(2, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                  0, 1558, make_cmd_submit(env.op, 2, EP_IN, UsbIpDirection::In, 1558).transfer,
+                                  0, 1558, make_transfer(env.op, UsbIpDirection::In, 1558),
                                   env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -547,7 +545,7 @@ TEST(TestRndisHandler, InFramePadWhenMultipleOfMaxPacket) {
     EXPECT_EQ(env.data.send_frame(frame), frame.size());
 
     env.data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                  0, 1558, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 1558).transfer,
+                                  0, 1558, make_transfer(env.op, UsbIpDirection::In, 1558),
                                   env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -565,7 +563,7 @@ TEST(TestRndisHandler, UnlinkPendingInRequest) {
     RndisTestEnv env;
 
     env.data.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                  0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                  0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                   env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 无帧：请求挂起

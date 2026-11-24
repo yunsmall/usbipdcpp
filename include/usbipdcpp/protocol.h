@@ -354,14 +354,16 @@ namespace UsbIpCommand {
         std::uint32_t number_of_packets;
         std::uint32_t interval;
         SetupPacket setup;
-        // IN方向transfer_buffer_length==data.size()，OUT方向IN方向transfer_buffer_length=0
 
-        // RAII 包装的 transfer_handle
-        mutable TransferHandle transfer;
+        // 客户端发送用：payload（OUT 方向）与等时描述符。服务端解析时留空，
+        // payload 由 TransferSource 按需读取
+        data_type data;
+        std::vector<UsbIpIsoPacketDescriptor> iso_descriptors;
 
+        /// 发送完整命令：固定部分 + payload（OUT 方向）+ 等时描述符
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
-        // 这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次。
-        // 调用这个函数之前保证transfer已经设置了TransferOperator，不然会空指针
+        // 只读取固定部分（header + 参数 + setup），payload 与等时描述符由
+        // TransferSource 按需读取。一个对象只能调用一次。
         void from_socket(asio::ip::tcp::socket &sock);
     };
 
@@ -399,12 +401,11 @@ namespace UsbIpCommand {
     /**
      * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
      * @param sock
-     * @param handler 用于创建 transfer_handle
      * @param ec
-     * @return 获取到的命令
+     * @return 获取到的命令（只含固定头，payload 由 TransferSource 读取）
      */
     USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant
-    get_cmd_from_socket(asio::ip::tcp::socket &sock, AbstDeviceHandler *handler, usbipdcpp::error_code &ec);
+    get_cmd_from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
 } // namespace UsbIpCommand
 
 namespace UsbIpResponse {

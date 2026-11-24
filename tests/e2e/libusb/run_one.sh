@@ -1,7 +1,7 @@
 #!/bin/bash
 # 手动运行一个 libusb e2e 用例（不注册 ctest）
 #
-# 用法: sudo ./run_one.sh <control|bulk|interrupt|iso>
+# 用法: sudo ./run_one.sh <control|bulk|interrupt|chunk|chunk-serial|chunk-align|chunk-raw|chunk-fs|iso|raw>
 #
 # control/bulk/interrupt 链路: FunctionFS 设备 -> dummy_hcd -> libusb_server -> USB/IP -> vhci -> libusb 客户端
 # iso 链路: 项目虚拟等时设备 -> vhci -> libusb_server -> vhci -> libusb 客户端（双跳，不经过 gadget）
@@ -13,23 +13,33 @@ set -euo pipefail
 PROFILE="${1:-}"
 MODE=gadget
 RAW_MODE=0
+RAW_CHUNK=0
+GADGET_MAX_SPEED=""
 SERVER_PORT=""
 HOP2_VHCI_PORT=""
 HOP1_BUSID=""
 VDEV_BUSID="1-1"
+DEVICE_ARGS=()
+SERVER_ARGS=()
+CLIENT_ARGS=()
 
 usage() {
     cat <<EOF
-用法: $0 <control|bulk|interrupt|iso|raw>
+用法: $0 <control|bulk|interrupt|chunk|chunk-serial|chunk-align|chunk-raw|chunk-fs|iso|raw>
 
 手动运行一个 libusb 后端 e2e 用例（需要 root）。
 
 用例:
-  control    控制传输（FunctionFS 设备 + dummy_hcd）
-  bulk       bulk 传输
-  interrupt  interrupt 传输
-  iso        等时传输（虚拟设备双跳，需要 CONFIG_USBIP_VHCI_NR_HCS>=2）
-  raw        直接走 USB/IP 协议的负路径（非法端点/wLength/重复 seqnum/iso 描述符）
+  control       控制传输（FunctionFS 设备 + dummy_hcd）
+  bulk          bulk 传输（不分块）
+  interrupt     interrupt 传输
+  chunk         bulk OUT 分块（1024 字节 / 流水线深度 2）
+  chunk-serial  bulk OUT 分块（512 字节 / 深度 1，无流水线）
+  chunk-align   bulk OUT 分块（配置 1000，自动取整到 512 / 深度 8）
+  chunk-raw     bulk OUT 分块 + 直接线协议负路径（半包断开、重复 seqnum）
+  chunk-fs      bulk OUT 分块（全速设备，wMaxPacketSize=64）
+  iso           等时传输（虚拟设备双跳，需要 CONFIG_USBIP_VHCI_NR_HCS>=2）
+  raw           直接走 USB/IP 协议的负路径（非法端点/wLength/重复 seqnum/iso 描述符）
 
 环境变量:
   BUILD_DIR  构建目录（默认自动查找 build，再尝试 build_wsl2）
@@ -69,6 +79,54 @@ case "$PROFILE" in
         PID_HEX=0x0106
         PORT=53263
         ;;
+    chunk)
+        DEVICE_BIN=e2e_ffs_bulk
+        CLIENT_BIN=e2e_libusb_bulk_client
+        PID_HEX=0x0105
+        PORT=53268
+        # 高速 bulk 的 maxpacket 是 512，1024 = 2 个包，分块边界不会是短包
+        SERVER_ARGS=(--bulk-out-chunk 1024 --bulk-out-chunk-depth 2)
+        CLIENT_ARGS=(--chunked)
+        ;;
+    chunk-serial)
+        DEVICE_BIN=e2e_ffs_bulk
+        CLIENT_BIN=e2e_libusb_bulk_client
+        PID_HEX=0x0105
+        PORT=53269
+        # 深度 1：读一块、等它完成、再读下一块，覆盖无流水线路径
+        SERVER_ARGS=(--bulk-out-chunk 512 --bulk-out-chunk-depth 1)
+        CLIENT_ARGS=(--chunked)
+        ;;
+    chunk-align)
+        DEVICE_BIN=e2e_ffs_bulk
+        CLIENT_BIN=e2e_libusb_bulk_client
+        PID_HEX=0x0105
+        PORT=53270
+        # 1000 不是 512 的整数倍：服务器向下取整到 512（深度 8），
+        # 不能产生分块边界短包，也不能因此回错误；深度 8 同时覆盖
+        # 多块同时在途时缓冲池的回收
+        SERVER_ARGS=(--bulk-out-chunk 1000 --bulk-out-chunk-depth 8)
+        CLIENT_ARGS=(--chunked)
+        ;;
+    chunk-raw)
+        DEVICE_BIN=e2e_ffs_bulk
+        CLIENT_BIN=""
+        PID_HEX=0x0105
+        PORT=53271
+        # 直接连服务器构造半包断开/在途重复 seqnum，不经过 vhci
+        SERVER_ARGS=(--bulk-out-chunk 1024 --bulk-out-chunk-depth 2)
+        RAW_CHUNK=1
+        ;;
+    chunk-fs)
+        DEVICE_BIN=e2e_ffs_bulk
+        CLIENT_BIN=e2e_libusb_bulk_client
+        PID_HEX=0x0105
+        PORT=53272
+        # 全速枚举：bulk maxpacket=64，块 128 = 2 个包
+        GADGET_MAX_SPEED=full-speed
+        SERVER_ARGS=(--bulk-out-chunk 128 --bulk-out-chunk-depth 2)
+        CLIENT_ARGS=(--chunked --mps 64)
+        ;;
     iso)
         MODE=vdev
         DEVICE_BIN=e2e_vdev_iso
@@ -89,7 +147,7 @@ case "$PROFILE" in
         SERVER_PORT=53267
         ;;
     *)
-        echo "用法: $0 <control|bulk|interrupt|iso|raw>（$0 --help 查看说明）" >&2
+        echo "用法: $0 <control|bulk|interrupt|chunk|chunk-serial|chunk-align|chunk-raw|chunk-fs|iso|raw>（$0 --help 查看说明）" >&2
         exit 2
         ;;
 esac
@@ -312,7 +370,7 @@ start_vdev_and_bind() {
     mkfifo "$COMMAND_FIFO"
     exec 9<>"$COMMAND_FIFO"
     COMMAND_FD_OPEN=1
-    "$BUILD_DIR/libusb_server" -p "$SERVER_PORT" < "$COMMAND_FIFO" > "$SERVER_LOG" 2>&1 &
+    "$BUILD_DIR/libusb_server" -p "$SERVER_PORT" "${SERVER_ARGS[@]}" < "$COMMAND_FIFO" > "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
     for _ in $(seq 1 100); do
         "$USBIP" -t "$SERVER_PORT" list -r 127.0.0.1 >/dev/null 2>&1 && break
@@ -424,6 +482,11 @@ printf '0x1d6b\n' > "$GADGET_DIR/idVendor"
 printf '%s\n' "$PID_HEX" > "$GADGET_DIR/idProduct"
 printf '0x0200\n' > "$GADGET_DIR/bcdUSB"
 printf '0x0100\n' > "$GADGET_DIR/bcdDevice"
+if [ -n "$GADGET_MAX_SPEED" ]; then
+    # 全速用例：让 UDC 以 full-speed 枚举，bulk maxpacket 变成 64
+    printf '%s\n' "$GADGET_MAX_SPEED" > "$GADGET_DIR/max_speed" || \
+        die "设置 gadget max_speed=$GADGET_MAX_SPEED 失败（内核不支持该属性？）"
+fi
 mkdir -p "$GADGET_DIR/strings/0x409"
 printf 'usbipdcpp-e2e-%s\n' "$PROFILE" > "$GADGET_DIR/strings/0x409/serialnumber"
 printf 'usbipdcpp\n' > "$GADGET_DIR/strings/0x409/manufacturer"
@@ -434,7 +497,7 @@ mkdir -p "$FFS_MOUNT"
 mount -t functionfs "$FFS_NAME" "$FFS_MOUNT" || die "挂载 functionfs 失败"
 
 log "启动 FunctionFS 设备守护进程"
-"$BUILD_DIR/$DEVICE_BIN" "$FFS_MOUNT" > "$DEVICE_LOG" 2>&1 &
+"$BUILD_DIR/$DEVICE_BIN" "$FFS_MOUNT" "${DEVICE_ARGS[@]}" > "$DEVICE_LOG" 2>&1 &
 DEVICE_PID=$!
 for _ in $(seq 1 100); do
     grep -q FFS_READY "$DEVICE_LOG" 2>/dev/null && break
@@ -480,7 +543,7 @@ mkfifo "$COMMAND_FIFO"
 # 服务端启动失败退出时，脚本也不会卡在 open 上
 exec 9<>"$COMMAND_FIFO"
 COMMAND_FD_OPEN=1
-"$BUILD_DIR/libusb_server" -p "$PORT" < "$COMMAND_FIFO" > "$SERVER_LOG" 2>&1 &
+"$BUILD_DIR/libusb_server" -p "$PORT" "${SERVER_ARGS[@]}" < "$COMMAND_FIFO" > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 100); do
@@ -504,6 +567,22 @@ for _ in $(seq 1 100); do
 done
 [ "$BOUND" = "1" ] || die "libusb_server 没有绑定 $BUSID，见 $SERVER_LOG"
 
+if [ "$RAW_CHUNK" = "1" ]; then
+    # 从设备守护进程日志里取 UDC 实际分配的端点地址（描述符地址可能被改写）
+    OUT_EP=$(sed -n 's/.*实际地址 \(0x[0-9a-fA-F]*\) (OUT).*/\1/p' "$DEVICE_LOG" | head -1)
+    IN_EP=$(sed -n 's/.*实际地址 \(0x[0-9a-fA-F]*\) (IN).*/\1/p' "$DEVICE_LOG" | head -1)
+    [ -n "$OUT_EP" ] && [ -n "$IN_EP" ] || die "无法从 $DEVICE_LOG 解析端点地址"
+
+    log "运行 chunk_raw_client.py（分块负路径：OUT=$OUT_EP IN=$IN_EP）"
+    set +e
+    timeout 120 python3 "$SCRIPT_DIR/chunk_raw_client.py" --server-port "$PORT" \
+            --busid "$BUSID" --in-ep "$IN_EP" --out-ep "$OUT_EP"
+    RAW_RC=$?
+    set -e
+    log "chunk raw 客户端退出码 $RAW_RC"
+    exit "$RAW_RC"
+fi
+
 log "vhci 导入设备"
 local_busids_before=$(matching_busids | sort)
 ports_before=$(ports_snapshot)
@@ -524,7 +603,7 @@ log "导入后的设备: /dev/bus/usb/$(printf '%03d' "$BUS_NUMBER")/$(printf '%
 log "运行客户端 $CLIENT_BIN"
 set +e
 timeout 180 "$BUILD_DIR/$CLIENT_BIN" --bus "$BUS_NUMBER" --addr "$DEV_NUMBER" --vid 0x1d6b \
-        --pid "$PID_HEX"
+        --pid "$PID_HEX" "${CLIENT_ARGS[@]}"
 CLIENT_RC=$?
 set -e
 log "客户端退出码 $CLIENT_RC"

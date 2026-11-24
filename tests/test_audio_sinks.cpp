@@ -178,7 +178,7 @@ void send_get_min_max(VirtualInterfaceHandler &handler, GenericTransferOperator 
     };
     stub.submits.clear();
     handler.handle_non_standard_request_type_control_urb_to_endpoint(
-            1, ep, 0, 3, setup, make_cmd_submit(op, 1, ep.address, UsbIpDirection::In, 3, setup).transfer, ec);
+            1, ep, 0, 3, setup, make_transfer(op, UsbIpDirection::In, 3, setup), ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -222,7 +222,7 @@ TEST(UacAudioStreamingControl, SinkSetCurWithoutSupportedRatesStalls) {
     const data_type rate = {0x80, 0xBB, 0x00}; // 48000 Hz 小端
     handler.handle_non_standard_request_type_control_urb_to_endpoint(
             1, ep, 0, 3, setup,
-            make_cmd_submit(op, 1, ep.address, UsbIpDirection::Out, 3, setup, rate).transfer, ec);
+            make_transfer(op, UsbIpDirection::Out, 3, setup, rate), ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -263,7 +263,7 @@ TEST(UacAudioStreamingControl, SourceSetCurWithoutSupportedRatesStalls) {
     const data_type rate = {0x80, 0xBB, 0x00};
     handler.handle_non_standard_request_type_control_urb_to_endpoint(
             1, ep, 0, 3, setup,
-            make_cmd_submit(op, 1, ep.address, UsbIpDirection::Out, 3, setup, rate).transfer, ec);
+            make_transfer(op, UsbIpDirection::Out, 3, setup, rate), ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));

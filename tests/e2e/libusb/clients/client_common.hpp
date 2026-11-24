@@ -17,6 +17,10 @@ struct Args {
     int address = -1;
     std::uint16_t vid = 0;
     std::uint16_t pid = 0;
+    /// 服务器启用了 bulk OUT 分块：额外的分块专项用例只在此时运行
+    bool chunked = false;
+    /// 端点 wMaxPacketSize（高速 512 / 全速 64 / 超速 1024）
+    std::size_t mps = 512;
 };
 
 /**
@@ -155,7 +159,7 @@ struct AsyncResult {
  */
 libusb_transfer *submit_async(libusb_device_handle *handle, std::uint8_t endpoint,
                               std::size_t length, int timeout, bool interrupt,
-                              AsyncResult *result);
+                              AsyncResult *result, unsigned char flags = 0);
 
 /**
  * @brief 提交一条异步控制传输

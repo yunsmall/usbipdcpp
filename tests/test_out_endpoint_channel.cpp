@@ -324,7 +324,7 @@ TEST(TestOutEndpointChannel, GetTransferDataAppends) {
         void set_iso_descriptor(void *handle, int index, const UsbIpIsoPacketDescriptor &desc) override {}
         void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                                 std::error_code &ec) override {}
-        void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
+        void recv_transfer_data(void *handle, TransferSource &source,
                                 std::error_code &ec) override {}
     };
     DefaultOp def_op;

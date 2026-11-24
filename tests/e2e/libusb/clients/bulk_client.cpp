@@ -36,6 +36,9 @@ std::uint64_t main_out_total = 0;
 std::uint64_t alt_out_total = 0;
 std::uint64_t second_out_total = 0;
 
+/// 端点 wMaxPacketSize（由 --mps 指定，默认高速 512）
+std::size_t device_mps = 512;
+
 bool load_pair(libusb_device_handle *handle, int interface_number, int alternate_setting,
                Pair &pair, const char *name) {
     std::vector<std::uint8_t> addresses;
@@ -47,11 +50,13 @@ bool load_pair(libusb_device_handle *handle, int interface_number, int alternate
     }
     pair.in = addresses[0];
     pair.out = addresses[1];
-    // bulk 设备的端点固定为 high speed 下的 512 字节；类型/包长写错时
-    // 后续 bulk 传输会失败，但错误信息指不到描述符，这里先把描述符本身校验掉
+    // bulk 设备的端点包长随速度变化（全速 64 / 高速 512 / 超速 1024）；
+    // 类型/包长写错时后续 bulk 传输会失败，但错误信息指不到描述符，
+    // 这里先把描述符本身校验掉
     std::string detail;
     const bool descriptors_ok = check_endpoint_descriptors(
-            handle, interface_number, alternate_setting, LIBUSB_TRANSFER_TYPE_BULK, 512, detail);
+            handle, interface_number, alternate_setting, LIBUSB_TRANSFER_TYPE_BULK, device_mps,
+            detail);
     if (!descriptors_ok) {
         std::fprintf(stderr, "端点 %s 描述符不符: %s\n", name, detail.c_str());
     }
@@ -102,6 +107,17 @@ bool get_out_stats(libusb_device_handle *handle, std::uint8_t endpoint, proto::O
 }
 
 /**
+ * @brief 一笔 bulk OUT 应产生的短包数
+ *
+ * 长度不是 wMaxPacketSize 的整数倍时末尾有一个短包，零长度传输本身
+ * 就是一个 ZLP。分块若按 maxpacket 对齐，分块边界不会增加短包；设备侧
+ * 统计多于这个值就说明 URB 中间出现了短包。
+ */
+std::uint32_t expected_shorts_for_length(std::size_t length) {
+    return (length == 0 || length % device_mps != 0) ? 1u : 0u;
+}
+
+/**
  * @brief 等设备侧 OUT worker 把数据读走
  *
  * 主机的 OUT 传输完成时，gadget 侧的 read 可能还没跟上，直接查统计
@@ -114,16 +130,17 @@ bool get_out_stats(libusb_device_handle *handle, std::uint8_t endpoint, proto::O
  * @param total 期望的累计字节数
  * @param after 输出最新统计
  * @param min_chunks 期望的最小累计 read 次数
+ * @param min_shorts 期望的最小累计短包次数
  * @return 追上返回 true，超时返回 false
  */
 bool wait_out_total(libusb_device_handle *handle, std::uint8_t endpoint,
                     std::uint64_t total, proto::OutStats &after,
-                    std::uint32_t min_chunks = 0) {
+                    std::uint32_t min_chunks = 0, std::uint32_t min_shorts = 0) {
     for (int attempt = 0; attempt < 200; ++attempt) {
         if (!get_out_stats(handle, endpoint, after)) {
             return false;
         }
-        if (after.bytes >= total && after.chunks >= min_chunks) {
+        if (after.bytes >= total && after.chunks >= min_chunks && after.shorts >= min_shorts) {
             return true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -294,18 +311,24 @@ bool write_and_verify(libusb_device_handle *handle, const Pair &pair, std::size_
                       std::uint64_t &total, std::string &detail) {
     std::vector<std::uint8_t> data(length);
     fill_increment(data, static_cast<std::uint8_t>(total & 0xff));
+    proto::OutStats before {};
+    const bool before_ok = get_out_stats(handle, pair.out, before);
     int transferred = 0;
     const int result = bulk_out(handle, pair.out, data, transferred, 5000);
     const std::uint64_t expected_total = total + length;
+    const std::uint32_t expected_shorts = before.shorts + expected_shorts_for_length(length);
     proto::OutStats after {};
-    const bool after_ok = wait_out_total(handle, pair.out, expected_total, after);
+    const bool after_ok = before_ok &&
+                          wait_out_total(handle, pair.out, expected_total, after, 0, expected_shorts);
     const bool ok = result == 0 && transferred == static_cast<int>(length) && after_ok &&
-                    after.bytes == expected_total && after.errors == 0;
+                    after.bytes == expected_total && after.errors == 0 &&
+                    after.shorts == expected_shorts;
     if (!ok) {
         detail = "out=" + hex_byte(pair.out) + " rc=" + libusb_error_string(result) +
                  " transferred=" + std::to_string(transferred) + " bytes=" +
                  std::to_string(after.bytes) + "/" + std::to_string(expected_total) +
-                 " errors=" + std::to_string(after.errors);
+                 " shorts=" + std::to_string(after.shorts) + "/" +
+                 std::to_string(expected_shorts) + " errors=" + std::to_string(after.errors);
     }
     else {
         // 只有真正到达设备才推进累计基准，失败时不污染后续用例
@@ -422,14 +445,18 @@ void run_out_size_tests(libusb_device_handle *handle, TestRunner &tests) {
         // 设备侧按 maxpacket 分块读；零长度传输也会占一次 read，所以用
         // chunks 增量确认 ZLP 真的被 worker 读走（只比 bytes 时 0 长度恒成立）
         const std::uint32_t expected_chunks =
-                length == 0 ? 1u : static_cast<std::uint32_t>((length + 511) / 512);
+                length == 0 ? 1u
+                            : static_cast<std::uint32_t>(length / device_mps +
+                                                         (length % device_mps != 0 ? 1 : 0));
         const std::uint32_t total_chunks = before.chunks + expected_chunks;
+        const std::uint32_t expected_shorts = before.shorts + expected_shorts_for_length(length);
         const bool after_ok =
                 before_ok && wait_out_total(handle, main_pair.out, expected_total, after,
-                                            total_chunks);
+                                            total_chunks, expected_shorts);
         const bool ok = after_ok && result == 0 &&
                         transferred == static_cast<int>(length) &&
-                        after.bytes == expected_total && after.errors == 0;
+                        after.bytes == expected_total && after.errors == 0 &&
+                        after.shorts == expected_shorts;
         if (ok) {
             main_out_total = expected_total;
         }
@@ -439,9 +466,93 @@ void run_out_size_tests(libusb_device_handle *handle, TestRunner &tests) {
                             std::to_string(after.bytes) + "/" +
                             std::to_string(expected_total) + " chunks=" +
                             std::to_string(after.chunks) + "/" +
-                            std::to_string(total_chunks) + " errors=" +
+                            std::to_string(total_chunks) + " shorts=" +
+                            std::to_string(after.shorts) + "/" +
+                            std::to_string(expected_shorts) + " errors=" +
                             std::to_string(after.errors));
     }
+}
+
+/**
+ * @brief ADD_ZERO_PACKET：整笔传输只在末尾产生一个零长包
+ *
+ * 分块模式下服务器只能给最后一块保留该标志；若错误地给每块都加，设备侧
+ * 会多出短包，短包计数与期望不符。
+ */
+void run_out_zlp_test(libusb_context *context, libusb_device_handle *handle, TestRunner &tests) {
+    constexpr std::size_t length = 1024;
+    proto::OutStats before {};
+    const bool before_ok = get_out_stats(handle, main_pair.out, before);
+    AsyncResult result;
+    result.data.resize(length);
+    fill_increment(result.data, static_cast<std::uint8_t>(main_out_total & 0xff));
+    libusb_transfer *transfer = submit_async(handle, main_pair.out, length, 5000, false, &result,
+                                             LIBUSB_TRANSFER_ADD_ZERO_PACKET);
+    bool ok = before_ok && transfer != nullptr && wait_async(context, result, 5000);
+    if (transfer != nullptr) {
+        cancel_and_free_transfer(context, transfer, &result, 1000);
+    }
+    ok = ok && result.status == LIBUSB_TRANSFER_COMPLETED &&
+         result.actual_length == static_cast<int>(length);
+
+    const std::uint64_t expected_total = main_out_total + length;
+    const std::uint32_t expected_shorts = before.shorts + 1; // 末尾 ZLP 产生一次零长 read
+    proto::OutStats after {};
+    const bool after_ok =
+            ok && wait_out_total(handle, main_pair.out, expected_total, after, 0, expected_shorts);
+    ok = ok && after_ok && after.bytes == expected_total && after.errors == 0 &&
+         after.shorts == expected_shorts;
+    if (after_ok) {
+        // 用设备实际接收量作为下一笔的种子基准（失败时也不能污染后续用例）
+        main_out_total = after.bytes;
+    }
+    tests.check(ok, "bulk out ADD_ZERO_PACKET 只在末尾产生一个短包",
+                "status=" + libusb_error_string(result.status) + " actual=" +
+                        std::to_string(result.actual_length) + " bytes=" +
+                        std::to_string(after.bytes) + "/" + std::to_string(expected_total) +
+                        " shorts=" + std::to_string(after.shorts) + "/" +
+                        std::to_string(expected_shorts));
+}
+
+/**
+ * @brief 分块传到一半设备 STALL：整条 URB 回错误、不再发后续块、清除后恢复
+ *
+ * gadget 收到 1024 字节后 halt OUT 端点，服务器后续分块会得到 STALL。
+ * 客户端只提交了一条 URB，应看到 LIBUSB_ERROR_PIPE（部分块可能已成功），
+ * 且设备统计的字节数是实际接收的前缀。clear_halt 后数据流要能接着走。
+ */
+void run_chunked_stall_test(libusb_device_handle *handle, TestRunner &tests) {
+    proto::OutStats before {};
+    const bool before_ok = get_out_stats(handle, main_pair.out, before);
+    const bool armed = before_ok &&
+                       vendor_out(handle, proto::Request::stall_out_after, 1024, main_pair.out) == 0;
+
+    std::vector<std::uint8_t> data(8192);
+    fill_increment(data, static_cast<std::uint8_t>(main_out_total & 0xff));
+    int transferred = 0;
+    const int result = bulk_out(handle, main_pair.out, data, transferred, 5000);
+
+    proto::OutStats after {};
+    const bool after_ok = get_out_stats(handle, main_pair.out, after);
+    if (after_ok) {
+        // 部分块已被设备接收：下一笔从实际末尾继续，不能从原基准继续
+        main_out_total = after.bytes;
+    }
+    const int clear_result = libusb_clear_halt(handle, main_pair.out);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::string detail;
+    const bool recovered = write_and_verify(handle, main_pair, 64, main_out_total, detail);
+
+    const bool ok = before_ok && armed && result == LIBUSB_ERROR_PIPE && after_ok &&
+                    clear_result == 0 && recovered;
+    if (!ok) {
+        detail = "rc=" + libusb_error_string(result) + " transferred=" +
+                 std::to_string(transferred) + " accepted=" +
+                 std::to_string(after.bytes - before.bytes) + " clear=" +
+                 libusb_error_string(clear_result) + " recovered=" +
+                 std::to_string(recovered) + " " + detail;
+    }
+    tests.check(ok, "bulk out 分块传到一半 STALL 后恢复", detail);
 }
 
 void run_alt_pair_tests(libusb_context *context, libusb_device_handle *handle, TestRunner &tests,
@@ -764,6 +875,7 @@ void run_alt_switching_tests(libusb_context *context, libusb_device_handle *hand
 int main(int argc, char **argv) {
     using namespace usbipdcpp::e2e;
     Args args = parse_args(argc, argv, proto::vid, proto::pid_bulk);
+    device_mps = args.mps;
 
     libusb_context *context = nullptr;
     if (libusb_init(&context) != 0) {
@@ -804,6 +916,10 @@ int main(int argc, char **argv) {
     run_in_size_tests(handle, tests);
     run_zlp_test(handle, tests);
     run_out_size_tests(handle, tests);
+    run_out_zlp_test(context, handle, tests);
+    if (args.chunked) {
+        run_chunked_stall_test(handle, tests);
+    }
     run_concurrency(context, handle, tests);
     run_cancel(context, handle, tests);
     run_timeout(handle, tests);

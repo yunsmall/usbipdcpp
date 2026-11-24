@@ -261,10 +261,10 @@ TEST(VirtualDeviceStandard, HaltedEndpointUrbCompletesWithEpipe) {
 
     // 释放顺序：op 必须活过 cmd（cmd 的 TransferHandle 析构要用它）
     GenericTransferOperator op;
-    auto cmd = make_cmd_submit(op, 7, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
+    auto cmd = make_cmd_submit(7, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
     auto ep = device->interfaces[0].endpoints[0][0];
 
-    device_handler->receive_urb(std::move(cmd), ep, std::optional<UsbInterface>(device->interfaces[0]), ec);
+    deliver_urb(device_handler, std::move(cmd), ep, std::optional<UsbInterface>(device->interfaces[0]), ec);
     EXPECT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -295,9 +295,9 @@ TEST(VirtualDeviceStandard, ClearHaltAllowsTransferAgain) {
     // 未 halt 时请求进入 handler；SimpleVirtualDeviceHandler 的 bulk 默认实现回 EPIPE，
     // 但应答来自数据面而不是 halt 分支，端点此后可正常处理
     GenericTransferOperator op;
-    auto cmd = make_cmd_submit(op, 8, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
+    auto cmd = make_cmd_submit(8, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
     auto ep = device->interfaces[0].endpoints[0][0];
-    device_handler->receive_urb(std::move(cmd), ep, std::optional<UsbInterface>(device->interfaces[0]), ec);
+    deliver_urb(device_handler, std::move(cmd), ep, std::optional<UsbInterface>(device->interfaces[0]), ec);
     ASSERT_EQ(stub.submits.size(), 1u);
 }
 
@@ -365,13 +365,13 @@ namespace {
 ///       TransferHandle 析构要用它）
 void send_control(VirtualDeviceHandler &device, GenericTransferOperator &op, std::uint32_t seqnum,
                   UsbIpDirection direction, std::uint32_t length, const SetupPacket &setup) {
-    auto cmd = make_cmd_submit(op, seqnum, 0, static_cast<std::uint32_t>(direction), length, setup);
+    auto cmd = make_cmd_submit(seqnum, 0, static_cast<std::uint32_t>(direction), length, setup);
     UsbEndpoint ep0{.address = 0x80,
                     .attributes = static_cast<std::uint8_t>(EndpointAttributes::Control),
                     .max_packet_size = 64,
                     .interval = 0};
     error_code ec;
-    device.receive_urb(std::move(cmd), ep0, std::nullopt, ec);
+    deliver_urb(&device, std::move(cmd), ep0, std::nullopt, ec);
 }
 
 } // namespace
@@ -919,9 +919,9 @@ TEST(VirtualDeviceStandard, SetDescriptorTruncatesToReceivedBytes) {
     ASSERT_FALSE(ec);
 
     SetupPacket set{.request_type = 0x00, .request = 7, .value = 0x0100, .index = 0, .length = 16};
-    auto cmd = make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 16, set, data_type(16, 0xAA));
-    GenericTransfer::from_handle(cmd.transfer.get())->data.resize(4); // 模拟短包
-    device_handler->receive_urb(std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Full), std::nullopt, ec);
+    // 声明 16 字节但字节源只有 4 字节：模拟控制 OUT 短包
+    auto cmd = make_cmd_submit(1, 0x00, UsbIpDirection::Out, 16, set, data_type(4, 0xAA));
+    deliver_urb(device_handler, std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Full), std::nullopt, ec);
     ASSERT_FALSE(ec);
 
     EXPECT_EQ(device_handler->seen.size(), 4u);
@@ -1348,9 +1348,8 @@ TEST(VirtualDeviceStandard, SetSelStoresExitLatencies) {
 
     SetupPacket sel{
             .request_type = 0x00, .request = 0x30, .value = 0, .index = 0, .length = 6};
-    auto cmd = make_cmd_submit(op, 1, 0x00, UsbIpDirection::Out, 6, sel,
-                               data_type{0x0A, 0x14, 0x34, 0x12, 0x78, 0x56});
-    handler->receive_urb(std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Super), std::nullopt, ec);
+    auto cmd = make_cmd_submit(1, 0x00, UsbIpDirection::Out, 6, sel, data_type{0x0A, 0x14, 0x34, 0x12, 0x78, 0x56});
+    deliver_urb(handler, std::move(cmd), UsbEndpoint::get_ep0_out(UsbSpeed::Super), std::nullopt, ec);
     ASSERT_FALSE(ec);
 
     ASSERT_EQ(stub.submits.size(), 1u);
@@ -1381,8 +1380,8 @@ TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
     // SET_SEL 的 wLength 必须是 6
     SetupPacket sel_len{
             .request_type = 0x00, .request = set_sel, .value = 0, .index = 0, .length = 8};
-    auto sel_len_cmd = make_cmd_submit(op, 1, 0, UsbIpDirection::Out, 8, sel_len, data_type(8, 0));
-    handler->receive_urb(std::move(sel_len_cmd), ep0, std::nullopt, ec);
+    auto sel_len_cmd = make_cmd_submit(1, 0, UsbIpDirection::Out, 8, sel_len, data_type(8, 0));
+    deliver_urb(handler, std::move(sel_len_cmd), ep0, std::nullopt, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 1u);
     EXPECT_EQ(stub.submits[0].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -1390,8 +1389,8 @@ TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
     // SET_SEL 的 wValue 必须是 0
     SetupPacket sel_value{
             .request_type = 0x00, .request = set_sel, .value = 1, .index = 0, .length = 6};
-    auto sel_value_cmd = make_cmd_submit(op, 2, 0, UsbIpDirection::Out, 6, sel_value, data_type(6, 0));
-    handler->receive_urb(std::move(sel_value_cmd), ep0, std::nullopt, ec);
+    auto sel_value_cmd = make_cmd_submit(2, 0, UsbIpDirection::Out, 6, sel_value, data_type(6, 0));
+    deliver_urb(handler, std::move(sel_value_cmd), ep0, std::nullopt, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 2u);
     EXPECT_EQ(stub.submits[1].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -1399,8 +1398,8 @@ TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
     // SET_ISOCH_DELAY 的 wIndex 必须是 0
     SetupPacket isoch_index{
             .request_type = 0x00, .request = set_isoch, .value = 100, .index = 1, .length = 0};
-    auto isoch_index_cmd = make_cmd_submit(op, 3, 0, UsbIpDirection::Out, 0, isoch_index);
-    handler->receive_urb(std::move(isoch_index_cmd), ep0, std::nullopt, ec);
+    auto isoch_index_cmd = make_cmd_submit(3, 0, UsbIpDirection::Out, 0, isoch_index);
+    deliver_urb(handler, std::move(isoch_index_cmd), ep0, std::nullopt, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 3u);
     EXPECT_EQ(stub.submits[2].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -1408,8 +1407,8 @@ TEST(VirtualDeviceStandard, SetSelAndIsochDelayRejectMalformedSetup) {
     // SET_ISOCH_DELAY 的 wLength 必须是 0
     SetupPacket isoch_len{
             .request_type = 0x00, .request = set_isoch, .value = 100, .index = 0, .length = 2};
-    auto isoch_len_cmd = make_cmd_submit(op, 4, 0, UsbIpDirection::Out, 2, isoch_len, data_type{0x00, 0x00});
-    handler->receive_urb(std::move(isoch_len_cmd), ep0, std::nullopt, ec);
+    auto isoch_len_cmd = make_cmd_submit(4, 0, UsbIpDirection::Out, 2, isoch_len, data_type{0x00, 0x00});
+    deliver_urb(handler, std::move(isoch_len_cmd), ep0, std::nullopt, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(stub.submits.size(), 4u);
     EXPECT_EQ(stub.submits[3].status, static_cast<std::uint32_t>(UrbStatusType::StatusEPIPE));
@@ -1793,9 +1792,9 @@ TEST(VirtualDeviceStandard, NonControlUrbWithoutInterfaceIsFatal) {
     ASSERT_FALSE(ec);
 
     auto ep = device->interfaces[0].endpoints[0][0];
-    auto cmd = make_cmd_submit(op, 1, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
+    auto cmd = make_cmd_submit(1, 1, static_cast<std::uint32_t>(UsbIpDirection::In), 8);
     error_code urb_ec;
-    handler->receive_urb(std::move(cmd), ep, std::nullopt, urb_ec);
+    deliver_urb(handler, std::move(cmd), ep, std::nullopt, urb_ec);
 
     EXPECT_TRUE(urb_ec);
     EXPECT_TRUE(stub.submits.empty());

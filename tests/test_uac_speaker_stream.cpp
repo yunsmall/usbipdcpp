@@ -108,7 +108,7 @@ void set_as_interface(SpeakerFixture &fx, std::uint16_t alt, CaptureResponder &s
             .index = 1, // AS 接口号
             .length = 0,
     };
-    fx.dh->receive_urb(make_cmd_submit(fx.op, 100, 0x00, UsbIpDirection::Out, 0, setup), fx.device->ep0_in,
+    deliver_urb(fx.dh, make_cmd_submit(100, 0x00, UsbIpDirection::Out, 0, setup), fx.device->ep0_in,
                        std::nullopt, ec);
     ASSERT_FALSE(ec);
 }
@@ -132,7 +132,7 @@ TEST(TestUacSpeakerStream, IsoOutBeforeStreamingStalls) {
     fx.dh->on_new_connection(stub, ec);
     ASSERT_FALSE(ec);
 
-    fx.dh->receive_urb(make_cmd_submit(fx.op, 1, 0x01, UsbIpDirection::Out, 384, {}, {}, 2), fx.ep_iso_out,
+    deliver_urb(fx.dh, make_cmd_submit(1, 0x01, UsbIpDirection::Out, 384, {}, {}, 2), fx.ep_iso_out,
                        fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
@@ -162,11 +162,12 @@ TEST(TestUacSpeakerStream, IsoOutWritesSinkThenResponds) {
     for (std::size_t i = 0; i < payload.size(); i++) {
         payload[i] = static_cast<std::uint8_t>(i);
     }
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 384, {}, payload, 2);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
-    trx->iso_descriptors[1] = {.offset = 192, .length = 192, .actual_length = 0, .status = 0};
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::Out, 384, {}, payload, 2);
+    submit.iso_descriptors = {
+            {.offset = 0, .length = 192, .actual_length = 0, .status = 0},
+            {.offset = 192, .length = 192, .actual_length = 0, .status = 0},
+    };
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     // 调度线程在数据时长（384B / 96000B/s = 4ms）后写 sink 并应答
@@ -209,7 +210,7 @@ TEST(TestUacSpeakerStream, SwitchingBackToAlt0StopsStreaming) {
     set_as_interface(fx, 1, stub, ec);
     set_as_interface(fx, 0, stub, ec); // 关流
 
-    fx.dh->receive_urb(make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 192, {}, {}, 1), fx.ep_iso_out,
+    deliver_urb(fx.dh, make_cmd_submit(2, 0x01, UsbIpDirection::Out, 192, {}, {}, 1), fx.ep_iso_out,
                        fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
@@ -242,15 +243,14 @@ TEST(TestUacSpeakerStream, MuteZeroesReceivedPcm) {
             .index = static_cast<std::uint16_t>(UAC_ENTITY_FEATURE_UNIT << 8),
             .length = 1,
     };
-    fx.dh->receive_urb(make_cmd_submit(fx.op, 101, 0x00, UsbIpDirection::Out, 1, mute_setup, {1}),
+    deliver_urb(fx.dh, make_cmd_submit(101, 0x00, UsbIpDirection::Out, 1, mute_setup, {1}),
                        fx.device->ep0_in, std::nullopt, ec);
     ASSERT_FALSE(ec);
 
     // 非零 PCM 收流
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 192, {}, data_type(192, 0xAB), 1);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::Out, 192, {}, data_type(192, 0xAB), 1);
+    submit.iso_descriptors = {{.offset = 0, .length = 192, .actual_length = 0, .status = 0}};
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     wait_for_sink_data(fx, 192);
@@ -271,10 +271,9 @@ TEST(TestUacSpeakerStream, DeclaredIsoLengthExceedsActualData) {
     set_as_interface(fx, 1, stub, ec);
 
     data_type payload(100, 0x11);
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 100, {}, payload, 1);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0}; // 声明 192 > 实际 100
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::Out, 100, {}, payload, 1);
+    submit.iso_descriptors = {{.offset = 0, .length = 192, .actual_length = 0, .status = 0}}; // 声明 192 > 实际 100
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     wait_for_sink_data(fx, 100);
@@ -301,11 +300,12 @@ TEST(TestUacSpeakerStream, ShortFirstPacketKeepsLaterPacketsEmpty) {
     set_as_interface(fx, 1, stub, ec);
 
     data_type payload(100, 0x22);
-    auto submit = make_cmd_submit(fx.op, 2, 0x01, UsbIpDirection::Out, 100, {}, payload, 2);
-    auto *trx = GenericTransfer::from_handle(submit.transfer.get());
-    trx->iso_descriptors[0] = {.offset = 0, .length = 192, .actual_length = 0, .status = 0};
-    trx->iso_descriptors[1] = {.offset = 192, .length = 192, .actual_length = 0, .status = 0};
-    fx.dh->receive_urb(std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
+    auto submit = make_cmd_submit(2, 0x01, UsbIpDirection::Out, 100, {}, payload, 2);
+    submit.iso_descriptors = {
+            {.offset = 0, .length = 192, .actual_length = 0, .status = 0},
+            {.offset = 192, .length = 192, .actual_length = 0, .status = 0},
+    };
+    deliver_urb(fx.dh, std::move(submit), fx.ep_iso_out, fx.device->interfaces[1], ec);
     ASSERT_FALSE(ec);
 
     wait_for_sink_data(fx, 100);

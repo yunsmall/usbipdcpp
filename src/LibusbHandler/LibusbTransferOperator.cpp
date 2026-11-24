@@ -1,12 +1,14 @@
 #include "usbipdcpp/LibusbHandler/LibusbTransferOperator.h"
 
 #include <cstdlib>
+#include <span>
 
 #include <asio.hpp>
 #include <libusb.h>
 #include <spdlog/spdlog.h>
 
 #include "usbipdcpp/LibusbHandler/LibusbDeviceHandler.h"
+#include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/utils/SmallVector.h"
 
@@ -169,35 +171,39 @@ void LibusbTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::soc
     }
 }
 
-void LibusbTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                                                std::error_code &ec) {
+void LibusbTransferOperator::recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) {
     auto *trx = static_cast<libusb_transfer *>(handle);
-    if (length > 0) {
+    if (source.remaining() > 0) {
         // 控制传输 buffer 前 8 字节留给 setup 包，由后续 receive_urb 填入；
         // 此处从偏移 8 开始读取数据阶段内容。
-        // trx->type 此时尚未设置，不能用来判断传输类型；
-        // 改用 trx->length 判断：alloc 时控制传输多加了 LIBUSB_CONTROL_SETUP_SIZE，
-        // 因此 trx->length > length 说明 buffer 包含 setup 前缀
-        bool is_control = (static_cast<std::size_t>(trx->length) > length);
+        // trx->type 此时尚未设置，不能用来判断传输类型；改用 buffer 长度判断：
+        // alloc 时控制传输多加了 LIBUSB_CONTROL_SETUP_SIZE，
+        // 因此 trx->length > payload 长度说明 buffer 包含 setup 前缀
+        bool is_control = (static_cast<std::size_t>(trx->length) > source.remaining());
         auto *buf = trx->buffer + (is_control ? LIBUSB_CONTROL_SETUP_SIZE : 0);
-        asio::read(sock, asio::buffer(buf, length), ec);
-        if (ec)
+        source.read({reinterpret_cast<std::byte *>(buf), source.remaining()}, ec);
+        if (ec) {
             return;
+        }
     }
 
     // 校验并读取 ISO 描述符：length/actual_length 是客户端可控字段，必须验证
     // 才能写入 libusb transfer——libusb 按 length 从缓冲区读写数据，length
     // 总和超过缓冲区大小（trx->length，ISO 传输不含 setup 前缀）会越界读写
     // （堆溢出），actual_length 超过 length 则包数据溢出。不合法拒绝整个
-    // 命令（调用方 ec 非空时抛异常断开连接）
+    // 命令（调用方 ec 非空时断开连接）
+    if (trx->num_iso_packets <= 0) {
+        return;
+    }
+    SmallVector<UsbIpIsoPacketDescriptor, 16> descriptors;
+    descriptors.resize(static_cast<std::size_t>(trx->num_iso_packets));
+    source.read_iso_descriptors(std::span(descriptors), ec);
+    if (ec) {
+        return;
+    }
     std::uint64_t total_length = 0;
     for (int i = 0; i < trx->num_iso_packets; i++) {
-        UsbIpIsoPacketDescriptor iso_desc{};
-        iso_desc.from_socket(sock);
-        // 校验写成 total_length + length > trx->length：若写成
-        // length > trx->length - total_length，total_length 超过
-        // trx->length 时无符号减法会下溢成巨大值、校验失效（前序校验
-        // 保证 total_length 恒 ≤ trx->length，实际不会触发，但可读性差）
+        const auto &iso_desc = descriptors[static_cast<std::size_t>(i)];
         if (iso_desc.actual_length > iso_desc.length ||
             total_length + iso_desc.length > static_cast<std::uint64_t>(trx->length)) [[unlikely]] {
             SPDLOG_ERROR("ISO 描述符非法：包 {} length={} actual_length={}（剩余缓冲 {}）",
@@ -207,14 +213,9 @@ void LibusbTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::soc
             return;
         }
         total_length += iso_desc.length;
-        // 客户端描述符里的 offset 被丢弃（set_iso_descriptor 不写它）：libusb
-        // 的 iso_packet_desc 没有 offset 字段（buffer 布局隐式连续），发送端
-        // 的 offset 由 send_transfer_data 按 pkt.length 累加自行计算，恶意或
-        // 错误的 offset 无法影响服务器的数据定位。协议线格式数据本来就是
-        // 紧凑的：客户端（Linux vhci）发送 ISO 数据时按描述符 offset 从本地
-        // URB buffer 紧凑复制进 PDU（内核 usbip_common.c 的
-        // usbip_alloc_iso_desc_pdu：memcpy 目标逐个 length 连续累加），
-        // 不存在带间隙的线上布局
+        // 客户端描述符里的 offset 被丢弃：libusb 的 iso_packet_desc 没有 offset
+        // 字段（buffer 布局隐式连续），发送端 offset 由 send_transfer_data 按
+        // pkt.length 累加自行计算，恶意 offset 无法影响服务器的数据定位
         set_iso_descriptor(handle, i, iso_desc);
     }
 }

@@ -43,7 +43,7 @@ ctest.**
 cd <project root>
 cmake --build <build dir> -j6            # build the e2e targets first
 sudo tests/e2e/libusb/run_one.sh bulk   # one case
-sudo tests/e2e/libusb/run_all.sh        # run all five in order
+sudo tests/e2e/libusb/run_all.sh        # run all cases in order
 ```
 
 `run_one.sh --help` / `run_all.sh --help` list the available cases, prerequisites and
@@ -65,7 +65,12 @@ Case breakdown (one device per client):
 | Case | VID:PID | Device side | Client coverage |
 |---|---|---|---|
 | control | 1d6b:0104 | interface 0 with alt 0/alt 1 (no endpoints); vendor requests for IN/OUT/STALL/short/zero/delay | 35 checks: control IN/OUT of many lengths, STALL, short packets, zero-length packets, async cancel, standard descriptor reads, GET/SET_CONFIGURATION, GET/SET_INTERFACE alt switching |
-| bulk | 1d6b:0105 | interface 0 alt 0 (0x81/0x02), alt 1 (0x83/0x04); interface 1 alt 0 (no endpoints) / alt 1 (0x85/0x06) | 45 checks: IN lengths (multiples of 512 up to 1 MiB), zero-length packets, OUT lengths, 16 concurrent async IN, cancel, timeout, IN/OUT halt + clear_halt recovery, 10 rounds of interface/alt switching (each round transfers on the endpoints of the active alt) |
+| bulk | 1d6b:0105 | interface 0 alt 0 (0x81/0x02), alt 1 (0x83/0x04); interface 1 alt 0 (no endpoints) / alt 1 (0x85/0x06) | 46 checks: IN lengths (multiples of 512 up to 1 MiB), zero-length packets, OUT lengths, `ADD_ZERO_PACKET`, 16 concurrent async IN, cancel, timeout, IN/OUT halt + clear_halt recovery, 10 rounds of interface/alt switching (each round transfers on the endpoints of the active alt) |
+| chunk | 1d6b:0105 | same FunctionFS device as bulk; `libusb_server --bulk-out-chunk 1024 --bulk-out-chunk-depth 2` | bulk's 46 checks + 1 chunk-specific one: a STALL halfway through a chunked URB returns EPIPE for the whole URB and recovers after clear_halt |
+| chunk-serial | 1d6b:0105 | same; chunk 512, depth 1 (no pipelining) | the same 47 checks |
+| chunk-align | 1d6b:0105 | same; configured chunk 1000 (not a multiple of 512) is rounded down to 512, depth 8 | the same 47 checks; without rounding, chunk boundaries would add short packets and the short-packet assertions would fail |
+| chunk-fs | 1d6b:0105 | same, but gadget `max_speed=full-speed`, bulk maxpacket 64; chunk 128, depth 2 | the same 47 checks (client `--mps 64`), covering alignment and short packets at full speed |
+| chunk-raw | 1d6b:0105 | same device and server options as chunk, no vhci; talks the wire protocol directly to the server | 8 checks: a declared 1 MiB OUT truncated to 3000 bytes then RST is cleaned up and the stream resumes; a duplicate seqnum against an in-flight control transfer is rejected; UNLINK after a completed chunked OUT returns status 0 |
 | interrupt | 1d6b:0106 | one interface, interrupt IN 0x81 / OUT 0x02; IN keeps emitting 8-byte counter blocks | 18 checks: lengths, counter continuity across requests, concurrency, cancel, timeout, IN/OUT halt + recovery |
 | iso | 1d6b:0107 | project virtual isochronous device (no gadget): alt 0 has no endpoints, alt 1 has 1024B iso IN/OUT, alt 2 has 512B iso IN; vendor requests expose statistics, an IN delay and a failure mask | 38 checks: descriptor layout, alt 0/1/2 switching, IN with 8/32/64 packets plus variable/zero-length packets, 4 concurrent transfers, OUT with three lengths plus device-side byte verification, vendor requests, nonexistent alt rejected, five alt 1↔0 rounds, submit on alt 0 rejected, UNLINK while pending, partial packet failure (per-packet status + device stats) |
 | raw | 1d6b:0107 | shares the virtual device with iso; no second vhci, talks the USB/IP wire protocol to libusb_server directly | 19 checks: endpoint missing in the active alt is silently dropped, wLength greater than transfer_buffer_length, CLEAR_FEATURE fallback submit, duplicate seqnum, ISO number_of_packets=0, invalid ISO descriptor disconnects; after every error the session/device must recover, and a pending transfer must be cleaned up when the client drops the socket |
@@ -73,6 +78,53 @@ Case breakdown (one device per client):
 The client never assumes endpoint addresses; it looks them up per interface/alt from the
 enumerated configuration descriptor, because UDC autoconfig may rewrite them (e.g. 0x83 becomes
 0x86).
+
+### Chunking cases (bulk OUT)
+
+**Why chunking and pipelining exist**: buffering a whole large URB requires a contiguous
+allocation of `transfer_buffer_length` (the protocol cap is 16 MB), which is unfriendly to
+memory-constrained MCUs and embedded gateways; and "receive the whole URB, then forward it"
+serializes socket receive and device transfer completely. Chunking processes one URB in
+fixed-size pieces, bounding the in-flight memory to `depth × chunk` regardless of the URB
+size, and lets chunk N be in flight to the device while chunk N+1 is being read, overlapping
+receive and forwarding. It also makes the device see several shorter URBs, which helps
+firmware/controllers that only accept limited request lengths. Bulk IN is *not* chunked:
+its RET_SUBMIT must carry the final `actual_length` before the data, so splitting does not
+reduce the memory a single response needs, does not change the "length is decided by the
+device" semantics, and would expose multiple short URBs to the client; low-memory IN needs a
+separate "known total length + streaming send" capability.
+
+`libusb_server --bulk-out-chunk <bytes>` enables bulk OUT chunking: one client URB (one
+CMD_SUBMIT) is split by the server into several `libusb_bulk_transfer` calls, so the device
+sees multiple URBs while the client still receives exactly one RET_SUBMIT.
+`--bulk-out-chunk-depth <N>` sets the pipeline depth: while the server reads chunk N+1, chunk N
+may already be in flight to the device; total in-flight memory is about `depth × chunk`,
+independent of the URB size. The default `--bulk-out-chunk 0` disables chunking; control,
+bulk IN, interrupt and isochronous transfers are never chunked.
+
+The chunk size is rounded down to a multiple of the endpoint's `wMaxPacketSize` (a value below
+one packet becomes one packet). The device only sees packets: a chunk boundary that is not a
+packet boundary ends with a short packet, and firmware is entitled to treat a short packet as
+the end of the whole transfer. With alignment, chunk boundaries coincide with packet
+boundaries, so the device sees exactly the same packet sequence as without chunking — that is
+the intended transparency, which also means **firmware cannot tell from the packet stream
+whether chunking happened**. What the tests can and do verify is:
+
+- device byte count, `read` count and short-packet count: the client asserts exactly one short
+  packet at the end of a non-maxpacket-multiple transfer and none for aligned lengths; an
+  unaligned chunk boundary would show extra short packets;
+- data continuity: firmware checks that adjacent bytes increase by one across `read` calls, so
+  dropped, duplicated or reordered data fails;
+- `ADD_ZERO_PACKET`: the client asserts exactly one zero-length packet at the very end;
+- mid-transfer STALL: firmware halts the endpoint after receiving a threshold, verifying that
+  the server aggregates EPIPE, stops sending further chunks, reports the accepted byte count,
+  and recovers after clear_halt;
+- raw negative paths: truncated payload + RST, duplicate in-flight seqnum, UNLINK after
+  completion (see `chunk_raw_client.py`).
+
+Physical device removal during a chunk, submit-time memory exhaustion, and a device "short
+completion" without STALL cannot be reproduced reliably with dummy_hcd and are not covered by
+the automated suite.
 
 `run_one.sh` performs the whole setup and teardown: configfs gadget, functionfs mount, waiting
 for the device daemon, starting `libusb_server` in interactive mode (so `-d`'s auto-bind cannot

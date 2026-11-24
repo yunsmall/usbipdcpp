@@ -40,6 +40,7 @@ enum class Request : std::uint8_t {
     set_in_enabled = 0x20,  ///< OUT 无数据：wValue=0/1，wIndex=端点地址
     set_reply_len = 0x21,   ///< OUT 无数据：wValue=长度，wIndex=端点地址
     get_out_stats = 0x22,   ///< IN：wIndex=端点地址，返回 OutStats
+    stall_out_after = 0x23, ///< OUT 无数据：wValue=再接收多少字节后 halt，wIndex=OUT 端点
 };
 
 /**
@@ -49,6 +50,7 @@ struct OutStats {
     std::uint32_t chunks;
     std::uint32_t bytes;
     std::uint32_t errors;
+    std::uint32_t shorts; ///< 短包次数（read 返回小于 wMaxPacketSize，含零长包）
 } __attribute__((packed));
 
 /**

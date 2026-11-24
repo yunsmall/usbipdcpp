@@ -65,8 +65,7 @@ TEST(TestEcmDataHandler, OutFrameDeliveredToBackendAndAcked) {
     const data_type frame = {0xAA, 0xBB, 0x00, 0x01, 0x02, 0x03, 0x00, 0x11, 0x22, 0x33,
                              0x44, 0x55, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04};
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
-                                     0, frame.size(), make_cmd_submit(env.op, 1, EP_OUT, UsbIpDirection::Out,
-                                                                      frame.size(), {}, frame).transfer,
+                                     0, frame.size(), make_transfer(env.op, UsbIpDirection::Out, frame.size(), {}, frame),
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -95,8 +94,7 @@ TEST(TestEcmDataHandler, OutFrameHangsUntilTakeFrame) {
     std::optional<OutEndpointChannel::Pending> taken;
     std::thread reader([&]() { taken = handler.take_frame(2000); });
     handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
-                                 0, frame.size(), make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out,
-                                                                  frame.size(), {}, frame).transfer,
+                                 0, frame.size(), make_transfer(op, UsbIpDirection::Out, frame.size(), {}, frame),
                                  ec);
     ASSERT_FALSE(ec);
     reader.join();
@@ -119,8 +117,7 @@ TEST(TestEcmDataHandler, InRequestServesSentFrame) {
     EXPECT_EQ(env.handler.send_frame(frame), frame.size());
 
     env.handler.handle_bulk_transfer(2, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, frame.size(), make_cmd_submit(env.op, 2, EP_IN, UsbIpDirection::In,
-                                                                      frame.size()).transfer,
+                                     0, frame.size(), make_transfer(env.op, UsbIpDirection::In, frame.size()),
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -136,7 +133,7 @@ TEST(TestEcmDataHandler, InRequestHangsThenSendFrameServesIt) {
     EcmTestEnv env;
 
     env.handler.handle_bulk_transfer(3, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 挂起未应答
@@ -155,7 +152,7 @@ TEST(TestEcmDataHandler, UnlinkPendingInRequest) {
     EcmTestEnv env;
 
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty());
@@ -179,8 +176,7 @@ TEST(TestEcmDataHandler, UnlinkPendingOutRequest) {
 
     const data_type frame = {1, 2, 3};
     handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_OUT, .attributes = 0x02, .max_packet_size = 64},
-                                 0, frame.size(), make_cmd_submit(op, 1, EP_OUT, UsbIpDirection::Out,
-                                                                  frame.size(), {}, frame).transfer,
+                                 0, frame.size(), make_transfer(op, UsbIpDirection::Out, frame.size(), {}, frame),
                                  ec);
     ASSERT_FALSE(ec);
     EXPECT_TRUE(stub.submits.empty()); // 挂起未应答
@@ -203,10 +199,10 @@ TEST(TestEcmDataHandler, TxBufferDropsOldestOverLimit) {
     env.handler.send_frame(data_type{3, 3, 3}); // 挤掉第 1 帧
 
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     env.handler.handle_bulk_transfer(2, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 2, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -216,7 +212,7 @@ TEST(TestEcmDataHandler, TxBufferDropsOldestOverLimit) {
 
     // 第三个 IN 请求挂起（缓冲已空）
     env.handler.handle_bulk_transfer(3, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 3, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     EXPECT_EQ(env.stub.submits.size(), 2u);
 }
@@ -228,7 +224,7 @@ TEST(TestEcmDataHandler, FrameLongerThanInRequestTruncated) {
 
     env.handler.send_frame(data_type{1, 2, 3, 4, 5, 6});
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 4, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 4).transfer,
+                                     0, 4, make_transfer(env.op, UsbIpDirection::In, 4),
                                      env.ec);
     ASSERT_FALSE(env.ec);
 
@@ -251,7 +247,7 @@ TEST(TestEcmDataHandler, SendFrameAfterDisconnectDropsData) {
     std::error_code conn_ec;
     env.handler.on_new_connection(env.stub, conn_ec);
     env.handler.handle_bulk_transfer(1, UsbEndpoint{.address = EP_IN, .attributes = 0x02, .max_packet_size = 64},
-                                     0, 8, make_cmd_submit(env.op, 1, EP_IN, UsbIpDirection::In, 8).transfer,
+                                     0, 8, make_transfer(env.op, UsbIpDirection::In, 8),
                                      env.ec);
     ASSERT_FALSE(env.ec);
     EXPECT_TRUE(env.stub.submits.empty()); // 挂起未应答

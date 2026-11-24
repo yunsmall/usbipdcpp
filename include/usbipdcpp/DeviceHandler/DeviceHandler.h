@@ -15,6 +15,7 @@ struct UsbInterface;
 struct SetupPacket;
 
 class TransferResponder;
+class TransferSource;
 
 /**
  * @brief USB 设备处理抽象基类。
@@ -36,13 +37,15 @@ public:
 
     /**
      * @brief 处理 URB 请求的统一入口
-     * @param cmd 完整的 CMD_SUBMIT 命令
+     * @param cmd 命令固定部分（含 seqnum/端点/长度/setup）
+     * @param source 本次 URB 的线上字节源（payload + 等时描述符），按需读取
      * @param ep 端点信息
      * @param interface 可选的接口信息（非控制传输必须有）
      * @param ec 错误码
+     * @note 返回前必须把需要的字节从 source 读走；未读完的由 Session 收尾丢弃
      */
-    virtual void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
-                             usbipdcpp::error_code &ec) = 0;
+    virtual void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, TransferSource &source, UsbEndpoint ep,
+                             std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) = 0;
 
     /**
      * @brief 新的客户端连接时会调这个函数，可以阻塞。子类实现时请在函数开头调用这个函数

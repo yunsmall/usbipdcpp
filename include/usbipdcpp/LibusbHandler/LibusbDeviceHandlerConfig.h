@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 namespace usbipdcpp {
 
 /**
@@ -26,6 +28,35 @@ enum class LibusbSubmitErrorPolicy {
 struct LibusbDeviceHandlerConfig {
     /// libusb_submit_transfer 失败时的断连策略
     LibusbSubmitErrorPolicy submit_error_policy = LibusbSubmitErrorPolicy::DisconnectOnAnyError;
+
+    /**
+     * @brief bulk OUT 分块大小（字节；0 = 不分块，默认）
+     *
+     * 非 0 时服务器把客户端的一个 CMD_SUBMIT（一个 URB）按流水线拆成多个
+     * libusb 传输提交给设备：总在途分配约为
+     * bulk_out_chunk_depth * bulk_out_chunk_size，与 URB 总长度无关；读下一
+     * 块时前一块可以已在设备侧传输，收包与转发重叠。设备侧因此看到多个
+     * 独立 URB，而客户端仍只收到一条 RET_SUBMIT。
+     *
+     * 注意：这会改变设备可见的传输边界，固件若假设“一次传输就是一个
+     * 完整消息”可能不接受，必须由使用者确认设备支持后再开启。块大小不是
+     * 端点 wMaxPacketSize 的整数倍时自动向下取整到整数倍（不够一个包时
+     * 按一个包），避免分块边界产生短包、被固件误当成传输结尾；取不到有效
+     * wMaxPacketSize 时无法对齐，按配置值使用。每个 URB 的最后一块允许
+     * 短于块大小（URB 尾部）。
+     * 仅作用于 bulk OUT；bulk IN/控制/中断/等时仍然整块提交。
+     */
+    std::size_t bulk_out_chunk_size = 0;
+
+    /**
+     * @brief bulk OUT 分块的流水线深度（同时在途的块数，默认 2）
+     *
+     * 主线程读第 N+1 块时，第 N 块可以已经在设备侧传输，收包与转发重叠。
+     * 内存上限约为 depth * bulk_out_chunk_size：depth=1 时完全串行（读一块、
+     * 等它完成、再读下一块），不会有多余块在途；depth 越大吞吐越高、占用
+     * 越多。小于 1 按 1 处理。仅在 bulk_out_chunk_size != 0 时生效。
+     */
+    std::size_t bulk_out_chunk_depth = 2;
 };
 
 } // namespace usbipdcpp

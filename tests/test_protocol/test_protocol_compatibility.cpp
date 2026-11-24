@@ -23,8 +23,8 @@ public:
     void handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) override {
     }
 
-    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint ep, std::optional<UsbInterface> interface,
-                     usbipdcpp::error_code &ec) override {
+    void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, TransferSource &source, UsbEndpoint ep,
+                     std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) override {
     }
 };
 

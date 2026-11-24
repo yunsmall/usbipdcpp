@@ -19,7 +19,9 @@ USBIP_VERSION = 0x0111
 OP_REQ_IMPORT = 0x8003
 OP_REP_IMPORT = 0x0003
 CMD_SUBMIT = 0x00000001
+CMD_UNLINK = 0x00000002
 RET_SUBMIT = 0x00000003
+RET_UNLINK = 0x00000004
 
 DIR_OUT = 0
 DIR_IN = 1
@@ -69,6 +71,16 @@ def connect_and_import(host, port, busid, timeout=10.0):
     }
 
 
+def submit_header(seqnum, devid, direction, ep, setup=b"\0" * 8, transfer_buffer_length=0,
+                  number_of_packets=0, transfer_flags=0, start_frame=0, interval=0):
+    """拼一条 CMD_SUBMIT 的 48 字节头（不含 payload/iso 描述符）。"""
+    header = struct.pack("!IIIII", CMD_SUBMIT, seqnum, devid, direction, ep)
+    header += struct.pack("!IIIII", transfer_flags, transfer_buffer_length, start_frame,
+                          number_of_packets, interval)
+    header += setup
+    return header
+
+
 def submit(sock, seqnum, devid, direction, ep, setup=b"\0" * 8, transfer_buffer_length=0,
            number_of_packets=0, transfer_flags=0, start_frame=0, interval=0,
            out_data=b"", iso_descriptors=()):
@@ -78,11 +90,8 @@ def submit(sock, seqnum, devid, direction, ep, setup=b"\0" * 8, transfer_buffer_
     按协议在网络序下发；IN 方向不发数据段（由内核约定），OUT 方向发送
     transfer_buffer_length 字节。
     """
-    header = struct.pack("!IIIII", CMD_SUBMIT, seqnum, devid, direction, ep)
-    header += struct.pack("!IIIII", transfer_flags, transfer_buffer_length, start_frame,
-                          number_of_packets, interval)
-    header += setup
-    sock.sendall(header)
+    sock.sendall(submit_header(seqnum, devid, direction, ep, setup, transfer_buffer_length,
+                               number_of_packets, transfer_flags, start_frame, interval))
     if direction == DIR_OUT and transfer_buffer_length:
         data = out_data
         if len(data) < transfer_buffer_length:
@@ -90,6 +99,22 @@ def submit(sock, seqnum, devid, direction, ep, setup=b"\0" * 8, transfer_buffer_
         sock.sendall(data[:transfer_buffer_length])
     for offset, length, actual_length, status in iso_descriptors:
         sock.sendall(struct.pack("!IIII", offset, length, actual_length, status))
+
+
+def send_unlink(sock, seqnum, devid, unlink_seqnum):
+    """发一条 CMD_UNLINK：48 字节（基本头 20 + unlink_seqnum 4 + padding 24）。"""
+    sock.sendall(struct.pack("!IIIII", CMD_UNLINK, seqnum, devid, 0, 0) +
+                 struct.pack("!I", unlink_seqnum) + b"\0" * 24)
+
+
+def read_ret_unlink(sock):
+    """读一条 RET_UNLINK（48 字节：基本头 20 + status 4 + padding 24）。"""
+    header = recv_exact(sock, 48)
+    command, seqnum, devid, _direction, _ep = struct.unpack("!IIIII", header[:20])
+    if command != RET_UNLINK:
+        raise RuntimeError(f"应答命令码不对：0x{command:08x}（seq={seqnum}）")
+    status = struct.unpack("!i", header[20:24])[0]
+    return {"seqnum": seqnum, "devid": devid, "status": status}
 
 
 def read_ret_submit(sock, direction):

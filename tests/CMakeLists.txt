@@ -33,6 +33,7 @@ add_test_file(test_usbip_response)
 add_test_file(test_object_pool)
 add_test_file(test_small_vector)
 add_test_file(test_transfer_handle)
+add_test_file(test_transfer_source)
 add_test_file(test_generic_transfer)
 add_test_file(test_transfer_direction)
 add_test_file(test_reuse_map)
@@ -61,6 +62,10 @@ if (TARGET usbipdcpp_virtual_device)
     add_test_file(test_network_vdev)
     target_link_libraries(test_network_vdev PRIVATE usbipdcpp_virtual_device)
 
+    # 分块 bulk 传输：设备侧按块从 TransferSource 拉取，覆盖分块边界、内容
+    # 完整性与真实 socket 上的流对齐
+    add_test_file(test_bulk_chunking)
+    target_link_libraries(test_bulk_chunking PRIVATE usbipdcpp_virtual_device)
     # 设备被物理移除（is_device_removed()）后的释放语义专项：丢弃语义、
     # 断开/stop/多客户端争用等场景
     add_test_file(test_device_removal)
@@ -146,6 +151,10 @@ if (TARGET usbipdcpp_libusb)
     # 公开 API 前置条件与 start 幂等语义
     add_test_file(test_libusb_server_api)
     target_link_libraries(test_libusb_server_api PRIVATE usbipdcpp_libusb)
+
+    # bulk OUT 分块大小对 wMaxPacketSize 的取整规则
+    add_test_file(test_libusb_bulk_chunk)
+    target_link_libraries(test_libusb_bulk_chunk PRIVATE usbipdcpp_libusb)
 
     # iso e2e 的包填充/校验格式（设备与客户端共用，填充/校验必须互逆）
     add_test_file(test_iso_pattern)

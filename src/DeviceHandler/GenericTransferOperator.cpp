@@ -1,7 +1,9 @@
 #include "usbipdcpp/DeviceHandler/TransferOperator.h"
 
 #include <algorithm>
+#include <span>
 
+#include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/utils/SmallVector.h"
 
@@ -80,17 +82,17 @@ void GenericTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::so
     }
 }
 
-void GenericTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                                                 std::error_code &ec) {
+void GenericTransferOperator::recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) {
     auto *trx = GenericTransfer::from_handle(handle);
-    if (length > 0) {
-        asio::read(sock, asio::buffer(trx->data.data(), length), ec);
-        if (ec)
+    // OUT 方向 payload 整块读入 data（IN 方向为 0 字节）；随后读等时描述符，
+    // 协议固定 payload 在前、描述符在后
+    if (source.remaining() > 0) {
+        trx->data.resize(source.remaining());
+        if (source.read(std::as_writable_bytes(std::span(trx->data)), ec) == 0 && ec) {
             return;
+        }
     }
     if (!trx->iso_descriptors.empty()) {
-        for (auto &iso: trx->iso_descriptors) {
-            iso.from_socket(sock);
-        }
+        source.read_iso_descriptors(std::span(trx->iso_descriptors), ec);
     }
 }

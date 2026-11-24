@@ -3,6 +3,7 @@
 #include "usbipdcpp/virtual_device/storage_backends/StorageTransferOperator.h"
 
 #include <spdlog/spdlog.h>
+#include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/virtual_device/devices/MscBulkOnlyHandler.h"
 #include "usbipdcpp/virtual_device/storage_backends/StorageIoTransfer.h"
 
@@ -80,20 +81,21 @@ void StorageTransferOperator::send_transfer_data(void *handle, asio::ip::tcp::so
     asio::write(sock, asio::buffer(static_cast<const char *>(buf), length), ec);
 }
 
-void StorageTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                                                 std::error_code &ec) {
+void StorageTransferOperator::recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) {
     auto *trx = StorageIoTransfer::from_handle(handle);
     auto *backend = handler_->get_backend();
+    const auto length = source.remaining();
 
     SPDLOG_DEBUG("STO::recv handle={:p} len={} direct_io={} lba={} offset={} ext_buf={:p}",
                  static_cast<const void *>(handle), length, trx->direct_io, trx->file_lba, trx->file_offset,
                  static_cast<const void *>(trx->external_buf));
 
     // 仅 mmap WRITE 走零拷贝 splice，CBW/staging 数据不碰文件
-    if (trx->direct_io && trx->external_buf && backend &&
-        backend->recv_direct(trx->file_lba, trx->file_offset, length, static_cast<intptr_t>(sock.native_handle()),
-                             ec)) {
+    if (trx->direct_io && trx->external_buf && backend && source.socket() &&
+        backend->recv_direct(trx->file_lba, trx->file_offset, length,
+                             static_cast<intptr_t>(source.socket()->native_handle()), ec)) {
         SPDLOG_DEBUG("STO::recv direct OK");
+        source.mark_consumed(length);
         handler_->on_out_data_received(trx, length);
         return;
     }
@@ -106,15 +108,14 @@ void StorageTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::so
     }
 
     // 回退：直读到 external_buf 或 fallback_data
-    void *buf = trx->external_buf;
-    if (buf) {
-        SPDLOG_DEBUG("STO::recv fallback ext_buf={:p}", static_cast<const void *>(buf));
-        asio::read(sock, asio::buffer(static_cast<std::uint8_t *>(buf), length), ec);
+    if (trx->external_buf) {
+        SPDLOG_DEBUG("STO::recv fallback ext_buf={:p}", static_cast<const void *>(trx->external_buf));
+        source.read({static_cast<std::byte *>(trx->external_buf), length}, ec);
     }
     else {
         SPDLOG_DEBUG("STO::recv fallback resize={}", length);
         trx->fallback_data.resize(length);
-        asio::read(sock, asio::buffer(trx->fallback_data), ec);
+        source.read(std::as_writable_bytes(std::span(trx->fallback_data)), ec);
     }
     if (!ec) {
         handler_->on_out_data_received(trx, length);

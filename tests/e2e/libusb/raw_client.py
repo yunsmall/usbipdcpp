@@ -13,74 +13,22 @@ libusb 客户端在本地就会拒绝的请求（当前 alt 不存在的端点�
 
 import argparse
 import socket
-import struct
 import sys
-import time
 
 import usbip_raw as u
+import raw_common as rc
+from raw_common import (
+    Checker, EPIPE, GET_DESCRIPTOR, RECIPIENT_DEVICE, RECIPIENT_ENDPOINT,
+    RECIPIENT_INTERFACE, REQUEST_DEVICE_TO_HOST, REQUEST_HOST_TO_DEVICE,
+    REQUEST_STANDARD, REQUEST_VENDOR, control_submit, read_device_descriptor, setup_packet,
+)
 
-EPIPE = -32
-
-GET_DESCRIPTOR = 0x06
 SET_INTERFACE = 0x0B
 CLEAR_FEATURE = 0x01
-REQUEST_DEVICE_TO_HOST = 0x80
-REQUEST_HOST_TO_DEVICE = 0x00
-REQUEST_STANDARD = 0x00
-REQUEST_VENDOR = 0x40
-RECIPIENT_DEVICE = 0x00
-RECIPIENT_INTERFACE = 0x01
-RECIPIENT_ENDPOINT = 0x02
-
-
-class Checker:
-    def __init__(self):
-        self.passed = 0
-        self.failed = 0
-
-    def check(self, ok, name, detail=""):
-        if ok:
-            self.passed += 1
-            print(f"[PASS] {name}")
-        else:
-            self.failed += 1
-            print(f"[FAIL] {name}" + (f" ({detail})" if detail else ""))
-
-    def summary(self):
-        print(f"==== {self.passed} passed, {self.failed} failed ====")
-        return 0 if self.failed == 0 else 1
-
-
-def setup_packet(bm_request_type, request, value, index, length):
-    return struct.pack("<BBHHH", bm_request_type, request, value, index, length)
-
-
-def control(sock, seqnum, devid, bm_request_type, request, value, index, length,
-            transfer_buffer_length=None):
-    """发一条控制传输（方向由 bmRequestType 的最高位决定）。"""
-    direction = u.DIR_IN if bm_request_type & REQUEST_DEVICE_TO_HOST else u.DIR_OUT
-    if transfer_buffer_length is None:
-        transfer_buffer_length = length
-    u.submit(sock, seqnum, devid, direction, 0,
-             setup=setup_packet(bm_request_type, request, value, index, length),
-             transfer_buffer_length=transfer_buffer_length)
-
-
-def read_device_descriptor(sock, seqnum, devid):
-    """发 GET_DESCRIPTOR(Device) 并校验应答；用于证明会话仍然正常。"""
-    control(sock, seqnum, devid, REQUEST_DEVICE_TO_HOST | REQUEST_STANDARD | RECIPIENT_DEVICE,
-            GET_DESCRIPTOR, 0x0100, 0, 18)
-    ret = u.read_ret_submit(sock, u.DIR_IN)
-    ok = (ret["seqnum"] == seqnum and ret["status"] == 0 and
-          ret["actual_length"] == 18 and len(ret["payload"]) == 18 and
-          ret["payload"][0] == 18)
-    detail = (f"seq={ret['seqnum']} status={ret['status']} "
-              f"actual={ret['actual_length']}") if not ok else ""
-    return ok, detail
 
 
 def set_interface(sock, seqnum, devid, alternate):
-    control(sock, seqnum, devid,
+    control_submit(sock, seqnum, devid,
             REQUEST_HOST_TO_DEVICE | REQUEST_STANDARD | RECIPIENT_INTERFACE,
             SET_INTERFACE, alternate, 0, 0)
     ret = u.read_ret_submit(sock, u.DIR_OUT)
@@ -88,7 +36,7 @@ def set_interface(sock, seqnum, devid, alternate):
 
 
 def set_in_delay(sock, seqnum, devid, milliseconds):
-    control(sock, seqnum, devid,
+    control_submit(sock, seqnum, devid,
             REQUEST_HOST_TO_DEVICE | REQUEST_VENDOR | RECIPIENT_INTERFACE,
             0x32, milliseconds, 0, 0)
     ret = u.read_ret_submit(sock, u.DIR_OUT)
@@ -132,16 +80,7 @@ def read_ret_submit_optional(sock, direction, timeout=2.0):
 
 
 def import_with_retry(checker, name):
-    """会话结束后服务端要清理完才把设备放回可用列表，留足重试窗口。"""
-    for attempt in range(60):
-        try:
-            return u.connect_and_import(ARGS.host, ARGS.server_port, ARGS.busid)
-        except (ConnectionError, RuntimeError, socket.timeout) as error:
-            if attempt == 59:
-                checker.check(False, name, str(error))
-                return None
-            time.sleep(0.25)
-    return None
+    return rc.import_with_retry(ARGS.host, ARGS.server_port, ARGS.busid, checker, name)
 
 
 def run_negative_tests(checker):
@@ -164,7 +103,7 @@ def run_negative_tests(checker):
 
         # 3. 控制传输 wLength > transfer_buffer_length：必须拒绝且不断连
         #    （防 libusb 按 wLength 写越界）
-        control(sock, 4, devid, REQUEST_DEVICE_TO_HOST | REQUEST_STANDARD | RECIPIENT_DEVICE,
+        control_submit(sock, 4, devid, REQUEST_DEVICE_TO_HOST | REQUEST_STANDARD | RECIPIENT_DEVICE,
                 GET_DESCRIPTOR, 0x0100, 0, 100, transfer_buffer_length=8)
         ret = u.read_ret_submit(sock, u.DIR_IN)
         checker.check(ret["seqnum"] == 4 and ret["status"] == EPIPE,
@@ -181,7 +120,7 @@ def run_negative_tests(checker):
         #    check_ctrlrecip() 在提交阶段按描述符拒绝（ENOENT→LIBUSB_ERROR_IO）；
         #    0x83 虽能通过描述符校验，但虚拟设备对“当前 alt 找不到端点”的
         #    请求会同时置 ec 并按内部错误拆掉 hop，测的就不是这条路径了
-        control(sock, 41, devid,
+        control_submit(sock, 41, devid,
                 REQUEST_HOST_TO_DEVICE | REQUEST_STANDARD | RECIPIENT_ENDPOINT,
                 CLEAR_FEATURE, 0x0000, 0x02, 0)
         ret = u.read_ret_submit(sock, u.DIR_OUT)

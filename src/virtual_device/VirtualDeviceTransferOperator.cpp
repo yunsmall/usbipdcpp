@@ -55,7 +55,6 @@ void VirtualDeviceTransferOperator::send_transfer_data(void *handle, asio::ip::t
     generic_op_.send_transfer_data(handle, sock, length, ec);
 }
 
-void VirtualDeviceTransferOperator::recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                                                       std::error_code &ec) {
-    generic_op_.recv_transfer_data(handle, sock, length, ec);
+void VirtualDeviceTransferOperator::recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) {
+    generic_op_.recv_transfer_data(handle, source, ec);
 }

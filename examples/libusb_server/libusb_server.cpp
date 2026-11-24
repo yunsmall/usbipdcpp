@@ -118,6 +118,11 @@ q : Close the server.)" << std::endl;
 
 int main(int argc, char **argv) {
     auto opts = make_example_options("libusb_server", "USB/IP libusb server");
+    opts.add_options()
+            ("bulk-out-chunk", "bulk OUT 分块大小（字节，0=不分块；设备侧会看到多个 URB）",
+             cxxopts::value<std::size_t>()->default_value("0"))
+            ("bulk-out-chunk-depth", "bulk OUT 分块流水线深度（同时在途块数）",
+             cxxopts::value<std::size_t>()->default_value("2"));
 #ifndef _WIN32
     opts.add_options()("d,daemon", "以 daemon 模式运行：自动绑定所有设备并等待信号退出");
 #endif
@@ -142,6 +147,9 @@ int main(int argc, char **argv) {
     }
 
     LibusbServerConfig server_config;
+    server_config.device_handler_config.bulk_out_chunk_size = result["bulk-out-chunk"].as<std::size_t>();
+    server_config.device_handler_config.bulk_out_chunk_depth =
+            result["bulk-out-chunk-depth"].as<std::size_t>();
     if (daemon_mode) {
         server_config.auto_bind_hotplug = true;
     }

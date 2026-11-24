@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <system_error>
 
 #include <asio.hpp>
@@ -11,6 +12,8 @@
 #include "usbipdcpp/type.h"
 
 namespace usbipdcpp {
+
+class TransferSource;
 
 /**
  * @brief 传输操作器抽象基类
@@ -121,28 +124,22 @@ public:
                                     std::error_code &ec) = 0;
 
     /**
-     * @brief 接收传输数据（OUT 方向：client → server，含 IN 等时描述符）
+     * @brief 从字节源读取本次传输的数据（OUT 方向 payload + 等时描述符）
      *
-     * 由 CMD_SUBMIT::from_socket() 在读完 USBIP header 后调用。
-     * 调用者保证 handle 是本 operator 的 alloc_transfer_handle 创建的。
+     * 由 AbstDeviceHandler::receive_urb 在创建 handle 后调用。实现可以在
+     * source 上按自己的节奏读取：默认实现整块读入私有缓冲；需要把大传输
+     * 拆成多个小传提交给设备的后端（嵌入式）可以分块拉取、逐块提交，
+     * 由完成回调累计 actual_length。
      *
-     * 实现必须严格按以下步骤操作，不得额外读写 sock，防止协议错位：
+     * 读取顺序由协议固定：payload（IN 方向为 0 字节）在前，等时描述符在后；
+     * 描述符必须通过 source.read_iso_descriptors() 读取。实现返回前应把
+     * 需要的字节读完，剩余字节由 Session 收尾丢弃。
      *
-     * 1. 若 length > 0，从 sock 读出 length 字节数据写入私有 transfer。
-     *    OUT 传输 length 为 transfer_buffer_length，IN 传输恒为 0，跳过此步。
-     *
-     * 2. 继续从 sock 读出 N = alloc_transfer_handle 时传入的 num_iso_packets 个
-     *    UsbIpIsoPacketDescriptor。在 for 循环中使用
-     *    UsbIpIsoPacketDescriptor::from_socket(sock) 读取，
-     *    并通过 set_iso_descriptor 写入私有 transfer 对应的 iso 包描述部分。
-     *    非等时传输 N 为 0 或 0xFFFFFFFF，跳过此步。
-     *
-     * 所有 iso 数据包在线上紧凑排列，不得在描述符描述的字节区间之间插入空隙。
-     *
-     * 具体实现参考 GenericTransferOperator 和 LibusbTransferOperator。
+     * @param handle alloc_transfer_handle 创建的句柄
+     * @param source 本次 URB 的线上字节源
+     * @param ec 错误码
      */
-    virtual void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                                    std::error_code &ec) = 0;
+    virtual void recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) = 0;
 
     /**
      * @brief 返回指定端点的 leaf TransferOperator
@@ -180,8 +177,7 @@ public:
 
     void send_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
                             std::error_code &ec) override;
-    void recv_transfer_data(void *handle, asio::ip::tcp::socket &sock, std::size_t length,
-                            std::error_code &ec) override;
+    void recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) override;
 };
 
 } // namespace usbipdcpp

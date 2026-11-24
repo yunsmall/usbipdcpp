@@ -218,7 +218,32 @@ protected:
                 stats.chunks = endpoint->chunks.load();
                 stats.bytes = endpoint->bytes.load();
                 stats.errors = endpoint->errors.load();
+                stats.shorts = endpoint->shorts.load();
                 send_ep0(&stats, sizeof(stats));
+                break;
+            }
+
+            case proto::Request::stall_out_after: {
+                EndpointState *endpoint = find_endpoint(index, false);
+                if (in || endpoint == nullptr) {
+                    stall_ep0();
+                    return;
+                }
+                endpoint->stall_remaining.store(value);
+                complete_ep0_no_data();
+                break;
+            }
+
+            case proto::Request::delay_in: {
+                // 控制 IN 在设备侧挂起一段时间，用来制造“同 seqnum 的
+                // 传输仍在途”场景，验证分块路径的重复 seqnum 拒绝
+                if (!in) {
+                    stall_ep0();
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(value));
+                const std::uint8_t marker = 0xa5;
+                send_ep0(&marker, sizeof(marker));
                 break;
             }
 
@@ -241,6 +266,9 @@ private:
         std::atomic<std::uint32_t> chunks {0};
         std::atomic<std::uint64_t> bytes {0};
         std::atomic<std::uint32_t> errors {0};
+        std::atomic<std::uint32_t> shorts {0};
+        // 再接收多少字节后 halt 本 OUT 端点（0 = 未布防），由 vendor 请求设置
+        std::atomic<std::uint32_t> stall_remaining {0};
         std::atomic<std::uint32_t> next_byte {0};
         std::atomic<bool> halt_requested {false};
         // 只有 OUT worker 线程读写，不需要原子
@@ -344,7 +372,7 @@ private:
 
     void out_worker(EndpointState &endpoint) {
         // gadget 请求长度必须不超过一包，否则 dummy_hcd 会把多个 host URB
-        // 攒进同一个请求，read 迟迟不返回，统计和上层流控都会滞后
+        // 攒进同一个请求，read 迟迟不返回，统计和上层流控会滞后
         const std::size_t read_size = endpoint.max_packet > 0 ? endpoint.max_packet : 512;
         std::vector<std::uint8_t> buffer(read_size);
         while (running.load()) {
@@ -373,6 +401,24 @@ private:
 
             endpoint.chunks.fetch_add(1);
             endpoint.bytes.fetch_add(static_cast<std::uint64_t>(received));
+            // 短包计数：read 小于请求长度（含零长包）。主机的一次 URB 只应
+            // 在末尾出现短包；若服务器在 URB 中间分块且未按 maxpacket 对齐，
+            // 这里会多出短包，客户端按“每笔传输最多一个末尾短包”核对
+            if (static_cast<std::size_t>(received) < read_size) {
+                endpoint.shorts.fetch_add(1);
+            }
+            // 布防后累计收到足够字节就 halt 本端点：后续服务器分块会收到
+            // STALL，用来测试“一个 URB 的多块传到一半设备出错”的聚合路径
+            const auto remaining = endpoint.stall_remaining.load();
+            if (remaining != 0 && received > 0) {
+                if (static_cast<std::uint32_t>(received) >= remaining) {
+                    endpoint.stall_remaining.store(0);
+                    apply_halt(endpoint);
+                }
+                else {
+                    endpoint.stall_remaining.fetch_sub(static_cast<std::uint32_t>(received));
+                }
+            }
             if (received > 0) {
                 // 主机侧整条 OUT 数据流是逐字节 +1 的，跨 read（一包一次）也要接得上
                 const auto *bytes_ptr = buffer.data();
