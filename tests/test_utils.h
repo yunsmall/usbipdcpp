@@ -145,14 +145,21 @@ inline std::uint32_t import_device(asio::ip::tcp::socket &client, const std::str
     }
     std::uint16_t version = 0;
     std::uint16_t command = 0;
-    data_read_from_socket(client, version, command);
+    usbipdcpp::error_code read_ec;
+    data_read_from_socket(client, read_ec, version, command);
+    if (read_ec) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
     if (command != OP_REP_IMPORT) {
         return std::numeric_limits<std::uint32_t>::max();
     }
     // 成功响应还带设备描述符（312 字节结构），必须一起读掉，否则后续
     // 读 RET_SUBMIT 会先读到这段残留
     UsbIpResponse::OpRepImport rep;
-    rep.from_socket(client);
+    rep.from_socket(client, read_ec);
+    if (read_ec) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
     return rep.status;
 }
 
@@ -183,9 +190,10 @@ inline std::uint32_t import_device(asio::ip::tcp::socket &client, const std::str
         asio::error_code ec;
         server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), ec);
 
-        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
-        auto op_command = usbipdcpp::read_u16(server_socket);
-        received.from_socket(server_socket);
+        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket, ec);
+        auto op_command = usbipdcpp::read_u16(server_socket, ec);
+        received.from_socket(server_socket, ec);
+        EXPECT_FALSE(ec);
         // SPDLOG_INFO("Received header from server");
         if constexpr (with_header<T>) {
             received.header.command = op_command;

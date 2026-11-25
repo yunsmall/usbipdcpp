@@ -12,9 +12,7 @@ std::vector<std::uint8_t> usbipdcpp::UsbInterface::to_bytes() const {
     return result;
 }
 
-void usbipdcpp::UsbInterface::from_socket(asio::ip::tcp::socket &sock) {
-    interface_class = read_u8(sock);
-    interface_subclass = read_u8(sock);
-    interface_protocol = read_u8(sock);
-    [[maybe_unused]] auto padding = read_u8(sock);
+void usbipdcpp::UsbInterface::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    // 4 字节：类/子类/协议 + 1 字节 padding，与 to_bytes 对称
+    unsigned_integral_and_array_read_from_socket<1>(sock, ec, interface_class, interface_subclass, interface_protocol);
 }

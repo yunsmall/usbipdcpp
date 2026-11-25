@@ -70,7 +70,7 @@ struct USBIPDCPP_API UsbInterface {
     }
 
     [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
-    void from_socket(asio::ip::tcp::socket &sock);
+    void from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec);
 
     bool operator==(const UsbInterface &other) const {
         return interface_class == other.interface_class && interface_subclass == other.interface_subclass &&

@@ -38,9 +38,12 @@ struct SetupPacket {
         return result;
     }
 
-    void from_socket(asio::ip::tcp::socket &sock) {
+    void from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
         array_storage setup{};
-        data_read_from_socket(sock, setup);
+        data_read_from_socket(sock, ec, setup);
+        if (ec) {
+            return;
+        }
         *this = parse(setup);
     }
 

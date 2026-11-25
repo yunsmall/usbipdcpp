@@ -12,6 +12,25 @@
 
 using namespace usbipdcpp;
 
+namespace {
+
+/// 把 socket 读取错误归一化成项目的 ErrorType；协议校验错误（generic_category）保持原样
+void normalize_read_error(usbipdcpp::error_code &ec) {
+    if (!ec) {
+        return;
+    }
+    if (ec == asio::error::eof) {
+        ec = make_error_code(ErrorType::SOCKET_EOF);
+    }
+    else if (ec.category() != std::generic_category()) {
+        // asio 的错误可能落在 system/misc/netdb 等类别，统一按连接错误处理；
+        // 只有 from_socket 自己设置的 std::errc（generic）保留给上层区分
+        ec = make_error_code(ErrorType::SOCKET_ERR);
+    }
+}
+
+} // namespace
+
 // ========== TransferHandle 实现 ==========
 
 TransferHandle::TransferHandle(void *handle, TransferOperator *op) : handle_(handle), op_(op) {
@@ -113,8 +132,8 @@ UsbIpHeaderBasic::to_bytes() const {
     return to_network_array(command, seqnum, devid, direction, ep);
 }
 
-void UsbIpHeaderBasic::from_socket(asio::ip::tcp::socket &sock) {
-    unsigned_integral_read_from_socket(sock, seqnum, devid, direction, ep);
+void UsbIpHeaderBasic::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    unsigned_integral_read_from_socket(sock, ec, seqnum, devid, direction, ep);
 }
 
 array_data_type<calculate_total_size_with_array<
@@ -124,8 +143,8 @@ usbipdcpp::UsbIpIsoPacketDescriptor::to_bytes() const {
     return to_network_array(offset, length, actual_length, status);
 }
 
-void usbipdcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip::tcp::socket &sock) {
-    unsigned_integral_read_from_socket(sock, offset, length, actual_length, status);
+void usbipdcpp::UsbIpIsoPacketDescriptor::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    unsigned_integral_read_from_socket(sock, ec, offset, length, actual_length, status);
 }
 
 std::vector<std::uint8_t> usbipdcpp::UsbIpResponse::OpRepDevlist::to_bytes() const {
@@ -147,22 +166,31 @@ void UsbIpResponse::OpRepDevlist::to_socket(asio::ip::tcp::socket &sock, error_c
     }
 }
 
-void UsbIpResponse::OpRepDevlist::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpResponse::OpRepDevlist::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 与 to_socket 对称：status + device_count + 每设备（312 字节固定头部 +
     // 接口计数个 4 字节接口体，接口体数量在设备头部末尾）。version/command
     // 两个字段由调用方在读命令码时消费，不在此读取
-    data_read_from_socket(sock, status, device_count);
+    data_read_from_socket(sock, ec, status, device_count);
+    if (ec) {
+        return;
+    }
     devices.clear();
     // device_count 来自网络不可信：恶意服务端可发巨大值，reserve 直接抛
     // bad_alloc 崩溃（防御风格同 CmdSubmit::from_socket 的大小校验）
     devices.reserve(std::min<std::uint32_t>(device_count, 256));
     for (std::uint32_t i = 0; i < device_count; i++) {
         UsbDevice device;
-        device.from_socket(sock);
+        device.from_socket(sock, ec);
+        if (ec) {
+            return;
+        }
         // 接口体紧跟在设备头部之后（to_bytes_with_interfaces 的格式），
         // 数量由头部末尾的接口计数给出
         for (auto &intf: device.interfaces) {
-            intf.from_socket(sock);
+            intf.from_socket(sock, ec);
+            if (ec) {
+                return;
+            }
         }
         devices.push_back(std::move(device));
     }
@@ -208,14 +236,17 @@ void UsbIpResponse::OpRepImport::to_socket(asio::ip::tcp::socket &sock, error_co
     }
 }
 
-void UsbIpResponse::OpRepImport::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpResponse::OpRepImport::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 与 to_socket 对称：status 后（成功时）跟设备描述符（312 字节固定头部，
     // 不含接口体，服务端 import 响应只发 to_bytes()）。version/command
     // 由调用方在读命令码时消费
-    data_read_from_socket(sock, status);
+    data_read_from_socket(sock, ec, status);
+    if (ec) {
+        return;
+    }
     if (status == 0) {
         device = std::make_shared<UsbDevice>();
-        device->from_socket(sock);
+        device->from_socket(sock, ec);
     }
 }
 
@@ -262,14 +293,17 @@ void UsbIpResponse::UsbIpRetSubmit::to_socket(asio::ip::tcp::socket &sock, error
     }
 }
 
-void UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpResponse::UsbIpRetSubmit::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 与 to_socket 对称：header 与传输参数共 40 字节，尾随 8 字节 padding，
     // 凑齐内核 usbip_header 的 48 字节（vhci_rx_pdu 一次读 sizeof(usbip_header)，
     // ret_submit 在 union 中占 20 字节，剩余 8 字节本项目以零填充）。
     // command 由本函数设置，不读
-    unsigned_integral_and_array_read_from_socket<8>(sock, header.seqnum, header.devid, header.direction, header.ep,
+    unsigned_integral_and_array_read_from_socket<8>(sock, ec, header.seqnum, header.devid, header.direction, header.ep,
                                                     status, actual_length, start_frame, number_of_packets,
                                                     error_count);
+    if (ec) {
+        return;
+    }
     header.command = USBIP_RET_SUBMIT;
 
     // 数据阶段不在此读取：RET_SUBMIT 的头部不含方向信息（服务端回包时清零），
@@ -373,12 +407,15 @@ void UsbIpResponse::UsbIpRetUnlink::to_socket(asio::ip::tcp::socket &sock, error
     asio::write(sock, asio::buffer(to_bytes()), ec);
 }
 
-void usbipdcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock) {
+void usbipdcpp::UsbIpResponse::UsbIpRetUnlink::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 与 to_bytes 对称：header 20 字节 + status 4 字节 + 24 字节 padding，
     // 凑齐内核 usbip_header 的 48 字节（ret_unlink 在 union 中只占 4 字节）。
     // command 由本函数设置，不读
-    unsigned_integral_and_array_read_from_socket<24>(sock, header.seqnum, header.devid, header.direction, header.ep,
-                                                     status);
+    unsigned_integral_and_array_read_from_socket<24>(sock, ec, header.seqnum, header.devid, header.direction,
+                                                     header.ep, status);
+    if (ec) {
+        return;
+    }
     header.command = USBIP_RET_UNLINK;
 }
 
@@ -399,11 +436,11 @@ usbipdcpp::UsbIpCommand::OpReqDevlist::to_bytes() const {
     return to_network_array(USBIP_VERSION, OP_REQ_DEVLIST, status);
 }
 
-void UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpCommand::OpReqDevlist::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // status 是客户端请求里的保留字段（协议规定为 0），服务端读后忽略：
     // 不 assert status == 0——恶意客户端可发任意值，debug 构建下 assert 失败
     // 会让服务端崩溃（可被远程触发的崩溃点）
-    status = read_u32(sock);
+    status = read_u32(sock, ec);
 }
 
 array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_IMPORT),
@@ -417,8 +454,8 @@ void UsbIpCommand::OpReqImport::to_socket(asio::ip::tcp::socket &sock, error_cod
     asio::write(sock, asio::buffer(to_bytes()), ec);
 }
 
-void usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock) {
-    data_read_from_socket(sock, status, busid);
+void usbipdcpp::UsbIpCommand::OpReqImport::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    data_read_from_socket(sock, ec, status, busid);
     // 同 OpReqDevlist：不 assert status == 0——status 是请求里的保留字段，
     // 恶意客户端可发任意值，debug 构建下 assert 失败会让服务端崩溃
 }
@@ -443,13 +480,16 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
     }
 }
 
-void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 使用 scatter-gather 一次性读取固定部分
     // header 字段(16字节) + transfer参数(20字节) + setup(8字节) = 44字节
     decltype(SetupPacket{}.to_bytes()) setup_buffer;
-    unsigned_integral_and_array_read_from_socket(sock, header.seqnum, header.devid, header.direction, header.ep,
+    unsigned_integral_and_array_read_from_socket(sock, ec, header.seqnum, header.devid, header.direction, header.ep,
                                                  transfer_flags, transfer_buffer_length, start_frame, number_of_packets,
                                                  interval, setup_buffer);
+    if (ec) {
+        return;
+    }
     // 设置命令类型
     header.command = USBIP_CMD_SUBMIT;
 
@@ -458,7 +498,9 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     // 方向位（方向由 direction 字段给出，见 protocol.h 中 UsbIpHeaderBasic::ep
     // 的注释），合法范围 0-0x7F，超范围按协议错误拒绝
     if (header.ep > 0x7F) [[unlikely]] {
-        throw std::system_error(std::make_error_code(std::errc::protocol_error), "invalid endpoint number");
+        SPDLOG_ERROR("CMD_SUBMIT 端点号非法: {}", header.ep);
+        ec = std::make_error_code(std::errc::protocol_error);
+        return;
     }
 
     // 解析 setup packet（小端序）
@@ -466,13 +508,17 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
 
     // 检查缓冲区大小，防止恶意大内存分配
     if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE) [[unlikely]] {
-        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "transfer_buffer_length too large");
+        SPDLOG_ERROR("transfer_buffer_length 过大: {}", transfer_buffer_length);
+        ec = std::make_error_code(std::errc::no_buffer_space);
+        return;
     }
 
     // 检查等时包数量，防止恶意巨大分配（如 0x7FFFFFFF 导致 libusb_alloc_transfer
     // 分配失败返回 null）。0xFFFFFFFF 是协议中非等时传输的占位值，必须放行
     if (number_of_packets != 0xFFFFFFFF && number_of_packets > USBIPDCPP_MAX_ISO_PACKETS) [[unlikely]] {
-        throw std::system_error(std::make_error_code(std::errc::no_buffer_space), "number_of_packets too large");
+        SPDLOG_ERROR("number_of_packets 过大: {}", number_of_packets);
+        ec = std::make_error_code(std::errc::no_buffer_space);
+        return;
     }
     // payload 与等时描述符不在这里读：只解析固定部分，由 TransferSource 按需
     // 读取。调用方负责在 receive_urb 返回后把剩余字节收尾，保持流边界
@@ -489,90 +535,92 @@ void UsbIpCommand::UsbIpCmdUnlink::to_socket(asio::ip::tcp::socket &sock, error_
     asio::write(sock, asio::buffer(to_bytes()), ec);
 }
 
-void UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpCommand::UsbIpCmdUnlink::from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     // 使用 scatter-gather 一次性读取 header 字段 + unlink_seqnum + padding
-    unsigned_integral_and_array_read_from_socket<24>(sock, header.seqnum, header.devid, header.direction, header.ep,
-                                                     unlink_seqnum);
+    unsigned_integral_and_array_read_from_socket<24>(sock, ec, header.seqnum, header.devid, header.direction,
+                                                     header.ep, unlink_seqnum);
+    if (ec) {
+        return;
+    }
     // 设置命令类型
     header.command = USBIP_CMD_UNLINK;
 }
 
 usbipdcpp::UsbIpCommand::OpCmdVariant usbipdcpp::UsbIpCommand::get_op_from_socket(asio::ip::tcp::socket &sock,
                                                                                   usbipdcpp::error_code &ec) {
-    try {
-        auto version = read_u16(sock);
-        if (version != 0 && version != USBIP_VERSION) {
-            ec = make_error_code(ErrorType::UNKNOWN_VERSION);
-            return OpCmdVariant{};
-        }
-        auto op = read_u16(sock);
-        SPDLOG_DEBUG("收到op: 0x{:04x}", op);
+    auto version = read_u16(sock, ec);
+    if (ec) {
+        normalize_read_error(ec);
+        return OpCmdVariant{};
+    }
+    if (version != 0 && version != USBIP_VERSION) {
+        ec = make_error_code(ErrorType::UNKNOWN_VERSION);
+        return OpCmdVariant{};
+    }
+    auto op = read_u16(sock, ec);
+    if (ec) {
+        normalize_read_error(ec);
+        return OpCmdVariant{};
+    }
+    SPDLOG_DEBUG("收到op: 0x{:04x}", op);
 
-        switch (op) {
-            case OP_REQ_DEVLIST: {
-                auto req = OpReqDevlist{};
-                req.from_socket(sock);
-                return req;
-                break;
+    switch (op) {
+        case OP_REQ_DEVLIST: {
+            auto req = OpReqDevlist{};
+            req.from_socket(sock, ec);
+            if (ec) {
+                normalize_read_error(ec);
+                return OpCmdVariant{};
             }
-            case OP_REQ_IMPORT: {
-                auto req = OpReqImport{};
-                req.from_socket(sock);
-                return req;
-                break;
-            }
-            default: {
-                ec = make_error_code(ErrorType::UNKNOWN_CMD);
-                return UsbIpCommand::OpCmdVariant{};
-            }
+            return req;
         }
-    } catch (const asio::system_error &e) {
-        SPDLOG_DEBUG("asio错误：{}", e.what());
-        if (e.code() == asio::error::eof) {
-            ec = make_error_code(ErrorType::SOCKET_EOF);
+        case OP_REQ_IMPORT: {
+            auto req = OpReqImport{};
+            req.from_socket(sock, ec);
+            if (ec) {
+                normalize_read_error(ec);
+                return OpCmdVariant{};
+            }
+            return req;
         }
-        else {
-            ec = make_error_code(ErrorType::SOCKET_ERR);
+        default: {
+            ec = make_error_code(ErrorType::UNKNOWN_CMD);
+            return UsbIpCommand::OpCmdVariant{};
         }
     }
-    return UsbIpCommand::OpCmdVariant{};
 }
 
 usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket(asio::ip::tcp::socket &sock,
                                                                                  usbipdcpp::error_code &ec) {
+    auto command = read_u32(sock, ec);
+    if (ec) {
+        normalize_read_error(ec);
+        return CmdVariant{};
+    }
+    SPDLOG_DEBUG("收到command: 0x{:04x}", command);
 
-    try {
-        auto command = read_u32(sock);
-        SPDLOG_DEBUG("收到command: 0x{:04x}", command);
-
-        switch (command) {
-            case USBIP_CMD_SUBMIT: {
-                auto cmd = UsbIpCmdSubmit{};
-                cmd.from_socket(sock);
-                return cmd;
+    switch (command) {
+        case USBIP_CMD_SUBMIT: {
+            auto cmd = UsbIpCmdSubmit{};
+            cmd.from_socket(sock, ec);
+            if (ec) {
+                normalize_read_error(ec);
+                return CmdVariant{};
             }
-            case USBIP_CMD_UNLINK: {
-                auto cmd = UsbIpCmdUnlink{};
-                cmd.from_socket(sock);
-                return cmd;
-                break;
-            }
-            default: {
-                ec = make_error_code(ErrorType::UNKNOWN_CMD);
-                return UsbIpCommand::CmdVariant{};
-            }
+            return cmd;
         }
-    } catch (const asio::system_error &e) {
-        // 注意：独立 asio 中 asio::system_error 就是 std::system_error 的 typedef，
-        // 因此 from_socket 里抛的纯 std::system_error（如 transfer_buffer_length 超限、
-        // OUT 数据阶段读失败）也会被这里捕获，不会逃出线程函数导致 std::terminate
-        SPDLOG_DEBUG("asio错误：{}", e.what());
-        if (e.code() == asio::error::eof) {
-            ec = make_error_code(ErrorType::SOCKET_EOF);
+        case USBIP_CMD_UNLINK: {
+            auto cmd = UsbIpCmdUnlink{};
+            cmd.from_socket(sock, ec);
+            if (ec) {
+                normalize_read_error(ec);
+                return CmdVariant{};
+            }
+            return cmd;
         }
-        else {
-            ec = make_error_code(ErrorType::SOCKET_ERR);
+        default: {
+            ec = make_error_code(ErrorType::UNKNOWN_CMD);
+            return CmdVariant{};
         }
     }
-    return UsbIpCommand::CmdVariant{};
 }

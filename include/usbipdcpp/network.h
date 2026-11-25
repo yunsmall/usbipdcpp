@@ -30,13 +30,13 @@ constexpr T hton(T num) {
 template<typename T>
 concept SerializableFromSocket = requires(const T &t, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     { t.to_socket(sock, ec) } -> std::same_as<void>;
-    { std::declval<T &>().from_socket(sock) } -> std::same_as<void>;
+    { std::declval<T &>().from_socket(sock, ec) } -> std::same_as<void>;
 };
 
 template<typename T>
-concept Serializable = requires(const T &t, asio::ip::tcp::socket &sock) {
+concept Serializable = requires(const T &t, asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
     { t.to_bytes() } -> supported_data_type;
-    { std::declval<T &>().from_socket(sock) } -> std::same_as<void>;
+    { std::declval<T &>().from_socket(sock, ec) } -> std::same_as<void>;
 };
 
 template<typename T>
@@ -124,14 +124,18 @@ constexpr std::size_t calculate_data_total_size_with_range(const Args &...arg) {
 /**
  * @brief 从socket中读入整数，会一次性全读入然后赋值。读入后会调用 ntoh
  * @param sock 目标socket
+ * @param ec 错误码（读失败时置位，不抛异常）
  * @param args 整数
  */
 template<std::unsigned_integral... Args>
-void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
+void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec, Args &...args) {
     constexpr auto total_size = calculate_unsigned_integral_total_size<Args...>();
 
     std::array<std::uint8_t, total_size> buffer;
-    asio::read(sock, asio::buffer(buffer));
+    asio::read(sock, asio::buffer(buffer), ec);
+    if (ec) {
+        return;
+    }
     std::size_t offset = 0;
 
     auto process = [&](auto &arg) {
@@ -152,48 +156,49 @@ void unsigned_integral_read_from_socket(asio::ip::tcp::socket &sock, Args &...ar
  * 会挨个读取并写入
  * @tparam Args 所有类型
  * @param sock 目标socket
+ * @param ec 错误码（读失败时置位，不抛异常）
  * @param args 希望读入的数据
  */
 template<typename... Args>
     requires((std::unsigned_integral<std::remove_cvref_t<Args>> || supported_data_type<std::remove_cvref_t<Args>>) &&
              ...)
-void data_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
+void data_read_from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec, Args &...args) {
     auto process = [&](auto &arg) -> void {
         using RawType = std::remove_reference_t<decltype(arg)>;
         if constexpr (supported_data_type<RawType>) {
-            asio::read(sock, asio::buffer(arg));
+            asio::read(sock, asio::buffer(arg), ec);
         }
         else {
             RawType tmp;
-            asio::read(sock, asio::buffer(&tmp, sizeof(tmp)));
+            asio::read(sock, asio::buffer(&tmp, sizeof(tmp)), ec);
             arg = ntoh(tmp);
         }
     };
     (process(args), ...);
 }
 
-inline std::uint64_t read_u64(asio::ip::tcp::socket &sock) {
-    std::uint64_t result;
-    asio::read(sock, asio::buffer(&result, sizeof(result)));
-    return ntoh(result);
+inline std::uint64_t read_u64(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    std::uint64_t result{};
+    asio::read(sock, asio::buffer(&result, sizeof(result)), ec);
+    return ec ? 0 : ntoh(result);
 }
 
-inline std::uint32_t read_u32(asio::ip::tcp::socket &sock) {
-    std::uint32_t result;
-    asio::read(sock, asio::buffer(&result, sizeof(result)));
-    return ntoh(result);
+inline std::uint32_t read_u32(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    std::uint32_t result{};
+    asio::read(sock, asio::buffer(&result, sizeof(result)), ec);
+    return ec ? 0 : ntoh(result);
 }
 
-inline std::uint16_t read_u16(asio::ip::tcp::socket &sock) {
-    std::uint16_t result;
-    asio::read(sock, asio::buffer(&result, sizeof(result)));
-    return ntoh(result);
+inline std::uint16_t read_u16(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    std::uint16_t result{};
+    asio::read(sock, asio::buffer(&result, sizeof(result)), ec);
+    return ec ? 0 : ntoh(result);
 }
 
-inline std::uint8_t read_u8(asio::ip::tcp::socket &sock) {
-    std::uint8_t result;
-    asio::read(sock, asio::buffer(&result, sizeof(result)));
-    return ntoh(result);
+inline std::uint8_t read_u8(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec) {
+    std::uint8_t result{};
+    asio::read(sock, asio::buffer(&result, sizeof(result)), ec);
+    return ec ? 0 : ntoh(result);
 }
 
 /**
@@ -202,16 +207,21 @@ inline std::uint8_t read_u8(asio::ip::tcp::socket &sock) {
  * @tparam padding 尾部 padding 字节数
  * @tparam Args 参数类型
  * @param sock 目标socket
+ * @param ec 错误码（读失败时置位，不抛异常）
  * @param args 希望读入的数据（整数引用或数组引用）
  */
 template<std::size_t padding = 0, typename... Args>
     requires((std::unsigned_integral<std::remove_cvref_t<Args>> || is_array_data_type<std::remove_cvref_t<Args>>) &&
              ...)
-void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, Args &...args) {
+void unsigned_integral_and_array_read_from_socket(asio::ip::tcp::socket &sock, usbipdcpp::error_code &ec,
+                                                  Args &...args) {
     constexpr auto total_size = calculate_total_size_with_array<Args...>() + padding;
 
     std::array<std::uint8_t, total_size> buffer;
-    asio::read(sock, asio::buffer(buffer));
+    asio::read(sock, asio::buffer(buffer), ec);
+    if (ec) {
+        return;
+    }
     std::size_t offset = 0;
 
     auto process = [&](auto &arg) {

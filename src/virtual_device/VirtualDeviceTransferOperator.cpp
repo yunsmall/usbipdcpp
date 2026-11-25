@@ -37,8 +37,8 @@ std::size_t VirtualDeviceTransferOperator::get_actual_length(void *handle) {
 }
 
 bool VirtualDeviceTransferOperator::transfer_is_in(void *handle) {
-    // 防御路径：正常流程 TransferHandle 绑定 leaf op（见 protocol.cpp 的
-    // set_handle），to_socket 不会拿到本路由 op
+    // 防御路径：正常流程 TransferHandle 在 handler alloc 时绑定 leaf op，
+    // to_socket 不会拿到本路由 op
     return generic_op_.transfer_is_in(handle);
 }
 

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 
+#include "usbipdcpp/utils/SmallVector.h"
+
 namespace usbipdcpp {
 
 void TransferSource::drain(std::error_code &ec) {
@@ -15,8 +17,9 @@ void TransferSource::drain(std::error_code &ec) {
     }
     auto iso_left = iso_packets_remaining();
     if (iso_left > 0 && !ec) {
-        std::vector<UsbIpIsoPacketDescriptor> scratch(static_cast<std::size_t>(iso_left));
-        read_iso_descriptors(scratch, ec);
+        // 描述符数量由协议层限制（<=1024），常见情况用内联存储避免小分配
+        SmallVector<UsbIpIsoPacketDescriptor, 16> scratch(static_cast<std::size_t>(iso_left));
+        read_iso_descriptors(std::span(scratch.data(), scratch.size()), ec);
     }
 }
 
@@ -54,11 +57,8 @@ std::size_t SocketTransferSource::read_some(std::span<std::byte> dst, std::error
 void SocketTransferSource::read_iso_descriptors(std::span<UsbIpIsoPacketDescriptor> out, std::error_code &ec) {
     auto count = std::min(out.size(), static_cast<std::size_t>(num_iso_packets_ - iso_read_));
     for (std::size_t i = 0; i < count; ++i) {
-        try {
-            out[i].from_socket(sock_);
-        }
-        catch (const asio::system_error &e) {
-            ec = e.code();
+        out[i].from_socket(sock_, ec);
+        if (ec) {
             return;
         }
         ++iso_read_;

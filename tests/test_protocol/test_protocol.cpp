@@ -120,10 +120,11 @@ TEST(TestProtocol, UsbIpCmdSubmitReadSocketWithoutData) {
         asio::error_code ec;
         server_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), server_port), ec);
 
-        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket);
-        [[maybe_unused]] auto op_command = usbipdcpp::read_u16(server_socket);
+        [[maybe_unused]] auto version = usbipdcpp::read_u16(server_socket, ec);
+        [[maybe_unused]] auto op_command = usbipdcpp::read_u16(server_socket, ec);
 
-        received.from_socket(server_socket);
+        received.from_socket(server_socket, ec);
+        EXPECT_FALSE(ec);
         received.header.command = op_command;
 
         server_socket.close();
@@ -195,7 +196,9 @@ TEST(TestProtocol, UsbIpCmdSubmitRejectsTooManyIsoPackets) {
     send_cmd_submit_with_packets(USBIPDCPP_MAX_ISO_PACKETS + 1, ret, ec);
 
     EXPECT_TRUE(ec);
-    EXPECT_EQ(ec.value(), static_cast<int>(ErrorType::SOCKET_ERR));
+    // 校验错误来自 from_socket 自己设置的 std::errc，不能被归一化成连接错误：
+    // 调用方/日志需要区分“客户端发了非法包”和“socket 断了”
+    EXPECT_EQ(ec, std::make_error_code(std::errc::no_buffer_space));
 }
 
 TEST(TestProtocol, UsbIpCmdSubmitAcceptsAllOnesPacketsPlaceholder) {

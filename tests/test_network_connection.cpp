@@ -225,8 +225,13 @@ TEST(TestNetworkConnection,ServerCanRestartAfterAcceptError) {
     usbipdcpp::error_code send_ec;
     asio::write(client2, asio::buffer(UsbIpCommand::OpReqDevlist{}.to_bytes()), send_ec);
     ASSERT_FALSE(send_ec);
-    ASSERT_EQ(usbipdcpp::read_u16(client2), USBIP_VERSION);
-    ASSERT_EQ(usbipdcpp::read_u16(client2), OP_REP_DEVLIST);
+    usbipdcpp::error_code read_ec;
+    const auto version = usbipdcpp::read_u16(client2, read_ec);
+    ASSERT_FALSE(read_ec);
+    ASSERT_EQ(version, USBIP_VERSION);
+    const auto reply_command = usbipdcpp::read_u16(client2, read_ec);
+    ASSERT_FALSE(read_ec);
+    ASSERT_EQ(reply_command, OP_REP_DEVLIST);
     client2.close();
 
     ASSERT_TRUE(wait_sessions_gone(server));

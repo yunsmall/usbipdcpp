@@ -36,10 +36,12 @@ public:
     [[nodiscard]] virtual int iso_packets_remaining() const noexcept = 0;
 
     /**
-     * @brief 读取至多 dst.size() 字节 payload（阻塞到读满该长度）
+     * @brief 读取至多 dst.size() 字节 payload（阻塞到读满该长度或读失败）
      * @param dst 目标缓冲
      * @param ec 错误码
-     * @return 实际读取的字节数；remaining() 为 0 时返回 0
+     * @return 实际读取的字节数。dst.size() 大于 remaining() 时只读到
+     *         remaining()，这不是错误；remaining() 为 0 时返回 0。读失败
+     *         返回 0 并置 ec，remaining() 不变
      */
     virtual std::size_t read(std::span<std::byte> dst, std::error_code &ec) = 0;
 
@@ -47,7 +49,8 @@ public:
      * @brief 读取一部分 payload（底层 read_some，可能少于 dst.size()）
      * @param dst 目标缓冲
      * @param ec 错误码
-     * @return 实际读取的字节数
+     * @return 实际读取的字节数；读失败返回 0 并置 ec，已读部分的 remaining()
+     *         已同步扣减
      */
     virtual std::size_t read_some(std::span<std::byte> dst, std::error_code &ec) = 0;
 
@@ -55,11 +58,15 @@ public:
      * @brief 读取等时包描述符
      * @param out 输出缓冲，最多读 out.size() 个
      * @param ec 错误码
-     * @note 必须在 payload 全部读完后调用
+     * @note 必须在 payload 全部读完后调用。构造时传入的
+     *       num_iso_packets 由调用者保证非负（Session 已按协议校验）
      */
     virtual void read_iso_descriptors(std::span<UsbIpIsoPacketDescriptor> out, std::error_code &ec) = 0;
 
-    /// 丢弃剩余 payload（失败/取消时保持 TCP 流对齐）
+    /**
+     * @brief 丢弃剩余 payload（失败/取消时保持 TCP 流对齐）
+     * @param ec 错误码；读失败时剩余量不变
+     */
     virtual void skip_remaining(std::error_code &ec) = 0;
 
     /**
@@ -68,7 +75,13 @@ public:
      */
     [[nodiscard]] virtual asio::ip::tcp::socket *socket() noexcept = 0;
 
-    /// 标记已经通过 socket 直接消费了 n 字节 payload（零拷贝路径用）
+    /**
+     * @brief 标记已经通过 socket 直接消费了 n 字节 payload（零拷贝路径用）
+     *
+     * 调用者负责确保这 n 字节确实已经从 socket() 读走；本函数只做记账，
+     * 不会读写 socket。超过剩余量时按剩余量钳位（不会下溢）。只应在
+     * socket() 非空的零拷贝实现里使用
+     */
     virtual void mark_consumed(std::size_t n) noexcept = 0;
 
     /**
@@ -84,6 +97,11 @@ public:
  */
 class USBIPDCPP_API SocketTransferSource : public TransferSource {
 public:
+    /**
+     * @param sock 已连接的 socket
+     * @param payload_length 本次命令声明的 payload 长度
+     * @param num_iso_packets 等时包描述符数量，调用者保证非负
+     */
     SocketTransferSource(asio::ip::tcp::socket &sock, std::size_t payload_length, int num_iso_packets);
 
     [[nodiscard]] std::size_t remaining() const noexcept override { return payload_remaining_; }

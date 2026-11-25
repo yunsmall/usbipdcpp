@@ -105,7 +105,9 @@ TEST(TestNetworkVdev, ServerCanStopWithImportedDevice) {
         std::uint16_t version = 0;
         std::uint16_t command = 0;
         std::uint32_t status = 0;
-        data_read_from_socket(client, version, command, status);
+        usbipdcpp::error_code read_ec;
+        data_read_from_socket(client, read_ec, version, command, status);
+        ASSERT_FALSE(read_ec);
         ASSERT_EQ(command, OP_REP_IMPORT);
         ASSERT_EQ(status, 0u);
 
