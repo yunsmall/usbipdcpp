@@ -688,6 +688,12 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
     }
     state.active.clear();
 
+    // 先记录设备是否已经消失：后面 socket 读错误/提交失败的提前 return
+    // 也必须把 device_removed 传播出去，不能把已拔出的设备放回可用列表
+    if (device_gone) {
+        device_removed = true;
+    }
+
     if (ec) {
         return; // socket 读失败：会话即将关闭，不回复
     }
@@ -705,9 +711,6 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
         return;
     }
 
-    if (device_gone) {
-        device_removed = true;
-    }
     // 客户端只看到一条 RET_SUBMIT：状态/实际长度是所有块的聚合
     const std::uint32_t actual = static_cast<std::uint32_t>(std::min(actual_total, total));
     responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
