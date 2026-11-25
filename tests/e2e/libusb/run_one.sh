@@ -33,10 +33,10 @@ usage() {
   control       控制传输（FunctionFS 设备 + dummy_hcd）
   bulk          bulk 传输（不分块）
   interrupt     interrupt 传输
-  chunk         bulk OUT 分块（1024 字节 / 流水线深度 2）
+  chunk         bulk OUT 分块（读一块提交一块、收发重叠，1024 字节 / 深度 2）
   chunk-serial  bulk OUT 分块（512 字节 / 深度 1，无流水线）
   chunk-align   bulk OUT 分块（配置 1000，自动取整到 512 / 深度 8）
-  chunk-raw     bulk OUT 分块 + 直接线协议负路径（半包断开、重复 seqnum）
+  chunk-raw     bulk OUT 分块 + 直接线协议测试（半包断开、UNLINK、重复 seqnum、断开恢复）
   chunk-fs      bulk OUT 分块（全速设备，wMaxPacketSize=64）
   iso           等时传输（虚拟设备双跳，需要 CONFIG_USBIP_VHCI_NR_HCS>=2）
   raw           直接走 USB/IP 协议的负路径（非法端点/wLength/重复 seqnum/iso 描述符）
@@ -113,7 +113,7 @@ case "$PROFILE" in
         CLIENT_BIN=""
         PID_HEX=0x0105
         PORT=53271
-        # 直接连服务器构造半包断开/在途重复 seqnum，不经过 vhci
+        # 直接连服务器构造半包断开/在途重复 seqnum/UNLINK，不经过 vhci
         SERVER_ARGS=(--bulk-out-chunk 1024 --bulk-out-chunk-depth 2)
         RAW_CHUNK=1
         ;;
@@ -573,9 +573,9 @@ if [ "$RAW_CHUNK" = "1" ]; then
     IN_EP=$(sed -n 's/.*实际地址 \(0x[0-9a-fA-F]*\) (IN).*/\1/p' "$DEVICE_LOG" | head -1)
     [ -n "$OUT_EP" ] && [ -n "$IN_EP" ] || die "无法从 $DEVICE_LOG 解析端点地址"
 
-    log "运行 chunk_raw_client.py（分块负路径：OUT=$OUT_EP IN=$IN_EP）"
+    log "运行 chunk_raw_client.py（OUT=$OUT_EP IN=$IN_EP）"
     set +e
-    timeout 120 python3 "$SCRIPT_DIR/chunk_raw_client.py" --server-port "$PORT" \
+    timeout 180 python3 "$SCRIPT_DIR/chunk_raw_client.py" --server-port "$PORT" \
             --busid "$BUSID" --in-ep "$IN_EP" --out-ep "$OUT_EP"
     RAW_RC=$?
     set -e

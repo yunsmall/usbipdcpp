@@ -17,6 +17,7 @@
 #include "usbipdcpp/TransferSource.h"
 #include "usbipdcpp/constant.h"
 #include "usbipdcpp/protocol.h"
+#include "usbipdcpp/utils/SmallVector.h"
 
 using namespace usbipdcpp;
 
@@ -33,50 +34,69 @@ std::string get_trx_device_busid(libusb_transfer *trx) {
     return "unknown";
 }
 
-/**
- * @brief 分块 bulk OUT 的一块缓冲与在途传输
- *
- * buffer 由共享状态持有，生命周期覆盖整个 receive_chunked_bulk_out 调用；
- * 回调只回写状态，不访问 socket。
- */
-struct ChunkOutSlot {
-    std::vector<unsigned char> buffer;
-    libusb_transfer *trx = nullptr;
-    std::size_t submitted = 0;
-    bool in_flight = false;
-    struct ChunkOutState *state = nullptr;
-};
+} // namespace
 
-/// 分块 bulk OUT 的共享状态：主线程读 socket/提交，回调线程记录完成结果
-struct ChunkOutState {
+namespace usbipdcpp {
+
+/**
+ * @brief 一次流式分块 URB 的共享状态
+ *
+ * 槽位对象和连续缓冲由 handler 的 ChunkSlotPool 跨 URB 复用；libusb_transfer
+ * 从 LibusbTransferOperator 已有的传输池借用，填充时指向槽位缓冲（归还
+ * transfer 时不释放该缓冲）。回调把 transfer 归还传输池、把槽位标回空闲；
+ * receiver 等 all_idle 后统一把槽位归还 ChunkSlotPool。
+ */
+struct StreamingChunkState {
+    LibusbTransferOperator *transfer_operator = nullptr;
     std::mutex mutex;
     std::condition_variable cv;
-    std::vector<ChunkOutSlot> slots; // 数量 = 配置的流水线深度
-    std::size_t actual_total = 0;                             // 已完成的块累计实际字节
+    SmallVector<LibusbDeviceHandler::ChunkSlot *, 8> active;
+    std::size_t actual_total = 0; // 已完成的块累计实际字节
     libusb_transfer_status status = LIBUSB_TRANSFER_COMPLETED; // 第一个错误状态
-    bool aborted = false;                                      // 错误/短包：不再提交后续块
+    bool aborted = false; // 错误/短包：不再提交后续块
     bool device_gone = false;
 
     bool all_idle() const {
-        return std::all_of(slots.begin(), slots.end(), [](const ChunkOutSlot &slot) { return !slot.in_flight; });
+        for (auto *slot: active) {
+            if (slot->in_flight) {
+                return false;
+            }
+        }
+        return true;
     }
 
     bool any_idle() const {
-        return std::any_of(slots.begin(), slots.end(), [](const ChunkOutSlot &slot) { return !slot.in_flight; });
+        for (auto *slot: active) {
+            if (!slot->in_flight) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    LibusbDeviceHandler::ChunkSlot *find_idle() {
+        for (auto *slot: active) {
+            if (!slot->in_flight) {
+                return slot;
+            }
+        }
+        return nullptr;
     }
 };
 
-void LIBUSB_CALL chunk_out_complete(libusb_transfer *trx) {
-    auto *slot = static_cast<ChunkOutSlot *>(trx->user_data);
+void LIBUSB_CALL streaming_chunk_complete(libusb_transfer *trx) {
+    auto *slot = static_cast<LibusbDeviceHandler::ChunkSlot *>(trx->user_data);
     auto *state = slot->state;
     auto status = trx->status;
     const auto flags = trx->flags;
-    const std::size_t submitted = slot->submitted;
+    const std::size_t submitted = static_cast<std::size_t>(trx->length);
     const std::size_t actual = static_cast<std::size_t>(trx->actual_length);
-    libusb_free_transfer(trx);
+
+    // 先把需要的字段全部读出来，再归还 transfer：归还后别的传输可以立刻
+    // 复用它。buffer 归槽位所有，free_transfer 不会释放它。
+    state->transfer_operator->free_transfer(trx);
 
     std::lock_guard lock(state->mutex);
-    slot->trx = nullptr;
     slot->in_flight = false;
     // 与普通传输回调一致：SHORT_NOT_OK 未设置时，短包导致的 ERROR 按完成处理
     if (status == LIBUSB_TRANSFER_ERROR && !(flags & LIBUSB_TRANSFER_SHORT_NOT_OK)) {
@@ -95,7 +115,7 @@ void LIBUSB_CALL chunk_out_complete(libusb_transfer *trx) {
     state->cv.notify_all();
 }
 
-} // namespace
+} // namespace usbipdcpp
 
 // 普通模式构造函数
 usbipdcpp::LibusbDeviceHandler::LibusbDeviceHandler(UsbDevice &handle_device, libusb_device *native_device,
@@ -217,8 +237,9 @@ void usbipdcpp::LibusbDeviceHandler::receive_urb(UsbIpCommand::UsbIpCmdSubmit cm
         return;
     }
 
-    // bulk OUT 分块：走独立的流式路径，不分配整个 URB 的缓冲。分块只在
-    // 明确配置时启用（设备固件可能依赖“一次传输就是一个 URB”的语义）
+    // bulk OUT 分块：读一块、提交一块，读下一块时前一块仍在设备侧传输
+    // （socket 接收与设备转发重叠，在途内存 depth*chunk）。分块只在明确
+    // 配置时启用（设备固件可能依赖“一次传输就是一个 URB”的语义）
     if (device_handler_config.bulk_out_chunk_size != 0 &&
         ep.attributes == static_cast<std::uint8_t>(EndpointAttributes::Bulk) && !ep.is_in() &&
         (cmd.number_of_packets == 0 || cmd.number_of_packets == 0xFFFFFFFF)) {
@@ -541,17 +562,30 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
         }
     }
 
-    ChunkOutState state;
-    // 只按实际需要的块数分配槽位和缓冲：URB 很短时不要按配置的深度/块大小
-    // 一次性占满（例如 8 字节 URB 配了 1MiB 块和深度 8）。
+    // 槽位对象/缓冲从 handler 的 ChunkSlotPool 跨 URB 复用；libusb_transfer
+    // 从 LibusbTransferOperator 已有的传输池借用。上一次 URB 返回前已等所有
+    // 在途块回调落地，因此这里分配槽位不会与回调并发。
+    StreamingChunkState state;
+    state.transfer_operator = static_cast<LibusbTransferOperator *>(get_transfer_operator());
+    // 只按实际需要的块数使用槽位：URB 很短时不要按配置的深度/块大小
+    // 一次性占满（例如 8 字节 URB 配了 1MiB 块和深度 8）。缓冲只增不减，
+    // 后续更大的 URB 再慢慢扩到 depth × chunk。
     // 用除法+余数而不是 (total + chunk - 1) / chunk：32 位平台上
     // transfer_buffer_length 接近 4GB 时后者会溢出
     const std::size_t chunk_count = total == 0 ? 1 : total / chunk + (total % chunk != 0 ? 1 : 0);
     const std::size_t buffer_size = std::max<std::size_t>(1, std::min(chunk, total));
-    state.slots.resize(std::min(depth, chunk_count));
-    for (auto &slot: state.slots) {
-        slot.buffer.resize(buffer_size);
-        slot.state = &state;
+    const std::size_t active_count = std::min(depth, chunk_count);
+    for (std::size_t i = 0; i < active_count; ++i) {
+        auto *slot = chunk_slot_pool_.alloc();
+        if (!slot) [[unlikely]] {
+            // 深度超过池容量（32）时回退；URB 结束时 delete
+            slot = new ChunkSlot{};
+        }
+        slot->state = &state;
+        if (slot->buffer.size() < buffer_size) {
+            slot->buffer.resize(buffer_size);
+        }
+        state.active.push_back(slot);
     }
 
     const unsigned char transfer_flags = get_libusb_transfer_flags(cmd.transfer_flags);
@@ -563,19 +597,14 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
 
     // 流水线循环：有空闲块就从 socket 读一块并提交，在途块数不超过 depth
     while (remaining > 0 || !submitted_any) {
-        ChunkOutSlot *slot = nullptr;
+        ChunkSlot *slot = nullptr;
         {
             std::unique_lock lock(state.mutex);
             state.cv.wait(lock, [&state] { return state.aborted || state.any_idle(); });
             if (state.aborted) {
                 break;
             }
-            for (auto &candidate: state.slots) {
-                if (!candidate.in_flight) {
-                    slot = &candidate;
-                    break;
-                }
-            }
+            slot = state.find_idle();
         }
 
         const std::size_t length = (total == 0 && !submitted_any) ? 0 : std::min(chunk, remaining);
@@ -597,14 +626,17 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
             }
         }
 
-        auto *trx = libusb_alloc_transfer(0);
+        // transfer 从传输池借用；buffer 指向槽位自己复用的连续缓冲，
+        // free_transfer 归还时不会释放它
+        auto *trx = state.transfer_operator->alloc_transfer();
         if (!trx) [[unlikely]] {
             submit_failed = true;
             submit_err = LIBUSB_ERROR_NO_MEM;
             break;
         }
         libusb_fill_bulk_transfer(trx, native_handle, ep.address, slot->buffer.data(),
-                                  static_cast<int>(length), chunk_out_complete, slot, timeout_milliseconds);
+                                  static_cast<int>(length), streaming_chunk_complete, slot,
+                                  timeout_milliseconds);
         trx->flags = transfer_flags;
         // ZLP 只属于整个 URB 的末尾：每块都带会让设备看到一串零长包
         if (length == 0 || remaining != length) {
@@ -614,19 +646,16 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
 
         {
             std::lock_guard lock(state.mutex);
-            slot->trx = trx;
-            slot->submitted = length;
             slot->in_flight = true;
         }
         const int err = libusb_submit_transfer(trx);
         if (err < 0) [[unlikely]] {
             {
                 std::lock_guard lock(state.mutex);
-                slot->trx = nullptr;
-                slot->submitted = 0;
                 slot->in_flight = false;
-                libusb_free_transfer(trx);
             }
+            // 提交失败时 transfer 未在途，直接归还传输池
+            state.transfer_operator->free_transfer(trx);
             submit_failed = true;
             submit_err = err;
             break;
@@ -635,11 +664,29 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
         remaining -= length;
     }
 
-    // 错误路径也必须等所有在途块回调落地，否则返回后缓冲销毁、回调仍会访问
+    // 错误路径也必须等所有在途块回调落地。state 是栈对象，安全性依赖：
+    // 每个回调在 state->mutex 内把 slot 标空闲并 notify，lock_guard 释放锁
+    // 是回调对 state 的最后一次访问；receiver 重新拿到锁看到 all_idle 时，
+    // 所有回调都已释放锁，之后不会再解引用 state，因此这里可以安全地复制
+    // 聚合结果并在函数返回时销毁 state
+    std::size_t actual_total = 0;
+    libusb_transfer_status final_status = LIBUSB_TRANSFER_COMPLETED;
+    bool device_gone = false;
     {
         std::unique_lock lock(state.mutex);
         state.cv.wait(lock, [&state] { return state.all_idle(); });
+        actual_total = state.actual_total;
+        final_status = state.status;
+        device_gone = state.device_gone;
     }
+    // 回调都已把槽位标回空闲，统一归还对象池；深度超过池容量（32）时回退
+    // new 出来的槽位在这里释放。缓冲容量留在池里给下一个 URB 复用
+    for (auto *slot: state.active) {
+        if (!chunk_slot_pool_.free(slot)) {
+            delete slot;
+        }
+    }
+    state.active.clear();
 
     if (ec) {
         return; // socket 读失败：会话即将关闭，不回复
@@ -658,13 +705,13 @@ void usbipdcpp::LibusbDeviceHandler::receive_chunked_bulk_out(const UsbIpCommand
         return;
     }
 
-    if (state.device_gone) {
+    if (device_gone) {
         device_removed = true;
     }
     // 客户端只看到一条 RET_SUBMIT：状态/实际长度是所有块的聚合
-    const std::uint32_t actual = static_cast<std::uint32_t>(std::min(state.actual_total, total));
+    const std::uint32_t actual = static_cast<std::uint32_t>(std::min(actual_total, total));
     responder->submit_ret_submit(UsbIpResponse::UsbIpRetSubmit::create_ret_submit_with_status_and_no_data(
-            cmd.header.seqnum, trxstat2error(state.status), actual));
+            cmd.header.seqnum, trxstat2error(final_status), actual));
 }
 
 void usbipdcpp::LibusbDeviceHandler::handle_unlink_seqnum(std::uint32_t unlink_seqnum, std::uint32_t cmd_seqnum) {

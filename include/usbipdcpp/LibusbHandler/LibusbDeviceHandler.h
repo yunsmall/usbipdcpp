@@ -1,8 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 
 #include <asio.hpp>
 #include <libusb-1.0/libusb.h>
@@ -16,6 +19,8 @@
 #include "usbipdcpp/utils/ObjectPool.h"
 
 namespace usbipdcpp {
+
+struct StreamingChunkState;
 
 class USBIPDCPP_API LibusbDeviceHandler : public AbstDeviceHandler {
     friend class LibusbServer;
@@ -65,14 +70,15 @@ public:
                      std::optional<UsbInterface> interface, usbipdcpp::error_code &ec) override;
 
     /**
-     * @brief 分块 bulk OUT：按块从字节源读、流水线提交给设备
+     * @brief 分块 bulk OUT：读一块、提交一块，收发重叠
      *
-     * 固定两块缓冲轮转：读第 N+1 块时第 N 块已经在设备侧传输，总分配与
-     * transfer_buffer_length 无关。设备侧看到多个 URB，客户端仍只收到
-     * 一条 RET_SUBMIT。
+     * 固定 depth 块缓冲轮转：读第 N+1 块时第 N 块已经在设备侧传输，socket
+     * 接收与设备转发重叠，总分配约 depth * chunk，与 transfer_buffer_length
+     * 无关。设备侧看到多个 URB，客户端仍只收到一条 RET_SUBMIT。
      *
-     * 本路径在 receiver 线程同步完成（返回前等待所有在途块完成），不登记
-     * 到 transfers_：UNLINK 只会在返回后被处理（此时 URB 已完成）。
+     * 受 TCP 线序限制，本路径在 receiver 线程处理完整笔 URB 的 payload
+     * （返回前等待所有在途块完成），期间不能解析下一条命令；不登记到
+     * transfers_，UNLINK 只会在返回后被处理（此时 URB 已完成）。
      * @param cmd 命令（seqnum/长度/标志）
      * @param source 线上字节源
      * @param ep bulk OUT 端点
@@ -161,6 +167,32 @@ public:
     using CallbackArgsPool =
             ObjectPool<libusb_callback_args, 256, true, detail::DefaultLM<libusb_callback_args>, CallbackArgsReset>;
     CallbackArgsPool callback_args_pool_;
+
+    /**
+     * @brief 流式分块 bulk OUT 的一个槽位（复用的连续块缓冲）
+     *
+     * buffer 是真正的池化对象：容量只增不减，跨 URB 复用，每块 socket 数据
+     * 直接读进来，不再每块 malloc。libusb_transfer 不放在这里，它从
+     * LibusbTransferOperator 已有的 transfer_pool_ 借用，填充时让
+     * trx->buffer 指向本槽位的 buffer，回调归还 transfer 时不会释放它。
+     */
+    struct ChunkSlot {
+        std::vector<unsigned char> buffer;
+        bool in_flight = false;
+        StreamingChunkState *state = nullptr;
+    };
+
+    struct ChunkSlotReset {
+        static void reset(ChunkSlot &slot) {
+            // buffer 容量保留复用，只清本次传输的状态
+            slot.in_flight = false;
+            slot.state = nullptr;
+        }
+    };
+
+    // 常见流水线深度（<= 32）全部走池子；更大的配置回退到 new，URB 结束时释放
+    using ChunkSlotPool = ObjectPool<ChunkSlot, 32, true, detail::DefaultLM<ChunkSlot>, ChunkSlotReset>;
+    ChunkSlotPool chunk_slot_pool_;
 
     // 用于等待所有传输完成
     std::mutex transfer_complete_mutex_;

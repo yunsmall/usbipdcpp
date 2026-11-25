@@ -62,11 +62,11 @@ e2e_ffs_<profile>（设备守护进程）
 |---|---|---|---|
 | control | 1d6b:0104 | 接口 0 有 alt 0/alt 1（无端点），厂商请求实现 IN/OUT/STALL/短包/零长/延迟 | 35 项：各长度控制 IN/OUT、STALL、短包、零长包、异步取消、标准描述符读取、GET/SET_CONFIGURATION、GET/SET_INTERFACE 切 alt |
 | bulk | 1d6b:0105 | 接口 0 alt 0（0x81/0x02）、alt 1（0x83/0x04）；接口 1 alt 0（无端点）/alt 1（0x85/0x06） | 46 项：IN 各长度（512 整数倍到 1MiB）、零长包、OUT 各长度、`ADD_ZERO_PACKET`、16 条并发异步 IN、取消、超时、IN/OUT halt 与 clear_halt 恢复、接口/alt 切换 10 轮（每轮都用当前 alt 的端点收发） |
-| chunk | 1d6b:0105 | 与 bulk 共用 FunctionFS 设备；`libusb_server --bulk-out-chunk 1024 --bulk-out-chunk-depth 2` | bulk 的 46 项 + 1 项分块专项：传到一半设备 STALL 后整条 URB 回 EPIPE 且 clear_halt 后恢复 |
-| chunk-serial | 1d6b:0105 | 同上；块 512、深度 1（无流水线） | 同上 47 项 |
-| chunk-align | 1d6b:0105 | 同上；配置块 1000（不是 512 的整数倍），服务器向下取整到 512、深度 8 | 同上 47 项；若未取整，分块边界会多出短包，短包计数断言会失败 |
-| chunk-fs | 1d6b:0105 | 同上，但 gadget `max_speed=full-speed`，bulk maxpacket=64；块 128、深度 2 | 同上 47 项（客户端 `--mps 64`），覆盖全速下的对齐与短包 |
-| chunk-raw | 1d6b:0105 | 与 chunk 共用设备与服务器参数，不经过 vhci，直接按线协议连服务器 | 8 项：声明 1MiB 只发 3000 字节后 RST 的清理与流接续、与在途控制传输重复 seqnum 被拒、分块 OUT 完成后的 UNLINK 回 status=0 |
+| chunk | 1d6b:0105 | 与 bulk 共用 FunctionFS 设备；`libusb_server --bulk-out-chunk 1024 --bulk-out-chunk-depth 2`（流式流水线） | bulk 的 46 项 + 2 项分块专项：传到一半设备 STALL 后整条 URB 回 EPIPE 且 clear_halt 后恢复；经 vhci 取消在途分块后端点恢复 |
+| chunk-serial | 1d6b:0105 | 同上；块 512、深度 1（无流水线） | 同上 48 项 |
+| chunk-align | 1d6b:0105 | 同上；配置块 1000（不是 512 的整数倍），服务器向下取整到 512、深度 8 | 同上 48 项；若未取整，分块边界会多出短包，短包计数断言会失败 |
+| chunk-fs | 1d6b:0105 | 同上，但 gadget `max_speed=full-speed`，bulk maxpacket=64；块 128、深度 2 | 同上 48 项（客户端 `--mps 64`），覆盖全速下的对齐与短包 |
+| chunk-raw | 1d6b:0105 | 与 chunk 共用设备与服务器参数，不经过 vhci，直接按线协议连服务器 | 47 项：半包 RST、在途重复 seqnum、流水线顺序、在途断开、晚到 UNLINK（含零长 URB）、STALL+UNLINK、反复 UNLINK+恢复、完成后 UNLINK |
 | interrupt | 1d6b:0106 | 一个接口，interrupt IN 0x81/OUT 0x02，IN 持续输出 8 字节计数块 | 18 项：各长度、跨请求计数器连续性、并发、取消、超时、IN/OUT halt 与 clear_halt 恢复 |
 | iso | 1d6b:0107 | 项目虚拟等时设备（不用 gadget）：alt 0 无端点，alt 1 是 1024B iso IN/OUT，alt 2 是 512B iso IN；厂商请求提供统计、IN 延迟和失败包掩码 | 38 项：描述符布局、alt 0/1/2 切换、IN 8/32/64 包与变长/零长包、4 条并发、OUT 三种长度与设备侧字节校验、vendor 请求、不存在的 alt 被拒绝、alt 1↔0 切换 5 轮、alt 0 提交被拒、挂起中 UNLINK 取消、部分包失败（逐包状态 + 设备统计） |
 | raw | 1d6b:0107 | 与 iso 共用虚拟设备；不经过第二个 vhci，直接按 USB/IP 线协议连 libusb_server | 19 项：当前 alt 不存在的端点被静默丢弃、wLength 大于 transfer_buffer_length、CLEAR_FEATURE 降级提交、重复 seqnum、ISO number_of_packets=0、非法 ISO 描述符断连；每条错误后验证会话/设备可恢复，以及挂起传输随客户端异常断开被清理 |
@@ -79,20 +79,30 @@ e2e_ffs_<profile>（设备守护进程）
 **为什么要有分块/流水线**：客户端一次提交的大 URB 如果整块读进内存，服务器要为
 `transfer_buffer_length`（协议上限 16MB）准备连续缓冲，对单片机、嵌入式网关这类
 内存受限的设备很不友好；同时“先收完整个 URB 再向设备转发”会让 socket 接收和设备
-传输完全串行。分块把单个 URB 按固定块大小处理，总在途分配限制在
-`depth × chunk`（与 URB 总长度无关），并且读第 N+1 块时第 N 块可以已经在设备侧
-传输，让收包和转发重叠。另一个效果是设备侧看到的是多个较短 URB，只接受有限请求
-长度的固件/控制器因此也能工作。bulk IN 不做分块：IN 的 RET_SUBMIT 必须先给出最终
-`actual_length` 再发数据，拆块既不能降低服务器为一条应答准备数据的成本，也不能
-改变“长度由设备决定”的语义，反而会让客户端看到多条短 URB；IN 的低内存需要
-“总长已知 + 流式发送”，是另一个独立能力。
+传输完全串行。分块把单个 URB 按固定块大小处理：读一块、提交一块，读下一块时上一块
+可以已经在设备侧传输，让收包和转发重叠，同时把在途内存限制在 `depth × chunk`。
+设备侧看到多个较短 URB（只接受有限请求长度的固件/控制器因此也能工作），客户端仍然
+只收到一条 RET_SUBMIT。
 
-`libusb_server` 的 `--bulk-out-chunk <字节>` 启用 bulk OUT 分块：客户端的一个 URB
-（一条 CMD_SUBMIT）会在服务器侧拆成多个 `libusb_bulk_transfer` 提交，设备侧看到
-多个独立 URB，客户端仍然只收到一条 RET_SUBMIT。`--bulk-out-chunk-depth <N>` 控制
-流水线深度：主线程读第 N+1 块时前一块可以已在设备侧传输；总在途缓冲约为
-`depth × chunk`，与 URB 总长度无关。默认 `--bulk-out-chunk 0`（不分块），控制、
-bulk IN、中断和等时传输不受影响。
+分块只有一种形态：**流式流水线**。服务器从 socket 读一块就提交给设备，读下一块时
+上一块仍在设备侧传输，socket 接收和设备转发重叠；总在途分配限制在
+`depth × chunk`，与 URB 总长度无关，不会为整笔 `transfer_buffer_length` 分配缓冲。
+设备侧看到多个较短 URB，客户端仍然只收到一条 RET_SUBMIT。
+
+受 TCP 线序限制，下一端点命令排在这笔 URB 的完整 payload 之后，所以 receiver 必须
+把这笔 payload 读完、且在途块全部回调落地，才能继续解析后面的命令；期间其它端点的
+命令和 UNLINK 都排在它后面。这是流式 + 有界内存的固有代价：不整笔缓冲，就不可能
+在设备还在消费这笔 URB 时跳到后面的协议命令。
+
+`libusb_server` 的 `--bulk-out-chunk <字节>` 启用分块（默认 0 = 不分块），
+`--bulk-out-chunk-depth <N>` 控制同时在途的块数（默认 2）：`N=1` 是纯串行低内存，
+`N>=2` 让读下一块和上一块的设备传输重叠；总在途内存约 `N × chunk`。控制、bulk IN、
+中断和等时传输不受影响。稳态下每块的连续缓冲和 `libusb_transfer` 都从对象池复用
+（缓冲按槽位复用，transfer 用 `LibusbTransferOperator` 已有的传输池），不会每块做
+一次堆分配；缓冲容量只增不减，最大约 `depth × chunk`。bulk IN 不做分块：IN 的
+RET_SUBMIT 必须先给出最终 `actual_length` 再发数据，拆块既不能降低服务器为一条
+应答准备数据的成本，也不能改变“长度由设备决定”的语义，反而会让客户端看到多条
+短 URB；IN 的低内存需要“总长已知 + 流式发送”，是另一个独立能力。
 
 块大小会向下取整到端点 `wMaxPacketSize` 的整数倍（不足一个包时按一个包）。这是因为
 USB 设备侧只看到包：分块边界如果不是包边界，每块末尾都会是短包，固件会把分块边界
@@ -106,7 +116,17 @@ USB 设备侧只看到包：分块边界如果不是包边界，每块末尾都�
 - `ADD_ZERO_PACKET`：客户端断言整笔传输只在最末尾看到一个零长包；
 - 中途 STALL：固件在接收一定字节后 halt 端点，验证服务器聚合出 EPIPE、停止后续块、
   已接收字节数正确，clear_halt 后继续收发；
-- raw 负路径：半包 RST、在途重复 seqnum、完成后 UNLINK（见 `chunk_raw_client.py`）。
+- raw 负路径：半包 RST、在途重复 seqnum、流水线顺序、在途断开、晚到 UNLINK
+  （含零长 URB）、STALL+UNLINK、反复 UNLINK+恢复（见 `chunk_raw_client.py`）。
+
+**UNLINK 语义**：协议规定 CMD_UNLINK 排在该 URB 的完整 payload 之后，服务端必须
+先读完 payload 才能解析到它。流式分块在处理 payload 期间已经同步等待所有在途块完成，
+所以读到 UNLINK 时这笔 URB 已经结束并发出了 `RET_SUBMIT`，随后的 UNLINK 只能得到
+`RET_UNLINK(status=0)`——UNLINK 不可能抢在 URB 完成前取消它，也不能阻止中间已经
+提交给设备的数据。要中止客户端还没发完的 payload，只能断开连接（RST）：流式循环在
+下一次 socket 读上拿到错误，停止读并等待在途块回调落地，然后结束会话。这是
+“边收边发 + 在途内存有界”的固有取舍；如果设备侧传输永远不完成，这条 URB 也没有
+超时可以在 receiver 线程上提前解除（设备本身已经异常）。
 
 设备被物理拔插、submit 阶段内存不足、设备返回非 STALL 的“短完成”这几类边界无法用
 dummy_hcd 稳定复现，不在自动化覆盖内。

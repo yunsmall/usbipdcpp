@@ -96,6 +96,17 @@ bool set_reply_len(libusb_device_handle *handle, std::uint8_t endpoint, std::uin
                       endpoint) == 0;
 }
 
+/**
+ * @brief 设置设备侧每次 OUT 读取前的延迟（毫秒），0 恢复
+ *
+ * 用于把设备消费速度压慢，保证 vhci 的 CMD_UNLINK 到达服务器时分块组
+ * 仍在传输中。
+ */
+bool set_out_delay(libusb_device_handle *handle, std::uint8_t endpoint, std::uint32_t delay_ms) {
+    return vendor_out(handle, proto::Request::set_out_delay,
+                      static_cast<std::uint16_t>(delay_ms), endpoint) == 0;
+}
+
 bool get_out_stats(libusb_device_handle *handle, std::uint8_t endpoint, proto::OutStats &stats) {
     std::vector<std::uint8_t> data(sizeof(proto::OutStats));
     const int result = vendor_in(handle, proto::Request::get_out_stats, 0, endpoint, data, 1000);
@@ -555,6 +566,68 @@ void run_chunked_stall_test(libusb_device_handle *handle, TestRunner &tests) {
     tests.check(ok, "bulk out 分块传到一半 STALL 后恢复", detail);
 }
 
+/**
+ * @brief vhci 取消一条分块 OUT：真实 CMD_UNLINK 路径 + 端点恢复
+ *
+ * 和 raw 用例不同，这里经过内核 vhci：libusb_cancel_transfer 会触发
+ * vhci 发 CMD_UNLINK。分块是流式处理的，UNLINK 排在这笔 URB 的 payload
+ * 之后，服务器通常已经把整笔 URB 传完才处理它，所以 libusb 最终可能看到
+ * CANCELLED（内核先标记 unlink）或 COMPLETED（URB 正常完成）；两种都接受。
+ * 关键断言是设备实际收到的字节不超过整笔长度，且取消后从设备实际接收
+ * 位置继续传输不能有连续性错误。
+ */
+void run_chunked_unlink_test(libusb_context *context, libusb_device_handle *handle,
+                             TestRunner &tests) {
+    proto::OutStats before {};
+    const bool before_ok = get_out_stats(handle, main_pair.out, before);
+    const bool armed = before_ok && set_out_delay(handle, main_pair.out, 1);
+
+    // 1ms/设备读 = 2ms/1KiB 块，64KiB 约 128ms；20ms 后取消，必然在途
+    constexpr std::size_t length = 64 * 1024;
+    AsyncResult result;
+    result.data.resize(length);
+    fill_increment(result.data, static_cast<std::uint8_t>(main_out_total & 0xff));
+    libusb_transfer *transfer = submit_async(handle, main_pair.out, length, 5000, false, &result);
+    const bool submitted = transfer != nullptr;
+    bool freed = false;
+    if (submitted) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        libusb_cancel_transfer(transfer);
+        wait_async(context, result, 3000);
+        if (result.done) {
+            libusb_free_transfer(transfer);
+            freed = true;
+        }
+        // 未完成时不能 free 已提交的 transfer（UB）；进程即将退出，宁可泄漏
+    }
+
+    const bool disarmed = set_out_delay(handle, main_pair.out, 0);
+    proto::OutStats after {};
+    const bool after_ok = get_out_stats(handle, main_pair.out, after);
+    const bool status_ok =
+            result.done && (result.status == LIBUSB_TRANSFER_CANCELLED ||
+                            result.status == LIBUSB_TRANSFER_COMPLETED);
+    const bool bytes_ok = after_ok && after.bytes >= before.bytes &&
+                          after.bytes <= before.bytes + length;
+    std::string detail;
+    bool recovered = false;
+    if (after_ok) {
+        // 取消可能已经让部分数据到达设备，从实际末尾继续同一条数据流
+        main_out_total = after.bytes;
+        recovered = write_and_verify(handle, main_pair, 4096, main_out_total, detail);
+    }
+    const bool ok = before_ok && armed && submitted && status_ok && freed && disarmed &&
+                    bytes_ok && recovered;
+    if (!ok) {
+        detail = "armed=" + std::to_string(armed) + " submitted=" + std::to_string(submitted) +
+                 " done=" + std::to_string(result.done) + " freed=" + std::to_string(freed) +
+                 " status=" + std::to_string(result.status) + " disarmed=" +
+                 std::to_string(disarmed) + " accepted=" +
+                 std::to_string(after_ok ? after.bytes - before.bytes : 0) + " " + detail;
+    }
+    tests.check(ok, "bulk out 分块在途取消（vhci UNLINK）后恢复", detail);
+}
+
 void run_alt_pair_tests(libusb_context *context, libusb_device_handle *handle, TestRunner &tests,
                         InStream &stream) {
     // 第二个 alt 的 IN 端点固定发 100 字节，用来验证“设备回短包”的行为
@@ -919,6 +992,7 @@ int main(int argc, char **argv) {
     run_out_zlp_test(context, handle, tests);
     if (args.chunked) {
         run_chunked_stall_test(handle, tests);
+        run_chunked_unlink_test(context, handle, tests);
     }
     run_concurrency(context, handle, tests);
     run_cancel(context, handle, tests);

@@ -41,6 +41,7 @@ enum class Request : std::uint8_t {
     set_reply_len = 0x21,   ///< OUT 无数据：wValue=长度，wIndex=端点地址
     get_out_stats = 0x22,   ///< IN：wIndex=端点地址，返回 OutStats
     stall_out_after = 0x23, ///< OUT 无数据：wValue=再接收多少字节后 halt，wIndex=OUT 端点
+    set_out_delay = 0x25,   ///< OUT 无数据：wValue=每次 OUT 读取前延迟毫秒，wIndex=OUT 端点
 };
 
 /**

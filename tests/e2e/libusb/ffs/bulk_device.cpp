@@ -234,6 +234,19 @@ protected:
                 break;
             }
 
+            case proto::Request::set_out_delay: {
+                // raw 用例用它把设备侧的 OUT 消费速度压慢，制造「分块组
+                // 还在途时 UNLINK/其它端点命令到达」的确定性时序
+                EndpointState *endpoint = find_endpoint(index, false);
+                if (in || endpoint == nullptr) {
+                    stall_ep0();
+                    return;
+                }
+                endpoint->out_delay_ms.store(value);
+                complete_ep0_no_data();
+                break;
+            }
+
             case proto::Request::delay_in: {
                 // 控制 IN 在设备侧挂起一段时间，用来制造“同 seqnum 的
                 // 传输仍在途”场景，验证分块路径的重复 seqnum 拒绝
@@ -269,6 +282,8 @@ private:
         std::atomic<std::uint32_t> shorts {0};
         // 再接收多少字节后 halt 本 OUT 端点（0 = 未布防），由 vendor 请求设置
         std::atomic<std::uint32_t> stall_remaining {0};
+        // 每次 OUT 读取前的延迟（毫秒），raw 分块用例用它控制传输时长
+        std::atomic<std::uint32_t> out_delay_ms {0};
         std::atomic<std::uint32_t> next_byte {0};
         std::atomic<bool> halt_requested {false};
         // 只有 OUT worker 线程读写，不需要原子
@@ -379,6 +394,13 @@ private:
             if (endpoint.halt_requested.exchange(false)) {
                 apply_halt(endpoint);
                 continue;
+            }
+
+            // 在阻塞 read 之前睡：服务器的分块提交会积压在主机侧，设备
+            // 消费速度由这里决定
+            const auto delay_ms = endpoint.out_delay_ms.load();
+            if (delay_ms != 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
             }
 
             const ssize_t received = ::read(endpoint.fd, buffer.data(), buffer.size());

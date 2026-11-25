@@ -39,6 +39,25 @@ public:
                             std::error_code &ec) override;
     void recv_transfer_data(void *handle, TransferSource &source, std::error_code &ec) override;
 
+    /**
+     * @brief 借用一个非等时 libusb_transfer（不分配 buffer）
+     *
+     * 分块路径自己池化块缓冲，只需要复用 transfer 对象；调用方 fill 时
+     * 必须把 trx->buffer 指向自己的缓冲，归还时用 free_transfer。池空时
+     * 回退到 libusb_alloc_transfer。
+     * @return transfer，内存不足返回 nullptr
+     */
+    libusb_transfer *alloc_transfer();
+
+    /**
+     * @brief 归还 alloc_transfer 借出的 transfer
+     *
+     * 只把 transfer 对象还回池中，不释放 trx->buffer（buffer 属于调用方的
+     * 分块槽位）。调用前必须保证该 transfer 已完成回调、不在在途队列里。
+     * @param trx 要归还的 transfer，可为 nullptr
+     */
+    void free_transfer(libusb_transfer *trx);
+
 private:
     // 非同步传输对象池（num_iso_packets == 0），同步传输直接走 libusb_alloc_transfer
     ObjectPool<libusb_transfer, 64, true, detail::LibusbTransferLM, detail::LibusbTransferReset> transfer_pool_;

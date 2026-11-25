@@ -4,6 +4,16 @@
 禁止用 std::vector、std::array + 手算字节偏移读写（偏移极易算错、字段增删时无法自动发现错误）。
 多字节字段按网络序存内存，访问时用 bswap/htons 类函数显式转换。
 
+## 容器选择
+
+能用 `SmallVector` 的地方尽量用 `SmallVector`（`usbipdcpp/utils/SmallVector.h`）代替
+`std::vector`：元素数量有明确上限且通常很小时（典型如每端点的在途传输、协议里的
+小数组），栈内存储可以避免每次分配/释放堆内存，对嵌入式平台更友好。元素数量可能
+很大或无法预估时（如整笔传输缓冲、按 URB 长度分配的 payload）才用 `std::vector`。
+
+注意 `SmallVector` 的差异：`clear()` 会释放堆存储并回到栈存储；没有 `std::erase`
+等自由函数，删除元素用 `std::find` + 成员 `erase`。
+
 ## 测试汇总查看
 
 跑 ctest 必须一条命令看到通过/失败数，禁止跑两遍：输出 tail 至少留 15 行

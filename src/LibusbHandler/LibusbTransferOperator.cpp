@@ -92,6 +92,31 @@ void LibusbTransferOperator::free_transfer_handle(void *handle) {
     }
 }
 
+libusb_transfer *LibusbTransferOperator::alloc_transfer() {
+    auto *trx = transfer_pool_.alloc();
+    if (!trx) [[unlikely]] {
+        trx = libusb_alloc_transfer(0);
+    }
+    if (trx) {
+        // buffer 由借用方（分块槽位）在 fill 时设置；清空防止复用上一个
+        // 用户留下的悬垂指针（普通路径的 buffer 归本类所有）
+        trx->buffer = nullptr;
+    }
+    return trx;
+}
+
+void LibusbTransferOperator::free_transfer(libusb_transfer *trx) {
+    if (!trx) {
+        return;
+    }
+    // buffer 属于借用方的分块槽位，这里只归还 transfer 对象；置空防止以后
+    // 被误用 free_transfer_handle 时 free 掉槽位内存
+    trx->buffer = nullptr;
+    if (!transfer_pool_.free(trx)) {
+        libusb_free_transfer(trx);
+    }
+}
+
 std::size_t LibusbTransferOperator::get_actual_length(void *handle) {
     auto *trx = static_cast<libusb_transfer *>(handle);
     return trx->actual_length;
